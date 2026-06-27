@@ -62,6 +62,9 @@ node --check .\scripts\release_preflight.mjs
 node .\scripts\release_preflight.mjs
 ```
 
+The release preflight runs Go tests, frontend syntax checks, UI smoke,
+tracked-file sensitive-value scanning, and tracked generated-file scanning.
+
 For handoff artifacts:
 
 ```powershell
@@ -82,7 +85,8 @@ python C:\Users\32674\.codex\skills\deep-execution-upgrade\scripts\runtime_prefl
 
 ## 4. Secret And Generated-File Gate
 
-Run the sensitive-value scan from `docs/done-definition.md`.
+Run the sensitive-value scan from `docs/done-definition.md`, or run the full
+release preflight when the changed surface already requires it.
 
 Then check Git state:
 

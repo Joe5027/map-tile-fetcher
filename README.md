@@ -67,6 +67,9 @@ cd apps/admin-region-tiler
 node .\scripts\release_preflight.mjs
 ```
 
+The release preflight runs Go tests, JavaScript checks, browser UI smoke,
+sensitive-value scanning, and tracked generated-file scanning.
+
 ## Local Runtime Notes
 
 Runtime secrets and generated data must stay local:

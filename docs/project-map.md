@@ -43,8 +43,8 @@ Out of scope unless the user explicitly changes direction:
     download, failure records, map source config, region catalog, and GeoJSON
     file listing
   - accepts legacy region `levels` requests and unified `mode: "bbox"` requests
-  - converts bbox requests to ignored `data/generated-areas` GeoJSON so the
-    existing Go worker and artifact pipeline can run them
+  - persists bbox area metadata directly and lets the Go worker enumerate bbox
+    tiles without generated GeoJSON files
 - `db.go`
   - SQLite schema, user/session records, legacy-compatible plan/run records,
     normalized `tasks`, `task_sources`, `artifacts`, and `failures` tables,
@@ -84,6 +84,8 @@ Out of scope unless the user explicitly changes direction:
 - `scripts/release_preflight.mjs`
   - one-command release preflight for Go tests, JavaScript syntax checks, and
     UI smoke validation
+  - includes tracked-file sensitive-value and generated-file scans before
+    release completion
 - `.github/workflows/validate.yml`
   - GitHub Actions validation entrypoint that installs Go, Node, browser
     automation dependencies, and runs the release preflight

@@ -87,7 +87,7 @@ node .\scripts\smoke_ui.mjs --url http://127.0.0.1:8081
 `npm install -g playwright` 和 `npx playwright install chromium`。
 
 完整发布预检会依次运行 Go 测试、前端脚本语法检查、UI 冒烟脚本语法检查和
-UI 冒烟测试：
+UI 冒烟测试，并执行敏感值和 tracked 生成物扫描：
 
 ```powershell
 node .\scripts\release_preflight.mjs

@@ -58,6 +58,8 @@ cd apps/admin-region-tiler
 node .\scripts\release_preflight.mjs
 ```
 
+发布预检会运行 Go 测试、JavaScript 检查、浏览器 UI 冒烟、敏感值扫描和 tracked 生成物扫描。
+
 ## 本地运行注意事项
 
 - 真实天地图或 Mapbox token 只能放在本地配置中。
