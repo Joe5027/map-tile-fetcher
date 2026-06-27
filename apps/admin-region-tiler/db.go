@@ -73,10 +73,12 @@ type SessionRecord struct {
 }
 
 type LevelConfig struct {
-	MinZoom int    `json:"minZoom"`
-	MaxZoom int    `json:"maxZoom"`
-	Geojson string `json:"geojson"`
-	URL     string `json:"url,omitempty"`
+	MinZoom int          `json:"minZoom"`
+	MaxZoom int          `json:"maxZoom"`
+	Geojson string       `json:"geojson"`
+	URL     string       `json:"url,omitempty"`
+	Mode    string       `json:"mode,omitempty"`
+	BBox    *BBoxRequest `json:"bbox,omitempty"`
 }
 
 type PlanRecord struct {
@@ -817,6 +819,9 @@ func (s *SQLiteStore) taskIDForPlan(planID string) (string, error) {
 
 func taskModeFromLevels(levels []LevelConfig) string {
 	for _, level := range levels {
+		if strings.EqualFold(strings.TrimSpace(level.Mode), "bbox") || level.BBox != nil {
+			return "bbox"
+		}
 		path := filepath.ToSlash(level.Geojson)
 		if strings.Contains(path, "data/generated-areas/") {
 			return "bbox"

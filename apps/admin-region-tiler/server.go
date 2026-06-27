@@ -3,10 +3,8 @@ package main
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -21,10 +19,12 @@ import (
 )
 
 type LevelRequest struct {
-	MinZoom int    `json:"minZoom" binding:"required"`
-	MaxZoom int    `json:"maxZoom" binding:"required"`
-	Geojson string `json:"geojson" binding:"required"`
-	URL     string `json:"url"`
+	MinZoom int          `json:"minZoom" binding:"required"`
+	MaxZoom int          `json:"maxZoom" binding:"required"`
+	Geojson string       `json:"geojson,omitempty"`
+	URL     string       `json:"url"`
+	Mode    string       `json:"mode,omitempty"`
+	BBox    *BBoxRequest `json:"bbox,omitempty"`
 }
 
 type SourceRequest struct {
@@ -553,12 +553,11 @@ func buildPlansFromRequest(userID int64, req CreateTaskRequest) (*PlanRecord, []
 
 	levels := make([]LevelConfig, 0, len(req.Levels))
 	for _, level := range req.Levels {
-		resolvedGeoJSON, err := validateLevel(level)
+		normalized, err := normalizeLevelConfig(level)
 		if err != nil {
 			return nil, nil, err
 		}
-		level.Geojson = resolvedGeoJSON
-		levels = append(levels, LevelConfig(level))
+		levels = append(levels, normalized)
 	}
 
 	groupID, _ := shortid.Generate()
@@ -657,62 +656,16 @@ func normalizeAreaLevels(req *CreateTaskRequest) error {
 		if count == 0 {
 			return errors.New("bbox task has no tiles")
 		}
-		geojsonPath, err := writeGeneratedBBoxGeoJSON(req.Name, box)
-		if err != nil {
-			return err
-		}
 		req.Levels = []LevelRequest{{
 			MinZoom: zoom.Min,
 			MaxZoom: zoom.Max,
-			Geojson: geojsonPath,
+			Mode:    string(area.ModeBBox),
+			BBox:    req.Area.BBox,
 		}}
 		return nil
 	default:
 		return errors.New("mode must be bbox or region")
 	}
-}
-
-func writeGeneratedBBoxGeoJSON(name string, box area.BBox) (string, error) {
-	id, err := shortid.Generate()
-	if err != nil {
-		return "", err
-	}
-	dir := filepath.Join("data", "generated-areas")
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return "", err
-	}
-
-	path := filepath.Join(dir, fmt.Sprintf("bbox-%s.geojson", id))
-	payload := map[string]any{
-		"type": "FeatureCollection",
-		"features": []map[string]any{
-			{
-				"type": "Feature",
-				"properties": map[string]any{
-					"name": strings.TrimSpace(name),
-					"mode": string(area.ModeBBox),
-				},
-				"geometry": map[string]any{
-					"type": "Polygon",
-					"coordinates": [][][]float64{{
-						{box.MinLon, box.MinLat},
-						{box.MaxLon, box.MinLat},
-						{box.MaxLon, box.MaxLat},
-						{box.MinLon, box.MaxLat},
-						{box.MinLon, box.MinLat},
-					}},
-				},
-			},
-		},
-	}
-	data, err := json.MarshalIndent(payload, "", "  ")
-	if err != nil {
-		return "", err
-	}
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		return "", err
-	}
-	return path, nil
 }
 
 func normalizeSources(req CreateTaskRequest) ([]SourceRequest, error) {
@@ -765,19 +718,58 @@ func normalizeSources(req CreateTaskRequest) ([]SourceRequest, error) {
 	return sources, nil
 }
 
-func validateLevel(level LevelRequest) (string, error) {
+func normalizeLevelConfig(level LevelRequest) (LevelConfig, error) {
 	if level.MinZoom < ZoomMin || level.MaxZoom > ZoomMax {
-		return "", errors.New("zoom level out of supported range")
+		return LevelConfig{}, errors.New("zoom level out of supported range")
 	}
 	if level.MinZoom > level.MaxZoom {
-		return "", errors.New("minZoom cannot be greater than maxZoom")
-	}
-	path := strings.TrimSpace(level.Geojson)
-	if path == "" {
-		return "", errors.New("geojson is required")
+		return LevelConfig{}, errors.New("minZoom cannot be greater than maxZoom")
 	}
 
-	return resolveGeoJSONPath(path)
+	mode := strings.ToLower(strings.TrimSpace(level.Mode))
+	if mode == string(area.ModeBBox) || level.BBox != nil {
+		if level.BBox == nil {
+			return LevelConfig{}, errors.New("bbox level requires bbox")
+		}
+		box := area.BBox{
+			MinLon: level.BBox.MinLon,
+			MinLat: level.BBox.MinLat,
+			MaxLon: level.BBox.MaxLon,
+			MaxLat: level.BBox.MaxLat,
+		}
+		zoom := area.ZoomRange{Min: level.MinZoom, Max: level.MaxZoom}
+		count, err := downloader.CountBBoxTiles(box, zoom)
+		if err != nil {
+			return LevelConfig{}, err
+		}
+		if count == 0 {
+			return LevelConfig{}, errors.New("bbox task has no tiles")
+		}
+		bbox := *level.BBox
+		return LevelConfig{
+			MinZoom: level.MinZoom,
+			MaxZoom: level.MaxZoom,
+			URL:     strings.TrimSpace(level.URL),
+			Mode:    string(area.ModeBBox),
+			BBox:    &bbox,
+		}, nil
+	}
+
+	path := strings.TrimSpace(level.Geojson)
+	if path == "" {
+		return LevelConfig{}, errors.New("geojson is required")
+	}
+
+	resolved, err := resolveGeoJSONPath(path)
+	if err != nil {
+		return LevelConfig{}, err
+	}
+	return LevelConfig{
+		MinZoom: level.MinZoom,
+		MaxZoom: level.MaxZoom,
+		Geojson: resolved,
+		URL:     strings.TrimSpace(level.URL),
+	}, nil
 }
 
 func firstPositive(values ...int) int {

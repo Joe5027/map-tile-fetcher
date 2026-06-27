@@ -3,11 +3,10 @@ package main
 import (
 	"errors"
 	"os"
-	"path/filepath"
 	"testing"
 )
 
-func TestBuildPlansFromRequestBBoxCreatesGeneratedLevel(t *testing.T) {
+func TestBuildPlansFromRequestBBoxCreatesDirectLevel(t *testing.T) {
 	withTempWorkingDir(t)
 
 	parent, children, err := buildPlansFromRequest(42, CreateTaskRequest{
@@ -35,28 +34,32 @@ func TestBuildPlansFromRequestBBoxCreatesGeneratedLevel(t *testing.T) {
 		t.Fatalf("expected 2 child plans, got %d", len(children))
 	}
 	if len(parent.Levels) != 1 {
-		t.Fatalf("expected 1 generated level, got %d", len(parent.Levels))
+		t.Fatalf("expected 1 bbox level, got %d", len(parent.Levels))
 	}
 
 	level := parent.Levels[0]
 	if level.MinZoom != 1 || level.MaxZoom != 2 {
 		t.Fatalf("unexpected zoom range: %#v", level)
 	}
-	if _, err := os.Stat(level.Geojson); err != nil {
-		t.Fatalf("generated geojson was not written: %v", err)
+	if level.Mode != "bbox" || level.BBox == nil {
+		t.Fatalf("expected direct bbox level, got %#v", level)
 	}
-	if filepath.Base(filepath.Dir(level.Geojson)) != "generated-areas" {
-		t.Fatalf("generated bbox should live under data/generated-areas, got %s", level.Geojson)
-	}
-	collection, err := loadCollection(level.Geojson)
-	if err != nil {
-		t.Fatalf("generated geojson should be loadable: %v", err)
-	}
-	if len(collection) != 1 {
-		t.Fatalf("expected one generated bbox geometry, got %d", len(collection))
+	if level.Geojson != "" {
+		t.Fatalf("bbox level should not depend on generated geojson, got %s", level.Geojson)
 	}
 	if children[0].SourceName != "img" || children[1].SourceName != "cia" {
 		t.Fatalf("unexpected child source names: %q %q", children[0].SourceName, children[1].SourceName)
+	}
+	if _, statErr := os.Stat("data"); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("bbox task should not write generated data, stat error: %v", statErr)
+	}
+
+	task, err := buildTaskFromPlan(children[0])
+	if err != nil {
+		t.Fatalf("direct bbox child task should build: %v", err)
+	}
+	if task.Total == 0 {
+		t.Fatal("direct bbox task should enumerate tiles")
 	}
 }
 

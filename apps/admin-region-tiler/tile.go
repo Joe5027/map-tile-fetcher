@@ -41,6 +41,7 @@ type Layer struct {
 	Zoom       int
 	Count      int64
 	Collection orb.Collection
+	Tiles      []maptile.Tile
 }
 
 // Constants representing TileFormat types

@@ -28,6 +28,9 @@ import (
 	"github.com/spf13/viper"
 	"github.com/teris-io/shortid"
 	pb "gopkg.in/cheggaaa/pb.v1"
+
+	"tiler/internal/area"
+	"tiler/internal/downloader"
 )
 
 const MBTileVersion = "1.2"
@@ -205,7 +208,11 @@ func NewTask(layers []Layer, m TileMap, opts TaskOptions) *Task {
 		if layers[i].URL == "" {
 			layers[i].URL = m.URL
 		}
-		layers[i].Count = tilecover.CollectionCount(layers[i].Collection, maptile.Zoom(layers[i].Zoom))
+		if len(layers[i].Tiles) > 0 {
+			layers[i].Count = int64(len(layers[i].Tiles))
+		} else {
+			layers[i].Count = tilecover.CollectionCount(layers[i].Collection, maptile.Zoom(layers[i].Zoom))
+		}
 		task.Total += layers[i].Count
 	}
 
@@ -246,14 +253,35 @@ func buildTaskFromRequest(req CreateTaskRequest) (*Task, error) {
 	minZoom := 100
 	maxZoom := -1
 	for _, level := range req.Levels {
-		collection, err := loadCollection(level.Geojson)
-		if err != nil {
-			return nil, err
-		}
-
 		levelURL := req.URL
 		if strings.TrimSpace(level.URL) != "" {
 			levelURL = strings.TrimSpace(level.URL)
+		}
+
+		if isBBoxLevel(level) {
+			for z := level.MinZoom; z <= level.MaxZoom; z++ {
+				tiles, err := bboxTilesForLevel(level, z)
+				if err != nil {
+					return nil, err
+				}
+				layers = append(layers, Layer{
+					URL:   levelURL,
+					Zoom:  z,
+					Tiles: tiles,
+				})
+			}
+			if level.MinZoom < minZoom {
+				minZoom = level.MinZoom
+			}
+			if level.MaxZoom > maxZoom {
+				maxZoom = level.MaxZoom
+			}
+			continue
+		}
+
+		collection, err := loadCollection(level.Geojson)
+		if err != nil {
+			return nil, err
 		}
 
 		for z := level.MinZoom; z <= level.MaxZoom; z++ {
@@ -307,6 +335,31 @@ func buildTaskFromRequest(req CreateTaskRequest) (*Task, error) {
 	}
 
 	return task, nil
+}
+
+func isBBoxLevel(level LevelRequest) bool {
+	return strings.EqualFold(strings.TrimSpace(level.Mode), string(area.ModeBBox)) || level.BBox != nil
+}
+
+func bboxTilesForLevel(level LevelRequest, zoom int) ([]maptile.Tile, error) {
+	if level.BBox == nil {
+		return nil, errors.New("bbox level requires bbox")
+	}
+	box := area.BBox{
+		MinLon: level.BBox.MinLon,
+		MinLat: level.BBox.MinLat,
+		MaxLon: level.BBox.MaxLon,
+		MaxLat: level.BBox.MaxLat,
+	}
+	tileIDs, err := downloader.CalculateBBoxTiles(box, area.ZoomRange{Min: zoom, Max: zoom})
+	if err != nil {
+		return nil, err
+	}
+	tiles := make([]maptile.Tile, 0, len(tileIDs))
+	for _, tileID := range tileIDs {
+		tiles = append(tiles, maptile.New(uint32(tileID.X), uint32(tileID.Y), maptile.Zoom(tileID.Z)))
+	}
+	return tiles, nil
 }
 
 func newTileHTTPClient(timeout time.Duration, proxy string) *http.Client {
@@ -470,6 +523,9 @@ func (task *Task) Bound() orb.Bound {
 		for _, g := range layer.Collection {
 			bound = bound.Union(g.Bound())
 		}
+		for _, tile := range layer.Tiles {
+			bound = bound.Union(tile.Bound())
+		}
 	}
 	return bound
 }
@@ -479,6 +535,9 @@ func (task *Task) Center() orb.Point {
 	bound := orb.Bound{Min: orb.Point{1, 1}, Max: orb.Point{-1, -1}}
 	for _, g := range layer.Collection {
 		bound = bound.Union(g.Bound())
+	}
+	for _, tile := range layer.Tiles {
+		bound = bound.Union(tile.Bound())
 	}
 	return bound.Center()
 }
@@ -911,22 +970,16 @@ func (task *Task) enqueueTiles() error {
 		bar := pb.New64(layer.Count).Prefix(fmt.Sprintf("Zoom %d : ", layer.Zoom)).Postfix("\n")
 		bar.Start()
 
-		tilelist := make(chan maptile.Tile, task.bufSize)
-		go tilecover.CollectionChannel(layer.Collection, maptile.Zoom(layer.Zoom), tilelist)
-
-		for tile := range tilelist {
-			if err := task.waitIfPaused(); err != nil {
-				bar.Finish()
+		if len(layer.Tiles) > 0 {
+			if err := task.enqueueLayerTileSlice(layer, bar); err != nil {
 				return err
 			}
-			select {
-			case <-task.ctx.Done():
-				bar.Finish()
-				return task.ctx.Err()
-			case task.jobs <- TileJob{Tile: tile, URL: layer.URL, Pass: 0}:
-				bar.Increment()
-				if task.Bar != nil {
-					task.Bar.Increment()
+		} else {
+			tilelist := make(chan maptile.Tile, task.bufSize)
+			go tilecover.CollectionChannel(layer.Collection, maptile.Zoom(layer.Zoom), tilelist)
+			for tile := range tilelist {
+				if err := task.enqueueLayerTile(tile, layer.URL, bar); err != nil {
+					return err
 				}
 			}
 		}
@@ -935,6 +988,33 @@ func (task *Task) enqueueTiles() error {
 	}
 
 	return nil
+}
+
+func (task *Task) enqueueLayerTileSlice(layer Layer, bar *pb.ProgressBar) error {
+	for _, tile := range layer.Tiles {
+		if err := task.enqueueLayerTile(tile, layer.URL, bar); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (task *Task) enqueueLayerTile(tile maptile.Tile, url string, bar *pb.ProgressBar) error {
+	if err := task.waitIfPaused(); err != nil {
+		bar.Finish()
+		return err
+	}
+	select {
+	case <-task.ctx.Done():
+		bar.Finish()
+		return task.ctx.Err()
+	case task.jobs <- TileJob{Tile: tile, URL: url, Pass: 0}:
+		bar.Increment()
+		if task.Bar != nil {
+			task.Bar.Increment()
+		}
+		return nil
+	}
 }
 
 func (task *Task) enqueueExplicitJobs() error {
