@@ -1,10 +1,10 @@
 # Done Definition
 
-Completion in this repository means the change is scoped to the two application
-surfaces, generated files stay out of Git, and the strongest practical check for
-the touched surface has been run or explicitly recorded as missing. A validated
-change batch is not complete until it has been committed with the required
-bilingual commit message.
+Completion in this repository means the change is scoped to the single Go
+application surface, generated files stay out of Git, and the strongest
+practical check for the touched surface has been run or explicitly recorded as
+missing. A validated change batch is not complete until it has been committed
+with the required bilingual commit message.
 
 ## Universal Criteria
 
@@ -22,9 +22,6 @@ bilingual commit message.
 
 | Change surface | Required narrow check |
 | --- | --- |
-| `apps/range-downloader` backend or project file | From `apps/range-downloader`: `dotnet build .\TianDiTuDownLoader.Web.csproj -c Release` |
-| `apps/range-downloader/wwwroot/app.js` | `node --check .\wwwroot\app.js`, plus the .NET build if API contracts changed |
-| `apps/range-downloader/wwwroot/styles.css` or HTML-only polish | Browser or static inspection when available; otherwise state manual UI check missing |
 | `apps/admin-region-tiler` Go backend | From `apps/admin-region-tiler`: `go test ./...` |
 | `apps/admin-region-tiler/static/script.js` | `node --check .\static\script.js`, plus `go test ./...` if API contracts changed |
 | `apps/admin-region-tiler/static/styles.css` or HTML-only polish | Browser or static inspection when available; otherwise state manual UI check missing |

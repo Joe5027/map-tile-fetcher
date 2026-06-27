@@ -1,18 +1,17 @@
 ---
 name: two-projects-handoff
-description: Use for repository-specific maintenance, release preparation, validation, and merge planning in this two-application map tile downloader handoff workspace.
+description: Use for repository-specific maintenance, release preparation, validation, and post-merge cleanup in this Go map tile downloader workspace.
 ---
 
-# Two Projects Handoff
+# Map Tile Fetcher Handoff
 
-Use this local skill when work is about this repository's two applications,
-their release readiness, validation path, or future merge plan.
+Use this local skill when work is about this repository's Go application, release
+readiness, validation path, or post-merge cleanup.
 
 ## Trigger Conditions
 
 Apply this skill when the task mentions:
 
-- `apps/range-downloader`
 - `apps/admin-region-tiler`
 - this repository's GitHub handoff, release, license, validation, or merge plan
 - range download vs administrative-region download unification
@@ -35,8 +34,10 @@ about region resources.
 
 ## Repository Rules
 
-- Work only on the two in-repository applications and repository-level support
-  docs or local skills that directly support them.
+- Work only on the Go application and repository-level support docs or local
+  skills that directly support it.
+- Do not reintroduce the retired .NET range downloader runtime code; keep
+  historical context in `docs/range-migration.md`.
 - Do not import old local source folders, release packages, UI packages,
   screenshots, runtime databases, downloaded tiles, logs, binaries, archives, or
   machine-local run data.
@@ -45,9 +46,6 @@ about region resources.
 
 ## Validation Route
 
-- Range downloader code: run
-  `dotnet build .\TianDiTuDownLoader.Web.csproj -c Release` from
-  `apps/range-downloader`.
 - Admin region tiler code: run `go test ./...` from
   `apps/admin-region-tiler`.
 - Changed frontend JavaScript: run `node --check` on the changed file.
@@ -60,11 +58,10 @@ about region resources.
 
 - Treat `apps/admin-region-tiler` as the backend base unless new evidence says
   otherwise.
-- Treat `apps/range-downloader` as the range-selection UX and simple layer-task
-  reference.
-- Do not merge by copying files between apps first. Define contracts for map
-  sources, area selection, task creation, task status, retry records, and
-  artifacts before porting code.
+- Treat `docs/range-migration.md` as the historical note for the ported .NET
+  range workflow.
+- Keep contracts for map sources, area selection, task creation, task status,
+  retry records, and artifacts explicit when changing the unified app.
 
 ## Output Expectation
 

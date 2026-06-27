@@ -35,17 +35,16 @@ docs(repo): initialize public handoff structure / 初始化公开交接结构
 
 English:
 - Added repository-level documentation, license alignment, and merge planning.
-- Kept both downloader apps separated under apps/ for the initial release.
+- Kept the Go downloader app under apps/ for the initial release.
 - Documented ignored runtime and build artifacts to reduce release risk.
 
 中文:
 - 新增仓库级文档、许可证对齐和合并计划。
-- 初始开源阶段将两个下载器应用保留在 apps/ 下独立维护。
+- 初始开源阶段将 Go 下载器应用保留在 apps/ 下维护。
 - 记录运行和构建产物的忽略规则，降低发布风险。
 
 Validation:
 - Ran sensitive token scan.
-- Ran .NET Release build for apps/range-downloader.
 - Ran go test ./... for apps/admin-region-tiler.
 ```
 

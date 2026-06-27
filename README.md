@@ -1,23 +1,19 @@
 # Map Tile Fetcher
 
-Map Tile Fetcher is being merged into a single Go-based Web application for
-downloading map tiles by either a drawn bounding box or administrative GeoJSON
-regions.
+Map Tile Fetcher is a Go-based Web application for downloading map tiles by
+either a drawn bounding box or administrative GeoJSON regions.
 
-The current repository still contains both source applications during the merge
-transition. The Go application is the backend base; the .NET range downloader is
-kept only as the reference for bounding-box selection and the simple Tianditu
-download flow until those capabilities are fully ported.
+The former .NET range downloader has been retired after its range workflow was
+ported into the Go app. Historical migration notes are in
+[`docs/range-migration.md`](docs/range-migration.md).
 
 ## Repository Layout
 
-- `apps/admin-region-tiler` - Go 1.25+ Web app for downloading tiles by
-  administrative GeoJSON regions, with multiple map sources, tasks, scheduled
-  runs, persistent state, Docker deployment, and output downloads.
-- `apps/range-downloader` - legacy .NET 6 reference app for drawing a bounding
-  box on a map, entering a Tianditu token, and downloading `img`, `cia`, and
-  `vec` tile layers.
-- `docs/merge-plan.md` - planned path for merging both apps into one product.
+- `apps/admin-region-tiler` - Go 1.25+ Web app with range download,
+  administrative-region download, multiple map sources, child tasks, scheduled
+  runs, SQLite control state, retry/failure records, Docker deployment, and
+  artifact downloads.
+- `docs/merge-plan.md` - current post-merge cleanup and architecture direction.
 - `README_ZH.md` - Chinese README matching this document.
 
 The repository does not include old restored source folders, UI design
@@ -28,10 +24,11 @@ tiles, or historical release archives.
 
 - Backend: Go only.
 - Database: SQLite as a lightweight control database for tasks, task runs,
-  statuses, optional auth/session records, failures, artifacts, and scheduling.
-- Storage: downloaded tiles, MBTiles files, ZIP/TAR archives, logs, and runtime
-  data stay on the filesystem and out of Git.
-- Web UI: a single static frontend with two modes:
+  task sources, statuses, optional auth/session records, failures, artifacts,
+  and scheduling.
+- Storage: downloaded tiles, MBTiles files, ZIP archives, logs, and runtime data
+  stay on the filesystem and out of Git.
+- Web UI: one static frontend with two modes:
   - Range Download
   - Administrative Region Download
 
@@ -44,18 +41,11 @@ cd apps/admin-region-tiler
 go test ./...
 ```
 
-Validate the legacy range reference while it remains in the repository:
-
-```powershell
-cd apps/range-downloader
-dotnet build .\TianDiTuDownLoader.Web.csproj -c Release
-```
-
 Validate frontend scripts when changed:
 
 ```powershell
-node --check apps/admin-region-tiler/static/script.js
-node --check apps/range-downloader/wwwroot/app.js
+cd apps/admin-region-tiler
+node --check .\static\script.js
 ```
 
 ## Local Runtime Notes

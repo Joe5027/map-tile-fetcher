@@ -1,7 +1,7 @@
 # Knowledge Graph
 
-This graph captures the durable relationships future AI sessions should recover
-before making merge, release, or validation decisions.
+This graph captures durable relationships future AI sessions should recover
+before making release, cleanup, or validation decisions.
 
 ```mermaid
 graph TD
@@ -12,32 +12,27 @@ graph TD
   WC --> DD["docs/done-definition.md"]
   WC --> LS[".codex/skills/two-projects-handoff"]
 
-  Repo["two-projects GitHub handoff repo"] --> Manifest["PROJECT_MANIFEST.md"]
+  Repo["Map Tile Fetcher repo"] --> Manifest["PROJECT_MANIFEST.md"]
   Repo --> Readme["README.md"]
   Repo --> License["Apache License 2.0"]
   Repo --> Merge["docs/merge-plan.md"]
-  Repo --> RD["apps/range-downloader"]
   Repo --> AT["apps/admin-region-tiler"]
+  Repo --> RangeNote["docs/range-migration.md"]
 
-  RD --> RDAPI["Program.cs minimal API"]
-  RD --> RDUI["wwwroot range UI"]
-  RDAPI --> RDJobs["TileDownloadManager and layer jobs"]
-  RDUI --> RDFlow["Bounding-box selection and layer retry UX"]
+  RangeNote --> RangeFlow["Ported bbox range workflow"]
 
   AT --> ATServer["server.go Gin API"]
   AT --> ATRuntime["runtime.go scheduler and workers"]
   AT --> ATTask["task.go tile engine"]
   AT --> ATDB["db.go SQLite state"]
-  AT --> ATUI["static admin UI"]
+  AT --> ATUI["static unified UI"]
   AT --> ATGeo["geojson region resources"]
   AT --> ATDeploy["Docker, Nginx, systemd deploy assets"]
 
-  Merge --> Base["Use admin-region-tiler as backend base"]
-  Merge --> RangeRef["Use range-downloader as range UX reference"]
-  Base --> Contracts["Define shared task, area, source, artifact contracts"]
-  RangeRef --> Contracts
+  Merge --> Base["Single Go backend"]
+  Base --> Contracts["Task, area, source, artifact, failure contracts"]
+  RangeFlow --> Contracts
 
-  DD --> VRange["dotnet Release build"]
   DD --> VAdmin["go test ./..."]
   DD --> VNode["node --check changed JS"]
   DD --> VSecrets["sensitive-value scan"]
@@ -53,8 +48,9 @@ graph TD
   facts belong in this repository, not in global `.codex` docs.
 - `docs/project-map.md` is the first durable context packet for future sessions.
 - `docs/long-term-memory.md` carries restart-ready state for long-running merge
-  or environment-upgrade work.
-- `apps/admin-region-tiler` has the stronger long-term backend base.
-- `apps/range-downloader` has the clearer bounding-box user flow.
-- Validation is app-specific. Do not replace `dotnet build`, `go test`, or
+  or cleanup work.
+- `apps/admin-region-tiler` is the single runtime application.
+- The old .NET range downloader is represented only by
+  `docs/range-migration.md`.
+- Validation is Go and frontend-script specific. Do not replace `go test` or
   changed-JS `node --check` with generic prose review when the commands can run.

@@ -1,64 +1,43 @@
 # Merge Plan
 
-The initial public repository keeps the two projects separate. The target
-merged product should offer two download modes in one Web backend:
+The repository has moved from a two-app handoff into a single Go application.
+The target product offers two download modes in one Web backend:
 
 - bounding-box range download
 - administrative-region download
 
-The selected implementation direction is a single Go backend with SQLite as the
-control database. The existing .NET range downloader remains only as a reference
-until the bounding-box workflow has been ported and validated in Go.
+## Completed Merge Work
 
-## Product Direction
+- Go is the only backend runtime kept in the repository.
+- SQLite is retained as the task control database.
+- Bounding-box request validation and tile math exist in Go.
+- `/api/tasks` accepts both region and bbox task creation.
+- The Web UI has two creation modes: range and administrative region.
+- File-tree output is packaged as ZIP; MBTiles output remains a direct artifact.
+- Failure records are persisted in SQLite and exposed through
+  `GET /api/tasks/:id/failures`.
+- The legacy `.NET` range downloader runtime has been retired.
 
-Keep `apps/admin-region-tiler` as the base for backend capabilities:
+## Current Base
 
-- multi-task and child-task execution
-- persistent database state
-- administrative GeoJSON region resources
-- scheduled jobs
-- deployment assets
-- output packaging and downloads
+Keep `apps/admin-region-tiler` as the base for:
 
-Use `apps/range-downloader` as the reference for the user-facing range flow:
-
-- map click and drag selection
-- bounding-box preview
-- compact Tianditu token input
-- simple `img`, `cia`, and `vec` layer download path
-- clear task status and failure retry experience
-
-## Interface Boundaries
-
-Before moving code, define stable interfaces for:
-
+- API and optional auth
 - map source configuration
-- area selection, including bounding boxes and GeoJSON regions
-- task creation
-- task and child-task status
-- failure records and retry behavior
-- output artifact creation and download
+- area selection: bbox and GeoJSON regions
+- task and child-source creation
+- task status, pause, resume, cancel, and purge
+- scheduled jobs
+- SQLite task/run/source/artifact/failure metadata
+- output packaging and downloads
+- Docker and service deployment assets
 
-Do not merge by directly copying files between projects. First isolate the
-domain model and API contracts, then port only the pieces that fit the target
-architecture.
+## Remaining Cleanup
 
-## Suggested Phases
-
-1. Keep the repository structure stable under `apps/` and release both apps as
-   independently runnable examples.
-2. Extract a common task model that can represent both range downloads and
-   administrative-region downloads.
-3. Normalize map source configuration and token handling.
-4. Add bounding-box task creation to the Go backend.
-5. Port the range selection UI into the unified Web frontend.
-6. Retire duplicated download logic after both modes use the same task engine
-   and artifact pipeline.
-
-## Non-Goals Before Merge
-
-- Do not import old source folders, UI packages, temporary files, screenshots,
-  runtime databases, downloaded tiles, or release archives.
-- Do not commit real service tokens.
-- Do not make deployment depend on machine-local paths.
+- Continue reducing old `plans` naming in favor of `tasks` only after migration
+  compatibility is no longer needed.
+- Improve failure retry UX on top of the persisted failure records.
+- Add browser automation for range-mode and region-mode smoke tests when a
+  local browser automation dependency is available.
+- Keep real service tokens out of Git and keep runtime outputs in ignored
+  filesystem paths.

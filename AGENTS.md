@@ -4,9 +4,11 @@ These rules apply to every Codex or AI-assisted change in this repository.
 
 ## Repository Scope
 
-- Only work on the two in-repository applications:
-  - `apps/range-downloader`
+- Only work on the in-repository Go application:
   - `apps/admin-region-tiler`
+- The old .NET range downloader has been retired after its bbox workflow was
+  ported into the Go app. Keep historical notes in `docs/range-migration.md`
+  instead of reintroducing runtime code.
 - Do not import old local source folders, release packages, UI design packages,
   temporary directories, screenshots, runtime databases, downloaded tiles, or
   machine-local run data.
@@ -49,8 +51,6 @@ not run.
 
 - Run the narrowest meaningful check before claiming completion.
 - Commit the validated batch before starting the next implementation batch.
-- For `apps/range-downloader`, prefer:
-  `dotnet build .\TianDiTuDownLoader.Web.csproj -c Release`.
 - For `apps/admin-region-tiler`, prefer: `go test ./...`.
 - For frontend script edits, run `node --check` on the changed JavaScript file.
 - If a check cannot be run, state the exact environment limit.
@@ -65,4 +65,4 @@ not run.
   `docs/long-term-memory.md` when a durable fact, decision, assumption,
   validation result, or next action changes.
 - Prefer the local skill in `.codex/skills/two-projects-handoff/` for
-  repository-specific AI-assisted maintenance and merge planning.
+  repository-specific AI-assisted maintenance and post-merge cleanup.

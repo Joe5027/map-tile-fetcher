@@ -1,18 +1,16 @@
 # Map Tile Fetcher
 
-Map Tile Fetcher 正在合并为一个基于 Go 的 Web 应用，用于按地图框选范围或行政区划
+Map Tile Fetcher 是一个基于 Go 的 Web 应用，用于按地图框选范围或行政区划
 GeoJSON 下载地图瓦片。
 
-当前仓库在合并过渡期仍保留两个来源应用。Go 应用是后端基座；.NET 范围下载器只作为
-框选交互和简洁天地图下载流程的参考，直到这些能力完整迁移到 Go 应用中。
+旧 .NET 范围下载器的核心流程已经迁移到 Go 应用中，旧运行代码已退休。历史迁移说明见
+[`docs/range-migration.md`](docs/range-migration.md)。
 
 ## 仓库结构
 
-- `apps/admin-region-tiler` - Go 1.25+ Web 应用，支持行政区划 GeoJSON、多地图源、
-  多任务、计划任务、持久化状态、Docker 部署和产物下载。
-- `apps/range-downloader` - 旧 .NET 6 参考应用，支持地图框选、输入天地图 token，并
-  下载 `img`、`cia`、`vec` 图层。
-- `docs/merge-plan.md` - 两个应用合并为单一产品的路线。
+- `apps/admin-region-tiler` - Go 1.25+ Web 应用，支持范围下载、行政区划下载、
+  多地图源、子任务、计划任务、SQLite 控制状态、失败记录、Docker 部署和产物下载。
+- `docs/merge-plan.md` - 当前合并后的清理和架构方向。
 - `README.md` - 与本文对应的英文 README。
 
 仓库不包含旧还原源码目录、UI 设计包、临时目录、截图、运行数据库、下载瓦片或历史发布包。
@@ -20,9 +18,9 @@ GeoJSON 下载地图瓦片。
 ## 产品方向
 
 - 后端：只保留 Go。
-- 数据库：SQLite 作为轻量控制数据库，用于任务、运行记录、状态、可选登录会话、失败记录、
-  产物索引和计划任务。
-- 存储：下载瓦片、MBTiles、ZIP/TAR 产物、日志和运行数据放在文件系统中，不进入 Git。
+- 数据库：SQLite 作为轻量控制数据库，用于任务、运行记录、任务源、状态、可选登录会话、
+  失败记录、产物索引和计划任务。
+- 存储：下载瓦片、MBTiles、ZIP 产物、日志和运行数据放在文件系统中，不进入 Git。
 - 前端：一个静态 Web 界面，提供两个模式：
   - 范围框选下载
   - 行政区划下载
@@ -36,18 +34,11 @@ cd apps/admin-region-tiler
 go test ./...
 ```
 
-在旧范围下载器仍保留期间，验证 .NET 参考应用：
-
-```powershell
-cd apps/range-downloader
-dotnet build .\TianDiTuDownLoader.Web.csproj -c Release
-```
-
 前端脚本变更后验证：
 
 ```powershell
-node --check apps/admin-region-tiler/static/script.js
-node --check apps/range-downloader/wwwroot/app.js
+cd apps/admin-region-tiler
+node --check .\static\script.js
 ```
 
 ## 本地运行注意事项

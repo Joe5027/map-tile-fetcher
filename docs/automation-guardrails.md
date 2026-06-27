@@ -34,7 +34,8 @@ Review the current repository as a read-only Codex workspace harness check.
 
 Facts:
 - Start from AGENTS.md, docs/project-map.md, docs/done-definition.md, and git status.
-- Confirm the repository still only contains the two in-scope apps under apps/range-downloader and apps/admin-region-tiler.
+- Confirm the repository only contains the in-scope app under apps/admin-region-tiler.
+- Confirm retired .NET range downloader runtime code has not reappeared.
 - Check for drift between README.md, PROJECT_MANIFEST.md, RELEASE_HANDOFF_PROMPT.md, LICENSE, and docs/merge-plan.md.
 - Check that docs/long-term-memory.md still follows the handoff contract if it exists.
 - Check for sensitive token or password literals, allowing documented placeholders and the documented development default admin password only.

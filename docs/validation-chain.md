@@ -7,20 +7,17 @@ the touched surface, but keep the chain order intact.
 
 Confirm the change affects only:
 
-- `apps/range-downloader`
 - `apps/admin-region-tiler`
 - repository-level docs, rules, local skills, or validation surfaces that support
-  those two apps
+  the Go app
 
 Do not import old source folders, release packages, screenshots, runtime data,
-or generated tile outputs.
+generated tile outputs, or retired .NET runtime code.
 
 ## 2. Source Truth Gate
 
 For source or behavior changes, read the owning files before editing:
 
-- range downloader: `apps/range-downloader/README.md`, `Program.cs`, affected
-  `wwwroot/*`
 - admin tiler: `apps/admin-region-tiler/README.md`, `main.go`, `server.go`,
   `runtime.go`, `task.go`, `db.go`, affected `static/*`
 - merge or release docs: `PROJECT_MANIFEST.md`, `docs/merge-plan.md`,
@@ -38,18 +35,8 @@ For AI-control changes, read:
 Run the relevant command from the app directory:
 
 ```powershell
-cd apps/range-downloader
-dotnet build .\TianDiTuDownLoader.Web.csproj -c Release
-```
-
-```powershell
 cd apps/admin-region-tiler
 go test ./...
-```
-
-```powershell
-cd apps/range-downloader
-node --check .\wwwroot\app.js
 ```
 
 ```powershell
