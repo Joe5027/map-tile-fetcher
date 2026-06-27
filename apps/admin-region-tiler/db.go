@@ -124,6 +124,20 @@ type TaskRunRecord struct {
 	UpdatedAt      time.Time
 }
 
+type FailureRecord struct {
+	TaskID       string
+	RunID        string
+	SourceID     string
+	Z            int
+	X            int
+	Y            int
+	URL          string
+	ErrorMessage string
+	Retryable    bool
+	Attempt      int
+	CreatedAt    time.Time
+}
+
 type SQLiteStore struct {
 	db *sql.DB
 }
@@ -593,6 +607,103 @@ func (s *SQLiteStore) upsertArtifactFromRun(run *TaskRunRecord) error {
 		now,
 	)
 	return err
+}
+
+func (s *SQLiteStore) replaceFailureRecords(run *TaskRunRecord, records []TileFailureRecord) error {
+	if run == nil {
+		return nil
+	}
+	taskID, err := s.taskIDForPlan(run.PlanID)
+	if err != nil {
+		return err
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`DELETE FROM failures WHERE run_id = ?`, run.ID); err != nil {
+		return err
+	}
+
+	for index, record := range records {
+		createdAt := record.CreatedAt
+		if createdAt.IsZero() {
+			createdAt = time.Now()
+		}
+		retryable := 0
+		if record.Retryable {
+			retryable = 1
+		}
+		if _, err := tx.Exec(
+			`INSERT INTO failures (
+				id, task_id, run_id, source_id, z, x, y, url, error_message, retryable, attempt, created_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			fmt.Sprintf("%s:%d", run.ID, index),
+			taskID,
+			run.ID,
+			"",
+			record.Z,
+			record.X,
+			record.Y,
+			record.URL,
+			record.ErrorMessage,
+			retryable,
+			record.Attempt,
+			createdAt.Unix(),
+		); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
+func (s *SQLiteStore) listFailureRecords(planID string) ([]FailureRecord, error) {
+	taskID, err := s.taskIDForPlan(planID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.Query(
+		`SELECT task_id, run_id, source_id, z, x, y, url, error_message, retryable, attempt, created_at
+		   FROM failures
+		  WHERE task_id = ?
+		  ORDER BY created_at DESC, id DESC
+		  LIMIT 1000`,
+		taskID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	records := make([]FailureRecord, 0)
+	for rows.Next() {
+		var record FailureRecord
+		var retryable int
+		var createdAt int64
+		if err := rows.Scan(
+			&record.TaskID,
+			&record.RunID,
+			&record.SourceID,
+			&record.Z,
+			&record.X,
+			&record.Y,
+			&record.URL,
+			&record.ErrorMessage,
+			&retryable,
+			&record.Attempt,
+			&createdAt,
+		); err != nil {
+			return nil, err
+		}
+		record.Retryable = retryable == 1
+		record.CreatedAt = time.Unix(createdAt, 0)
+		records = append(records, record)
+	}
+	return records, rows.Err()
 }
 
 func (s *SQLiteStore) taskIDForPlan(planID string) (string, error) {

@@ -103,6 +103,20 @@ type TaskResponse struct {
 	Children          []TaskResponse `json:"children,omitempty"`
 }
 
+type FailureRecordResponse struct {
+	TaskID       string `json:"taskId"`
+	RunID        string `json:"runId"`
+	SourceID     string `json:"sourceId,omitempty"`
+	Z            int    `json:"z"`
+	X            int    `json:"x"`
+	Y            int    `json:"y"`
+	URL          string `json:"url"`
+	ErrorMessage string `json:"errorMessage"`
+	Retryable    bool   `json:"retryable"`
+	Attempt      int    `json:"attempt"`
+	CreatedAt    string `json:"createdAt"`
+}
+
 type AuthLoginRequest struct {
 	Username string `json:"username" binding:"required"`
 	Password string `json:"password" binding:"required"`
@@ -175,6 +189,7 @@ func initServer() {
 		protected.DELETE("/tasks/:id", cancelTask)
 		protected.DELETE("/tasks/:id/purge", purgeTask)
 		protected.GET("/tasks/:id/download", downloadTaskArtifact)
+		protected.GET("/tasks/:id/failures", getTaskFailures)
 
 		protected.GET("/maps", getMaps)
 		protected.GET("/config/tilemaps", getConfiguredMaps)
@@ -412,6 +427,36 @@ func downloadTaskArtifact(c *gin.Context) {
 		return
 	}
 	c.FileAttachment(plan.LastRun.ArtifactPath, plan.LastRun.ArtifactName)
+}
+
+func getTaskFailures(c *gin.Context) {
+	plan, err := loadPlanForCurrentUser(c, c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "task not found"})
+		return
+	}
+	records, err := store.listFailureRecords(plan.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load failure records"})
+		return
+	}
+	response := make([]FailureRecordResponse, 0, len(records))
+	for _, record := range records {
+		response = append(response, FailureRecordResponse{
+			TaskID:       record.TaskID,
+			RunID:        record.RunID,
+			SourceID:     record.SourceID,
+			Z:            record.Z,
+			X:            record.X,
+			Y:            record.Y,
+			URL:          record.URL,
+			ErrorMessage: record.ErrorMessage,
+			Retryable:    record.Retryable,
+			Attempt:      record.Attempt,
+			CreatedAt:    record.CreatedAt.Format(time.RFC3339),
+		})
+	}
+	c.JSON(http.StatusOK, response)
 }
 
 func loadPlanForCurrentUser(c *gin.Context, id string) (*PlanRecord, error) {

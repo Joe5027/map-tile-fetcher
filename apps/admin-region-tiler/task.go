@@ -105,21 +105,34 @@ type Task struct {
 	tileWG     sync.WaitGroup
 	saveWG     sync.WaitGroup
 
-	mu            sync.RWMutex
-	pauseCond     *sync.Cond
-	throttleUntil time.Time
-	throttleLevel int
-	retryMu       sync.Mutex
-	retryQueue    []TileJob
-	clientMu      sync.Mutex
-	clientCache   map[string]*http.Client
-	proxyRotator  *proxyRotator
+	mu             sync.RWMutex
+	pauseCond      *sync.Cond
+	throttleUntil  time.Time
+	throttleLevel  int
+	retryMu        sync.Mutex
+	retryQueue     []TileJob
+	failureMu      sync.Mutex
+	failureRecords []TileFailureRecord
+	clientMu       sync.Mutex
+	clientCache    map[string]*http.Client
+	proxyRotator   *proxyRotator
 }
 
 type TileJob struct {
 	Tile maptile.Tile
 	URL  string
 	Pass int
+}
+
+type TileFailureRecord struct {
+	Z            int
+	X            int
+	Y            int
+	URL          string
+	ErrorMessage string
+	Retryable    bool
+	Attempt      int
+	CreatedAt    time.Time
 }
 
 type HTTPStatusError struct {
@@ -547,8 +560,10 @@ func (task *Task) runFetchers() {
 						return
 					}
 					if task.scheduleRetry(job, err) {
+						task.recordTileFailure(job, err, true)
 						continue
 					}
+					task.recordTileFailure(job, err, false)
 					task.markProcessed(false, err)
 				}
 			}
@@ -662,6 +677,33 @@ func (task *Task) scheduleRetry(job TileJob, err error) bool {
 	})
 	task.retryMu.Unlock()
 	return true
+}
+
+func (task *Task) recordTileFailure(job TileJob, err error, retryable bool) {
+	if err == nil {
+		return
+	}
+	record := TileFailureRecord{
+		Z:            int(job.Tile.Z),
+		X:            int(job.Tile.X),
+		Y:            int(job.Tile.Y),
+		URL:          prepareTileURL(job.Tile, job.URL),
+		ErrorMessage: err.Error(),
+		Retryable:    retryable,
+		Attempt:      job.Pass + 1,
+		CreatedAt:    time.Now(),
+	}
+	task.failureMu.Lock()
+	task.failureRecords = append(task.failureRecords, record)
+	task.failureMu.Unlock()
+}
+
+func (task *Task) FailureRecords() []TileFailureRecord {
+	task.failureMu.Lock()
+	defer task.failureMu.Unlock()
+	records := make([]TileFailureRecord, len(task.failureRecords))
+	copy(records, task.failureRecords)
+	return records
 }
 
 func (task *Task) nextRetryBatch() []TileJob {

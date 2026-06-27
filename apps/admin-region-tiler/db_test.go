@@ -163,6 +163,74 @@ func TestCreateRunAndFinalizeRunMirrorTaskIDAndArtifact(t *testing.T) {
 	}
 }
 
+func TestReplaceFailureRecordsPersistsRetryableTiles(t *testing.T) {
+	store := newSQLiteTestStore(t)
+	runAt := time.Unix(2000, 0)
+	plan := &PlanRecord{
+		ID:           "task-3",
+		UserID:       7,
+		Kind:         PlanKindSingle,
+		Name:         "failure task",
+		SourceName:   "天地图 img 卫星图",
+		URL:          "https://example.test/img/{z}/{x}/{y}.png",
+		Format:       PNG,
+		Schema:       "xyz",
+		ScheduleMode: ScheduleImmediate,
+		RunAt:        runAt,
+		Status:       PlanScheduled,
+		Levels:       []LevelConfig{{MinZoom: 1, MaxZoom: 1, Geojson: "data/generated-areas/bbox-test.geojson"}},
+	}
+	if err := store.createPlan(plan); err != nil {
+		t.Fatalf("create plan failed: %v", err)
+	}
+	run := &TaskRunRecord{
+		ID:             "run-2",
+		PlanID:         plan.ID,
+		UserID:         7,
+		Status:         TaskRunning,
+		TriggerMode:    string(ScheduleImmediate),
+		ArtifactStatus: ArtifactNone,
+	}
+	if err := store.createRun(run); err != nil {
+		t.Fatalf("create run failed: %v", err)
+	}
+
+	records := []TileFailureRecord{{
+		Z:            1,
+		X:            2,
+		Y:            3,
+		URL:          "https://example.test/img/1/2/3.png",
+		ErrorMessage: "temporary upstream failure",
+		Retryable:    true,
+		Attempt:      1,
+		CreatedAt:    time.Unix(2200, 0),
+	}}
+	if err := store.replaceFailureRecords(run, records); err != nil {
+		t.Fatalf("replace failure records failed: %v", err)
+	}
+	if err := store.replaceFailureRecords(run, records); err != nil {
+		t.Fatalf("second replace failure records failed: %v", err)
+	}
+
+	var count int
+	var retryable int
+	var attempt int
+	if err := store.db.QueryRow(`SELECT COUNT(1), MAX(retryable), MAX(attempt) FROM failures WHERE run_id = ?`, run.ID).Scan(&count, &retryable, &attempt); err != nil {
+		t.Fatalf("read failure records failed: %v", err)
+	}
+	if count != 1 || retryable != 1 || attempt != 1 {
+		t.Fatalf("unexpected failure record values: count=%d retryable=%d attempt=%d", count, retryable, attempt)
+	}
+
+	listed, err := store.listFailureRecords(plan.ID)
+	if err != nil {
+		t.Fatalf("list failure records failed: %v", err)
+	}
+	if len(listed) != 1 || !listed[0].Retryable || listed[0].Z != 1 || listed[0].X != 2 || listed[0].Y != 3 {
+		t.Fatalf("unexpected listed failure records: %#v", listed)
+	}
+}
+
 func newSQLiteTestStore(t *testing.T) *SQLiteStore {
 	t.Helper()
 	db, err := sql.Open("sqlite", ":memory:")

@@ -85,6 +85,10 @@ func runWorkerProcess(planID, runID string) error {
 	persistRunProgress(run, task)
 	applyTaskSnapshot(run, task)
 
+	if err := retryOnBusy(func() error { return store.replaceFailureRecords(run, task.FailureRecords()) }); err != nil {
+		return err
+	}
+
 	if err := prepareArtifactForRun(task, run); err != nil {
 		run.ArtifactStatus = ArtifactFailed
 		if run.ErrorMessage == "" {

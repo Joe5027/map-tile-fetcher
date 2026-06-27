@@ -50,6 +50,9 @@
   `artifacts`, and `failures`. The existing `plans` and `task_runs` runtime
   tables remain active for compatibility, with create/update/run paths mirrored
   into the new model.
+- Worker runs now persist tile failure records into SQLite and expose them at
+  `GET /api/tasks/:id/failures`. File-tree output is packaged as ZIP and
+  MBTiles output remains a direct artifact through the existing download API.
 
 ## Assumptions
 

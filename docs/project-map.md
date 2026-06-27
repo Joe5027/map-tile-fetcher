@@ -96,7 +96,8 @@ Important endpoints:
   - isolated worker execution and run-progress persistence
 - `task.go`
   - tile download engine, output setup, file/MBTiles writing, retry and throttle
-    behavior, proxy rotation, request headers, and final status
+    behavior, proxy rotation, request headers, final status, and in-run tile
+    failure capture
 - `internal/downloader`
   - contains bbox tile math shared by API validation and future range UI
     estimates
@@ -130,6 +131,7 @@ Important endpoints:
 - protected `PUT /api/tasks/:id/pause|resume`
 - protected `DELETE /api/tasks/:id`, `DELETE /api/tasks/:id/purge`
 - protected `GET /api/tasks/:id/download`
+- protected `GET /api/tasks/:id/failures`
 - protected `GET /api/maps`
 - protected `GET /api/config/tilemaps`
 - protected `GET /api/config/regions`
