@@ -26,7 +26,7 @@
    - 如需 Docker 镜像，先执行 README 里的 `dotnet publish ... -o .\publish-linux-musl`，再 `docker build`
    - `cd ..\admin-region-tiler`
    - 安装 Go 1.25+，执行 `go test ./...`
-4. 开源前确认许可证文件，当前仓库使用 MIT。
+4. 开源前确认许可证文件，当前仓库使用 Apache License 2.0。
 5. 不要提交运行目录或构建目录：`.env`、`data/`、`output/`、`tiles/`、`bin/`、`obj/`、`publish*/`、历史二进制和压缩包都不应进 Git。
 6. 单仓库初始目录保持双项目结构：
    - `apps/range-downloader`

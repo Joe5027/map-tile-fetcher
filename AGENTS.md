@@ -48,3 +48,15 @@ Conventional Commit types such as `feat`, `fix`, `docs`, `chore`, `refactor`,
 - For `apps/admin-region-tiler`, prefer: `go test ./...`.
 - For frontend script edits, run `node --check` on the changed JavaScript file.
 - If a check cannot be run, state the exact environment limit.
+
+## Local AI Control Surfaces
+
+- Start substantial work from `docs/project-map.md`, then `docs/done-definition.md`
+  and the README for the affected app.
+- Use `docs/validation-chain.md` to pick the narrowest meaningful check and
+  `docs/automation-guardrails.md` for read-only recurring review prompts.
+- For merge, release, or long-running handoff work, update
+  `docs/long-term-memory.md` when a durable fact, decision, assumption,
+  validation result, or next action changes.
+- Prefer the local skill in `.codex/skills/two-projects-handoff/` for
+  repository-specific AI-assisted maintenance and merge planning.
