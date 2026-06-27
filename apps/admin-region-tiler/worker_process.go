@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/paulmach/orb/maptile"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 )
@@ -47,6 +48,24 @@ func runWorkerProcess(planID, runID string) error {
 	if err != nil {
 		_ = failRunBeforeStart(plan, run, err)
 		return err
+	}
+	if run.TriggerMode == triggerRetryFailures {
+		var records []FailureRecord
+		err = retryOnBusy(func() error {
+			var innerErr error
+			records, innerErr = store.listRetryableFailureRecords(plan.ID)
+			return innerErr
+		})
+		if err != nil {
+			_ = failRunBeforeStart(plan, run, err)
+			return err
+		}
+		retryJobs := tileJobsFromFailureRecords(records)
+		if len(retryJobs) == 0 {
+			_ = failRunBeforeStart(plan, run, errNoRetryableFailures)
+			return errNoRetryableFailures
+		}
+		task.SetExplicitJobs(retryJobs)
 	}
 
 	run.Total = task.Total
@@ -111,6 +130,26 @@ func runWorkerProcess(planID, runID string) error {
 		}
 	}
 	return nil
+}
+
+func tileJobsFromFailureRecords(records []FailureRecord) []TileJob {
+	jobs := make([]TileJob, 0, len(records))
+	seen := make(map[string]struct{}, len(records))
+	for _, record := range records {
+		if !record.Retryable || record.Z < 0 || record.X < 0 || record.Y < 0 || strings.TrimSpace(record.URL) == "" {
+			continue
+		}
+		key := fmt.Sprintf("%d/%d/%d/%s", record.Z, record.X, record.Y, strings.TrimSpace(record.URL))
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		jobs = append(jobs, TileJob{
+			Tile: maptile.New(uint32(record.X), uint32(record.Y), maptile.Zoom(record.Z)),
+			URL:  strings.TrimSpace(record.URL),
+		})
+	}
+	return jobs
 }
 
 func launchWorkerProcess(planID, runID string) (*exec.Cmd, error) {

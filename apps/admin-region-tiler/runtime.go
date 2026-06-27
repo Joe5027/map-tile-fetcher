@@ -34,6 +34,10 @@ type Scheduler struct {
 
 var runtimeManager *RuntimeManager
 
+const triggerRetryFailures = "retry_failures"
+
+var errNoRetryableFailures = errors.New("no retryable failures")
+
 func NewRuntimeManager() *RuntimeManager {
 	return &RuntimeManager{
 		active: make(map[string]*ActiveRun),
@@ -83,10 +87,37 @@ func (s *Scheduler) dispatchDuePlans() {
 var errTaskAlreadyActive = errors.New("task already active")
 
 func (m *RuntimeManager) StartPlan(plan *PlanRecord) error {
+	return m.startPlanWithTrigger(plan, string(plan.ScheduleMode))
+}
+
+func (m *RuntimeManager) RetryFailures(plan *PlanRecord) error {
+	return m.startPlanWithTrigger(plan, triggerRetryFailures)
+}
+
+func (m *RuntimeManager) startPlanWithTrigger(plan *PlanRecord, triggerMode string) error {
 	if plan.Kind == PlanKindGroup {
 		children, err := store.listChildrenByParent(plan.ID)
 		if err != nil {
 			return err
+		}
+		if triggerMode == triggerRetryFailures {
+			eligible := make([]*PlanRecord, 0, len(children))
+			for _, child := range children {
+				if child.Status == PlanCancelled {
+					continue
+				}
+				summary, err := store.failureSummary(child.ID)
+				if err != nil {
+					return err
+				}
+				if summary.Retryable > 0 {
+					eligible = append(eligible, child)
+				}
+			}
+			if len(eligible) == 0 {
+				return errNoRetryableFailures
+			}
+			children = eligible
 		}
 		if err := store.updatePlanStatus(plan.ID, PlanRunning); err != nil {
 			return err
@@ -96,7 +127,7 @@ func (m *RuntimeManager) StartPlan(plan *PlanRecord) error {
 			if child.Status == PlanCancelled {
 				continue
 			}
-			if err := m.StartPlan(child); err == nil {
+			if err := m.startPlanWithTrigger(child, triggerMode); err == nil {
 				started = true
 				continue
 			} else if !errors.Is(err, errTaskAlreadyActive) {
@@ -104,9 +135,22 @@ func (m *RuntimeManager) StartPlan(plan *PlanRecord) error {
 			}
 		}
 		if !started {
+			if triggerMode == triggerRetryFailures {
+				return errNoRetryableFailures
+			}
 			return m.refreshParentStatus(plan.ID)
 		}
 		return nil
+	}
+
+	if triggerMode == triggerRetryFailures {
+		summary, err := store.failureSummary(plan.ID)
+		if err != nil {
+			return err
+		}
+		if summary.Retryable == 0 {
+			return errNoRetryableFailures
+		}
 	}
 
 	m.mu.Lock()
@@ -129,7 +173,7 @@ func (m *RuntimeManager) StartPlan(plan *PlanRecord) error {
 		PlanID:         plan.ID,
 		UserID:         plan.UserID,
 		Status:         TaskRunning,
-		TriggerMode:    string(plan.ScheduleMode),
+		TriggerMode:    triggerMode,
 		ArtifactStatus: ArtifactNone,
 		StartedAt:      &now,
 		Total:          task.Total,

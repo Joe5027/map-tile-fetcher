@@ -1229,6 +1229,7 @@ function renderGroupTask(task) {
                                 <button type="button" data-task-action="pause" data-task-id="${task.id}" data-task-status="${task.status}">暂停全部</button>
                                 <button type="button" data-task-action="resume" data-task-id="${task.id}" data-task-status="${task.status}">恢复全部</button>
                                 <button type="button" data-task-action="cancel" data-task-id="${task.id}" data-task-status="${task.status}">取消全部</button>
+                                ${canRetryFailures(task) ? `<button type="button" data-task-action="retryFailures" data-task-id="${task.id}" data-task-status="${task.status}">重试失败瓦片</button>` : ""}
                                 <button type="button" data-task-action="delete" data-task-id="${task.id}" data-task-status="${task.status}">删除任务</button>
                             </div>
                         </div>
@@ -1293,6 +1294,7 @@ function renderStandaloneTask(task) {
                                 <button type="button" data-task-action="pause" data-task-id="${task.id}" data-task-status="${task.status}">暂停任务</button>
                                 <button type="button" data-task-action="resume" data-task-id="${task.id}" data-task-status="${task.status}">恢复任务</button>
                                 <button type="button" data-task-action="cancel" data-task-id="${task.id}" data-task-status="${task.status}">取消任务</button>
+                                ${canRetryFailures(task) ? `<button type="button" data-task-action="retryFailures" data-task-id="${task.id}" data-task-status="${task.status}">重试失败瓦片</button>` : ""}
                                 <button type="button" data-task-action="delete" data-task-id="${task.id}" data-task-status="${task.status}">删除任务</button>
                             </div>
                         </div>
@@ -1484,6 +1486,9 @@ async function handleTaskAction(action, taskId, status) {
     case "cancel":
         await cancelTask(taskId, status);
         break;
+    case "retryFailures":
+        await retryFailures(taskId);
+        break;
     case "delete":
         await purgeTask(taskId, status);
         break;
@@ -1653,6 +1658,13 @@ async function purgeTask(id, status, silent = false) {
     await mutateTask(`/api/tasks/${id}/purge`, "DELETE", silent);
 }
 
+async function retryFailures(id) {
+    if (!window.confirm("确定只重试该任务记录中的可重试失败瓦片吗？")) {
+        return;
+    }
+    await mutateTask(`/api/tasks/${id}/retry-failures`, "POST");
+}
+
 async function mutateTask(url, method = "PUT", silent = false) {
     const response = await fetchJSON(url, { method });
     if (!response.ok) {
@@ -1728,6 +1740,10 @@ function canCancel(status) {
 
 function canDelete(status) {
     return status === "completed" || status === "failed" || status === "cancelled" || status === "partial_failed";
+}
+
+function canRetryFailures(task) {
+    return Boolean(task && task.canRetryFailures && Number(task.retryableFailureCount || 0) > 0);
 }
 
 function formatDate(value) {

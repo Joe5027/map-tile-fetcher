@@ -100,10 +100,11 @@ type Task struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	jobs       chan TileJob
-	savingpipe chan Tile
-	tileWG     sync.WaitGroup
-	saveWG     sync.WaitGroup
+	jobs         chan TileJob
+	savingpipe   chan Tile
+	tileWG       sync.WaitGroup
+	saveWG       sync.WaitGroup
+	explicitJobs []TileJob
 
 	mu             sync.RWMutex
 	pauseCond      *sync.Cond
@@ -209,6 +210,35 @@ func NewTask(layers []Layer, m TileMap, opts TaskOptions) *Task {
 	}
 
 	return task
+}
+
+func (task *Task) SetExplicitJobs(jobs []TileJob) {
+	task.mu.Lock()
+	defer task.mu.Unlock()
+
+	task.explicitJobs = make([]TileJob, 0, len(jobs))
+	minZoom := int(^uint(0) >> 1)
+	maxZoom := -1
+	for _, job := range jobs {
+		task.explicitJobs = append(task.explicitJobs, job)
+		zoom := int(job.Tile.Z)
+		if zoom < minZoom {
+			minZoom = zoom
+		}
+		if zoom > maxZoom {
+			maxZoom = zoom
+		}
+	}
+	task.Total = int64(len(task.explicitJobs))
+	task.Current = 0
+	task.SuccessCount = 0
+	task.FailureCount = 0
+	if minZoom != int(^uint(0)>>1) {
+		task.Min = minZoom
+	}
+	if maxZoom >= 0 {
+		task.Max = maxZoom
+	}
 }
 
 func buildTaskFromRequest(req CreateTaskRequest) (*Task, error) {
@@ -869,6 +899,10 @@ func (task *Task) saveTile(tile Tile) error {
 }
 
 func (task *Task) enqueueTiles() error {
+	if len(task.explicitJobs) > 0 {
+		return task.enqueueExplicitJobs()
+	}
+
 	for _, layer := range task.Layers {
 		if err := task.waitIfPaused(); err != nil {
 			return err
@@ -898,6 +932,29 @@ func (task *Task) enqueueTiles() error {
 		}
 
 		bar.FinishPrint(fmt.Sprintf("Task %s Zoom %d queued", task.ID, layer.Zoom))
+	}
+
+	return nil
+}
+
+func (task *Task) enqueueExplicitJobs() error {
+	bar := pb.New64(int64(len(task.explicitJobs))).Prefix("Retry : ").Postfix("\n")
+	bar.Start()
+	defer bar.Finish()
+
+	for _, job := range task.explicitJobs {
+		if err := task.waitIfPaused(); err != nil {
+			return err
+		}
+		select {
+		case <-task.ctx.Done():
+			return task.ctx.Err()
+		case task.jobs <- job:
+			bar.Increment()
+			if task.Bar != nil {
+				task.Bar.Increment()
+			}
+		}
 	}
 
 	return nil

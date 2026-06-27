@@ -72,35 +72,37 @@ type CreateTaskRequest struct {
 }
 
 type TaskResponse struct {
-	ID                string         `json:"id"`
-	ParentID          string         `json:"parentId,omitempty"`
-	Kind              string         `json:"kind"`
-	Name              string         `json:"name"`
-	SourceName        string         `json:"sourceName,omitempty"`
-	File              string         `json:"file,omitempty"`
-	MinZoom           int            `json:"minZoom"`
-	MaxZoom           int            `json:"maxZoom"`
-	Total             int64          `json:"total"`
-	Current           int64          `json:"current"`
-	Progress          float64        `json:"progress"`
-	Status            string         `json:"status"`
-	SuccessCount      int64          `json:"successCount"`
-	FailureCount      int64          `json:"failureCount"`
-	StartedAt         string         `json:"startedAt,omitempty"`
-	FinishedAt        string         `json:"finishedAt,omitempty"`
-	ErrorMessage      string         `json:"errorMessage,omitempty"`
-	ScheduleMode      ScheduleMode   `json:"scheduleMode"`
-	RunAt             string         `json:"runAt"`
-	ArtifactStatus    ArtifactStatus `json:"artifactStatus"`
-	ArtifactName      string         `json:"artifactName,omitempty"`
-	DownloadURL       string         `json:"downloadUrl,omitempty"`
-	TotalChildren     int            `json:"totalChildren,omitempty"`
-	CompletedChildren int            `json:"completedChildren,omitempty"`
-	RunningChildren   int            `json:"runningChildren,omitempty"`
-	PausedChildren    int            `json:"pausedChildren,omitempty"`
-	FailedChildren    int            `json:"failedChildren,omitempty"`
-	CancelledChildren int            `json:"cancelledChildren,omitempty"`
-	Children          []TaskResponse `json:"children,omitempty"`
+	ID                    string         `json:"id"`
+	ParentID              string         `json:"parentId,omitempty"`
+	Kind                  string         `json:"kind"`
+	Name                  string         `json:"name"`
+	SourceName            string         `json:"sourceName,omitempty"`
+	File                  string         `json:"file,omitempty"`
+	MinZoom               int            `json:"minZoom"`
+	MaxZoom               int            `json:"maxZoom"`
+	Total                 int64          `json:"total"`
+	Current               int64          `json:"current"`
+	Progress              float64        `json:"progress"`
+	Status                string         `json:"status"`
+	SuccessCount          int64          `json:"successCount"`
+	FailureCount          int64          `json:"failureCount"`
+	RetryableFailureCount int64          `json:"retryableFailureCount"`
+	CanRetryFailures      bool           `json:"canRetryFailures"`
+	StartedAt             string         `json:"startedAt,omitempty"`
+	FinishedAt            string         `json:"finishedAt,omitempty"`
+	ErrorMessage          string         `json:"errorMessage,omitempty"`
+	ScheduleMode          ScheduleMode   `json:"scheduleMode"`
+	RunAt                 string         `json:"runAt"`
+	ArtifactStatus        ArtifactStatus `json:"artifactStatus"`
+	ArtifactName          string         `json:"artifactName,omitempty"`
+	DownloadURL           string         `json:"downloadUrl,omitempty"`
+	TotalChildren         int            `json:"totalChildren,omitempty"`
+	CompletedChildren     int            `json:"completedChildren,omitempty"`
+	RunningChildren       int            `json:"runningChildren,omitempty"`
+	PausedChildren        int            `json:"pausedChildren,omitempty"`
+	FailedChildren        int            `json:"failedChildren,omitempty"`
+	CancelledChildren     int            `json:"cancelledChildren,omitempty"`
+	Children              []TaskResponse `json:"children,omitempty"`
 }
 
 type FailureRecordResponse struct {
@@ -190,6 +192,7 @@ func initServer() {
 		protected.DELETE("/tasks/:id/purge", purgeTask)
 		protected.GET("/tasks/:id/download", downloadTaskArtifact)
 		protected.GET("/tasks/:id/failures", getTaskFailures)
+		protected.POST("/tasks/:id/retry-failures", retryTaskFailures)
 
 		protected.GET("/maps", getMaps)
 		protected.GET("/config/tilemaps", getConfiguredMaps)
@@ -457,6 +460,50 @@ func getTaskFailures(c *gin.Context) {
 		})
 	}
 	c.JSON(http.StatusOK, response)
+}
+
+func retryTaskFailures(c *gin.Context) {
+	plan, err := loadPlanForCurrentUser(c, c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "task not found"})
+		return
+	}
+	if !canRetryFailureStatus(plan.Status) {
+		c.JSON(http.StatusConflict, gin.H{"error": "task status does not allow failure retry"})
+		return
+	}
+	summary, err := store.failureSummary(plan.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to inspect failure records"})
+		return
+	}
+	if summary.Retryable == 0 {
+		c.JSON(http.StatusConflict, gin.H{"error": "task has no retryable failures"})
+		return
+	}
+	if err := runtimeManager.RetryFailures(plan); err != nil {
+		if errors.Is(err, errNoRetryableFailures) {
+			c.JSON(http.StatusConflict, gin.H{"error": "task has no retryable failures"})
+			return
+		}
+		if errors.Is(err, errTaskAlreadyActive) {
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	refreshed, _ := store.getPlanForUser(plan.UserID, plan.ID)
+	c.JSON(http.StatusAccepted, planResponseFromPlan(refreshed))
+}
+
+func canRetryFailureStatus(status PlanStatus) bool {
+	switch status {
+	case PlanFailed, PlanPartialFailed, PlanCompleted:
+		return true
+	default:
+		return false
+	}
 }
 
 func loadPlanForCurrentUser(c *gin.Context, id string) (*PlanRecord, error) {
@@ -783,6 +830,7 @@ func planResponseFromPlan(plan *PlanRecord) TaskResponse {
 
 	if plan.Kind == PlanKindGroup {
 		applyGroupSummary(plan, &response)
+		applyFailureSummary(plan.ID, &response)
 		return response
 	}
 
@@ -811,7 +859,24 @@ func planResponseFromPlan(plan *PlanRecord) TaskResponse {
 		}
 	}
 
+	applyFailureSummary(plan.ID, &response)
 	return response
+}
+
+func applyFailureSummary(planID string, response *TaskResponse) {
+	if store == nil {
+		return
+	}
+	summary, err := store.failureSummary(planID)
+	if err != nil {
+		log.Warnf("failed to load failure summary for task %s: %v", planID, err)
+		return
+	}
+	if summary.Total > response.FailureCount {
+		response.FailureCount = summary.Total
+	}
+	response.RetryableFailureCount = summary.Retryable
+	response.CanRetryFailures = summary.Retryable > 0 && canRetryFailureStatus(PlanStatus(response.Status))
 }
 
 func effectiveTaskStatusForResponse(plan *PlanRecord, run *TaskRunRecord) TaskStatus {

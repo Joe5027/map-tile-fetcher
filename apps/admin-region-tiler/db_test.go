@@ -231,6 +231,92 @@ func TestReplaceFailureRecordsPersistsRetryableTiles(t *testing.T) {
 	}
 }
 
+func TestFailureRecordsAreScopedByChildSource(t *testing.T) {
+	store := newSQLiteTestStore(t)
+	runAt := time.Unix(2000, 0)
+	parent := &PlanRecord{
+		ID:           "task-4",
+		UserID:       7,
+		Kind:         PlanKindGroup,
+		Name:         "multi-source task",
+		URL:          "https://example.test/img/{z}/{x}/{y}.png",
+		Format:       PNG,
+		Schema:       "xyz",
+		ScheduleMode: ScheduleImmediate,
+		RunAt:        runAt,
+		Status:       PlanScheduled,
+		Levels:       []LevelConfig{{MinZoom: 1, MaxZoom: 1, Geojson: "data/generated-areas/bbox-test.geojson"}},
+	}
+	childA := &PlanRecord{
+		ID:           "source-a",
+		UserID:       7,
+		ParentID:     parent.ID,
+		Kind:         PlanKindChild,
+		Name:         parent.Name,
+		SourceName:   "img",
+		URL:          parent.URL,
+		Format:       PNG,
+		Schema:       "xyz",
+		ScheduleMode: ScheduleImmediate,
+		RunAt:        runAt,
+		Status:       PlanScheduled,
+		Levels:       parent.Levels,
+	}
+	childB := *childA
+	childB.ID = "source-b"
+	childB.SourceName = "cia"
+	childB.URL = "https://example.test/cia/{z}/{x}/{y}.png"
+
+	for _, plan := range []*PlanRecord{parent, childA, &childB} {
+		if err := store.createPlan(plan); err != nil {
+			t.Fatalf("create plan %s failed: %v", plan.ID, err)
+		}
+	}
+
+	runA := &TaskRunRecord{ID: "run-a", PlanID: childA.ID, UserID: 7, Status: TaskRunning, TriggerMode: string(ScheduleImmediate)}
+	runB := &TaskRunRecord{ID: "run-b", PlanID: childB.ID, UserID: 7, Status: TaskRunning, TriggerMode: string(ScheduleImmediate)}
+	if err := store.createRun(runA); err != nil {
+		t.Fatalf("create run A failed: %v", err)
+	}
+	if err := store.createRun(runB); err != nil {
+		t.Fatalf("create run B failed: %v", err)
+	}
+	if err := store.replaceFailureRecords(runA, []TileFailureRecord{{
+		Z: 1, X: 2, Y: 3, URL: "https://example.test/img/1/2/3.png", ErrorMessage: "retry", Retryable: true,
+	}}); err != nil {
+		t.Fatalf("replace failures A failed: %v", err)
+	}
+	if err := store.replaceFailureRecords(runB, []TileFailureRecord{{
+		Z: 1, X: 4, Y: 5, URL: "https://example.test/cia/1/4/5.png", ErrorMessage: "final", Retryable: false,
+	}}); err != nil {
+		t.Fatalf("replace failures B failed: %v", err)
+	}
+
+	parentSummary, err := store.failureSummary(parent.ID)
+	if err != nil {
+		t.Fatalf("parent summary failed: %v", err)
+	}
+	if parentSummary.Total != 2 || parentSummary.Retryable != 1 {
+		t.Fatalf("unexpected parent summary: %#v", parentSummary)
+	}
+
+	childSummary, err := store.failureSummary(childA.ID)
+	if err != nil {
+		t.Fatalf("child summary failed: %v", err)
+	}
+	if childSummary.Total != 1 || childSummary.Retryable != 1 {
+		t.Fatalf("unexpected child summary: %#v", childSummary)
+	}
+
+	retryable, err := store.listRetryableFailureRecords(childA.ID)
+	if err != nil {
+		t.Fatalf("retryable child records failed: %v", err)
+	}
+	if len(retryable) != 1 || retryable[0].SourceID != childA.ID {
+		t.Fatalf("unexpected retryable child records: %#v", retryable)
+	}
+}
+
 func newSQLiteTestStore(t *testing.T) *SQLiteStore {
 	t.Helper()
 	db, err := sql.Open("sqlite", ":memory:")

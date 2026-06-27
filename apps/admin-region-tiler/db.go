@@ -138,6 +138,11 @@ type FailureRecord struct {
 	CreatedAt    time.Time
 }
 
+type FailureSummary struct {
+	Total     int64
+	Retryable int64
+}
+
 type SQLiteStore struct {
 	db *sql.DB
 }
@@ -628,6 +633,7 @@ func (s *SQLiteStore) replaceFailureRecords(run *TaskRunRecord, records []TileFa
 		return err
 	}
 
+	sourceID := run.PlanID
 	for index, record := range records {
 		createdAt := record.CreatedAt
 		if createdAt.IsZero() {
@@ -644,7 +650,7 @@ func (s *SQLiteStore) replaceFailureRecords(run *TaskRunRecord, records []TileFa
 			fmt.Sprintf("%s:%d", run.ID, index),
 			taskID,
 			run.ID,
-			"",
+			sourceID,
 			record.Z,
 			record.X,
 			record.Y,
@@ -662,18 +668,21 @@ func (s *SQLiteStore) replaceFailureRecords(run *TaskRunRecord, records []TileFa
 }
 
 func (s *SQLiteStore) listFailureRecords(planID string) ([]FailureRecord, error) {
-	taskID, err := s.taskIDForPlan(planID)
+	taskID, sourceID, err := s.failureRecordScope(planID)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.Query(
-		`SELECT task_id, run_id, source_id, z, x, y, url, error_message, retryable, attempt, created_at
-		   FROM failures
-		  WHERE task_id = ?
-		  ORDER BY created_at DESC, id DESC
-		  LIMIT 1000`,
-		taskID,
-	)
+	query := `SELECT task_id, run_id, source_id, z, x, y, url, error_message, retryable, attempt, created_at
+	   FROM failures
+	  WHERE task_id = ?`
+	args := []any{taskID}
+	if sourceID != "" {
+		query += ` AND source_id = ?`
+		args = append(args, sourceID)
+	}
+	query += ` ORDER BY created_at DESC, id DESC LIMIT 1000`
+
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -704,6 +713,90 @@ func (s *SQLiteStore) listFailureRecords(planID string) ([]FailureRecord, error)
 		records = append(records, record)
 	}
 	return records, rows.Err()
+}
+
+func (s *SQLiteStore) listRetryableFailureRecords(planID string) ([]FailureRecord, error) {
+	taskID, sourceID, err := s.failureRecordScope(planID)
+	if err != nil {
+		return nil, err
+	}
+	query := `SELECT task_id, run_id, source_id, z, x, y, url, error_message, retryable, attempt, created_at
+	   FROM failures
+	  WHERE task_id = ? AND retryable = 1`
+	args := []any{taskID}
+	if sourceID != "" {
+		query += ` AND source_id = ?`
+		args = append(args, sourceID)
+	}
+	query += ` ORDER BY created_at DESC, id DESC`
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	records := make([]FailureRecord, 0)
+	for rows.Next() {
+		var record FailureRecord
+		var retryable int
+		var createdAt int64
+		if err := rows.Scan(
+			&record.TaskID,
+			&record.RunID,
+			&record.SourceID,
+			&record.Z,
+			&record.X,
+			&record.Y,
+			&record.URL,
+			&record.ErrorMessage,
+			&retryable,
+			&record.Attempt,
+			&createdAt,
+		); err != nil {
+			return nil, err
+		}
+		record.Retryable = retryable == 1
+		record.CreatedAt = time.Unix(createdAt, 0)
+		records = append(records, record)
+	}
+	return records, rows.Err()
+}
+
+func (s *SQLiteStore) failureSummary(planID string) (FailureSummary, error) {
+	taskID, sourceID, err := s.failureRecordScope(planID)
+	if err != nil {
+		return FailureSummary{}, err
+	}
+	query := `SELECT COUNT(1), COALESCE(SUM(CASE WHEN retryable = 1 THEN 1 ELSE 0 END), 0)
+	   FROM failures
+	  WHERE task_id = ?`
+	args := []any{taskID}
+	if sourceID != "" {
+		query += ` AND source_id = ?`
+		args = append(args, sourceID)
+	}
+
+	var summary FailureSummary
+	if err := s.db.QueryRow(query, args...).Scan(&summary.Total, &summary.Retryable); err != nil {
+		return FailureSummary{}, err
+	}
+	return summary, nil
+}
+
+func (s *SQLiteStore) failureRecordScope(planID string) (taskID string, sourceID string, err error) {
+	var parentID string
+	err = s.db.QueryRow(`SELECT parent_id FROM plans WHERE id = ?`, planID).Scan(&parentID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return planID, "", nil
+		}
+		return "", "", err
+	}
+	if strings.TrimSpace(parentID) != "" {
+		return parentID, planID, nil
+	}
+	return planID, "", nil
 }
 
 func (s *SQLiteStore) taskIDForPlan(planID string) (string, error) {
