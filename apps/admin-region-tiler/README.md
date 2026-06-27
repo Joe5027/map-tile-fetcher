@@ -125,4 +125,4 @@ node .\scripts\release_preflight.mjs
 - `internal/artifact`: ZIP、MBTiles 和兼容产物
 - `internal/web`: 统一静态前端辅助
 
-旧 `.NET` 范围下载器在迁移完成前只作为框选交互和简单天地图流程参考。
+旧 `.NET` 范围下载器的框选交互和简单天地图流程已迁移到当前 Go 应用，旧运行代码已退役。
