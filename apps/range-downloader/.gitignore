@@ -1,0 +1,8 @@
+bin/
+obj/
+data/
+publish*/
+*.user
+*.suo
+*.log
+.env

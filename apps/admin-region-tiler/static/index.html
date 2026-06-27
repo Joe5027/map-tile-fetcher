@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>地图图片下载中心</title>
+    <meta name="description" content="创建任务并批量下载地图图片。">
+    <link rel="icon" type="image/svg+xml" href="/static/assets/favicon/favicon.svg?v=1">
+    <link rel="stylesheet" href="/static/styles.css?v=1">
+</head>
+<body>
+    <div class="page-shell">
+        <div id="loginView" class="login-view">
+            <div class="login-card">
+                <div class="login-brand">
+                    <span class="brand-mark" aria-hidden="true">
+                        <img src="/static/assets/icons/map.svg" alt="">
+                    </span>
+                    <div>
+                        <h1>地图图片下载中心</h1>
+                        <p>创建任务，批量下载地图图片</p>
+                    </div>
+                </div>
+                <form id="loginForm" class="login-form">
+                    <label class="field">
+                        <span class="field-label">用户名</span>
+                        <input type="text" name="username" required placeholder="默认 admin">
+                    </label>
+                    <label class="field">
+                        <span class="field-label">密码</span>
+                        <input type="password" name="password" required placeholder="默认 adminmap">
+                    </label>
+                    <p id="loginError" class="message error is-hidden"></p>
+                    <button type="submit" class="primary-button wide">登录进入系统</button>
+                </form>
+            </div>
+        </div>
+
+        <div id="appView" class="app-view is-hidden">
+            <header class="topbar">
+                <div class="topbar__brand">
+                    <span class="brand-mark brand-mark--compact" aria-hidden="true">
+                        <img src="/static/assets/icons/map.svg" alt="">
+                    </span>
+                    <div>
+                        <h1>地图图片下载中心</h1>
+                        <p>创建任务，批量下载地图图片</p>
+                    </div>
+                </div>
+                <div class="topbar__actions">
+                    <div class="user-chip">
+                        <span class="user-avatar">A</span>
+                        <span id="currentUsername">admin</span>
+                        <img src="/static/assets/icons/chevron-down.svg" alt="">
+                    </div>
+                    <button id="logoutBtn" type="button" class="ghost-button">
+                        <img src="/static/assets/icons/user.svg" alt="">
+                        <span>退出登录</span>
+                    </button>
+                </div>
+            </header>
+
+            <main class="dashboard">
+                <section class="panel panel--form">
+                    <div class="panel-heading">
+                        <div>
+                            <h2>新建计划任务</h2>
+                            <p>设置下载任务，创建后立即开始执行</p>
+                        </div>
+                        <img src="/static/assets/icons/success.svg" class="panel-heading__spark" alt="">
+                    </div>
+
+                    <form id="taskForm" class="task-form">
+                        <label class="field">
+                            <span class="field-label">任务名称</span>
+                            <input type="text" name="name" required placeholder="例如：南京影像下载">
+                        </label>
+
+                        <section class="section-card">
+                            <div class="section-card__header">
+                                <h3>地图源选择</h3>
+                                <p>选择地图服务作为数据源，它们会作为一个任务下的子任务创建</p>
+                            </div>
+                            <div id="tilemapSelector" class="source-list"></div>
+                        </section>
+
+                        <section class="parameter-grid">
+                            <label class="field">
+                                <span class="field-label">下载线程</span>
+                                <select name="workers">
+                                    <option value="1">1</option>
+                                    <option value="2">2</option>
+                                    <option value="3" selected>3</option>
+                                    <option value="4">4</option>
+                                    <option value="5">5</option>
+                                </select>
+                            </label>
+                            <label class="field">
+                                <span class="field-label">保存线程</span>
+                                <select name="savePipe">
+                                    <option value="1" selected>1</option>
+                                    <option value="2">2</option>
+                                    <option value="3">3</option>
+                                    <option value="4">4</option>
+                                </select>
+                            </label>
+                            <label class="field">
+                                <span class="field-label">请求间隔(ms)</span>
+                                <input type="number" name="timeDelay" min="50" max="5000" value="80">
+                            </label>
+                        </section>
+
+                        <section class="section-card">
+                            <div class="section-card__header section-card__header--split">
+                                <div>
+                                    <h3>下载区域配置</h3>
+                                    <p>支持 GeoJSON 格式导入，最多可设置 4 级区域</p>
+                                </div>
+                                <button id="addLevelBtn" type="button" class="inline-action">
+                                    <img src="/static/assets/icons/plus.svg" alt="">
+                                    <span>添加区域</span>
+                                </button>
+                            </div>
+                            <div id="regionList" class="region-list"></div>
+                        </section>
+
+                        <p class="risk-tip">
+                            <img src="/static/assets/icons/warning.svg" alt="">
+                            <span>请求间隔过小可能导致地图服务限制访问，建议设置为 100-500ms。</span>
+                        </p>
+
+                        <p id="taskError" class="message error is-hidden"></p>
+                        <button type="submit" class="primary-button wide">
+                            <img src="/static/assets/icons/task.svg" alt="">
+                            <span>创建并启动计划任务</span>
+                        </button>
+                    </form>
+                </section>
+
+                <section class="panel panel--tasks">
+                    <div class="panel-heading panel-heading--tasks">
+                        <div>
+                            <h2>我的任务</h2>
+                            <p>管理运行状态、开始结束时间和任务进度</p>
+                        </div>
+                        <button id="refreshBtn" type="button" class="ghost-button">
+                            <img src="/static/assets/icons/refresh.svg" alt="">
+                            <span>刷新列表</span>
+                        </button>
+                    </div>
+
+                    <div id="taskStats" class="task-stats"></div>
+
+                    <div class="task-toolbar">
+                        <div id="taskSelectionMeta" class="selection-meta">未选择任务</div>
+                        <div class="toolbar-actions">
+                            <button id="taskMoreBtn" type="button" class="ghost-button ghost-button--compact">
+                                <img src="/static/assets/icons/more.svg" alt="">
+                                <span>更多操作</span>
+                            </button>
+                            <div id="taskMoreMenu" class="toolbar-menu is-hidden">
+                                <button type="button" data-bulk-action="pauseFiltered">暂停全部</button>
+                                <button type="button" data-bulk-action="resumeFiltered">恢复全部</button>
+                                <button type="button" data-bulk-action="cancelFiltered">取消全部</button>
+                                <button type="button" data-bulk-action="deleteSelected">删除已选</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="taskList" class="task-list">
+                        <div class="task-skeleton">
+                            <div class="task-skeleton__line task-skeleton__line--lg"></div>
+                            <div class="task-skeleton__line"></div>
+                            <div class="task-skeleton__line"></div>
+                        </div>
+                        <div class="task-skeleton">
+                            <div class="task-skeleton__line task-skeleton__line--lg"></div>
+                            <div class="task-skeleton__line"></div>
+                            <div class="task-skeleton__line"></div>
+                        </div>
+                    </div>
+                </section>
+            </main>
+        </div>
+    </div>
+
+    <script src="/static/script.js?v=16"></script>
+</body>
+</html>

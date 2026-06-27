@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>测试页面</title>
+</head>
+<body>
+    <h1>测试页面</h1>
+    
+    <button id="testBtn1">测试按钮1 - 直接绑定</button>
+    <br><br>
+    <button id="testBtn2">测试按钮2 - 在DOMContentLoaded中绑定</button>
+    <br><br>
+    <div id="result"></div>
+    
+    <script>
+        console.log('JavaScript开始加载');
+        
+        document.getElementById('testBtn1').addEventListener('click', function() {
+            console.log('测试按钮1被点击');
+            document.getElementById('result').innerHTML += '按钮1点击事件触发<br>';
+            alert('按钮1点击成功！');
+        });
+        
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('DOMContentLoaded事件触发');
+            document.getElementById('testBtn2').addEventListener('click', function() {
+                console.log('测试按钮2被点击');
+                document.getElementById('result').innerHTML += '按钮2点击事件触发<br>';
+                alert('按钮2点击成功！');
+            });
+        });
+        
+        console.log('JavaScript加载完成');
+    </script>
+</body>
+</html>

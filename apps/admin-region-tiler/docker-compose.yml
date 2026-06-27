@@ -1,0 +1,27 @@
+services:
+  tiler:
+    image: tiler-master:latest
+    build:
+      context: .
+    ports:
+      - "${HOST_PORT:-8081}:${APP_PORT:-8081}"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./output:/app/output
+      - ./geojson:/app/geojson
+      - ./conf.toml:/app/conf.toml:ro
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      APP_PORT: ${APP_PORT:-8081}
+      APP_DATABASE: ${APP_DATABASE:-tiler.db}
+      AUTH_DEFAULT_USERNAME: ${AUTH_DEFAULT_USERNAME:-admin}
+      AUTH_DEFAULT_PASSWORD: ${AUTH_DEFAULT_PASSWORD:-adminmap}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${APP_PORT:-8081}/ >/dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s

@@ -1,0 +1,7 @@
+<svg width="240" height="56" viewBox="0 0 240 56" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect x="4" y="6" width="44" height="44" rx="12" fill="#2563EB"/>
+  <path d="M17 19.5L24.5 16L32 19.5L39 16.5V36.5L32 39.5L24.5 36L17 39.5V19.5Z" stroke="white" stroke-width="2.4" stroke-linejoin="round"/>
+  <path d="M24.5 16V36M32 19.5V39.5" stroke="white" stroke-width="2" stroke-linecap="round"/>
+  <text x="62" y="26" font-family="Inter, PingFang SC, Microsoft YaHei, sans-serif" font-size="18" font-weight="700" fill="#0F172A">地图图片下载中心</text>
+  <text x="62" y="43" font-family="Inter, PingFang SC, Microsoft YaHei, sans-serif" font-size="12" fill="#64748B">计划任务，定时批量下载地图图片</text>
+</svg>

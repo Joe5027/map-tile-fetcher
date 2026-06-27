@@ -1,0 +1,182 @@
+[app]
+	version = "v 0.1.0"
+	title = "MapCloud Tiler"
+[output]
+	#can be mbtiles/file
+	format ="file"
+	#the output dir
+	directory ="output"
+[task]
+	#number of fetchers
+	workers = 3
+	#number of savers
+	savepipe = 1
+	#min request interval, a speed limit, unit millisecond
+	timedelay = 80
+	#random jitter added to each request interval, unit millisecond
+	time_jitter_ms = 150
+	#retry failed tiles in extra passes after the first sweep
+	retry_passes = 1
+	#max retries for a single HTTP request
+	max_retries = 2
+	#per-request timeout, unit second
+	request_timeout_seconds = 20
+	#backoff between immediate retries, unit millisecond
+	retry_backoff_ms = 300
+	#slowdown after 418/429/5xx throttle-like responses, unit millisecond
+	slow_backoff_ms = 1000
+	max_slow_backoff_ms = 10000
+
+# Optional per-source fetch policies.
+# Match by host_contains and/or source_name_contains, then override fetch behavior.
+# [[source_policies]]
+#   name = "tianditu-proxy-pool"
+#   host_contains = "tianditu.gov.cn"
+#   source_name_contains = "天地图"
+#   referer = "https://map.tianditu.gov.cn"
+#   user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+#   worker_count = 1
+#   base_delay_ms = 120
+#   time_jitter_ms = 120
+#   max_retries = 0
+#   retry_passes = 1
+#   rotate_hosts = true
+#   retry_statuses = [418, 429, 502, 503, 504]
+#   proxies = [
+#     "http://user:pass@proxy-1.example.com:8080",
+#     "http://user:pass@proxy-2.example.com:8080"
+#   ]
+# 地图源配置列表
+[[tilemaps]]
+  id = 1
+  name = "电子地图 (vec_w)"
+  url = "https://t0.tianditu.gov.cn/DataServer?T=vec_w&x={x}&y={y}&l={z}&tk=YOUR_TIANDITU_TOKEN"
+  format = "png"
+  schema = "xyz"
+  min_zoom = 0
+  max_zoom = 18
+
+[[tilemaps]]
+  id = 2
+  name = "路网 (cia_w)"
+  url = "https://t0.tianditu.gov.cn/DataServer?T=cia_w&x={x}&y={y}&l={z}&tk=YOUR_TIANDITU_TOKEN"
+  format = "png"
+  schema = "xyz"
+  min_zoom = 0
+  max_zoom = 18
+
+[[tilemaps]]
+  id = 3
+  name = "卫星图 (img_w)"
+  url = "https://t0.tianditu.gov.cn/DataServer?T=img_w&x={x}&y={y}&l={z}&tk=YOUR_TIANDITU_TOKEN"
+  format = "png"
+  schema = "xyz"
+  min_zoom = 0
+  max_zoom = 18
+
+[[tilemaps]]
+  id = 6
+  name = "Google电子图"
+  url = "http://mt0.google.com/vt/lyrs=m&x={x}&y={y}&z={z}"
+  format = "png"
+  schema = "xyz"
+  min_zoom = 0
+  max_zoom = 20
+
+[[tilemaps]]
+  id = 7
+  name = "Google路网"
+  url = "http://mt0.google.com/vt/lyrs=h&x={x}&y={y}&z={z}"
+  format = "png"
+  schema = "xyz"
+  min_zoom = 0
+  max_zoom = 20
+
+[[tilemaps]]
+  id = 8
+  name = "Google卫星图"
+  url = "http://mt0.google.com/vt/lyrs=s&x={x}&y={y}&z={z}"
+  format = "png"
+  schema = "xyz"
+  min_zoom = 0
+  max_zoom = 20
+
+[[tilemaps]]
+  id = 9
+  name = "Mapbox街道图"
+  url = "https://api.mapbox.com/v4/mapbox.mapbox-streets-v8/{z}/{x}/{y}.vector.pbf?sku=YOUR_MAPBOX_SKU&access_token=YOUR_MAPBOX_TOKEN"
+  format = "pbf"
+  schema = "xyz"
+  min_zoom = 0
+  max_zoom = 14
+
+[[tilemaps]]
+  id = 10
+  name = "Mapbox地形图"
+  url = "https://api.mapbox.com/v4/mapbox.mapbox-terrain-v2/{z}/{x}/{y}.vector.pbf?sku=YOUR_MAPBOX_SKU&access_token=YOUR_MAPBOX_TOKEN"
+  format = "pbf"
+  schema = "xyz"
+  min_zoom = 0
+  max_zoom = 14
+
+# 多级下载区域配置（全球-中国-省-市-区）
+[[download_regions]]
+  id = "global"
+  name = "全球"
+  min_zoom = 0
+  max_zoom = 5
+  geojson = "./geojson/global.geojson"
+
+[[download_regions]]
+  id = "china"
+  name = "中国"
+  min_zoom = 6
+  max_zoom = 8
+  geojson = "./geojson/china.geojson"
+
+[[download_regions]]
+  id = "jiangsu"
+  name = "江苏省"
+  min_zoom = 9
+  max_zoom = 10
+  geojson = "./geojson/jiangsu.geojson"
+
+[[download_regions]]
+  id = "nanjing"
+  name = "南京市"
+  min_zoom = 11
+  max_zoom = 12
+  geojson = "./geojson/nanjing.geojson"
+
+# 兼容旧版本配置（保留）
+[tm]
+  #name for mbtiles
+  name = "卫星图"
+  #max and min level for mbtiles
+  min = 0
+  max = 11
+  #can be pbf/png/jpg
+  format = "png"
+  #can be xyz/tm
+  schema = "xyz"
+  #the vector tiles metadata tilejson
+  # json = ""
+  url = "https://t0.tianditu.gov.cn/DataServer?T=img_w&x={x}&y={y}&l={z}&tk=YOUR_TIANDITU_TOKEN"
+
+# 兼容旧版本配置（保留）
+[[lrs]]
+  min = 0
+  max = 5
+  geojson = "./geojson/global.geojson"
+[[lrs]]
+  min = 6
+  max = 8
+  geojson = "./geojson/china.geojson"
+[[lrs]]
+  min = 9
+  max = 10
+  geojson = "./geojson/jiangsu.geojson"
+[[lrs]]
+  min = 11
+  max = 11
+  geojson = "./geojson/nanjing.geojson"

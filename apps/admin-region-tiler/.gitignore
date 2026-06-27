@@ -1,0 +1,14 @@
+.env
+data/
+output/
+.tmp-region-data/
+tiler
+tiler.exe
+tiler-linux
+*.zip
+*.tar
+*.tgz
+*.gz
+*.log
+dist/
+build/
