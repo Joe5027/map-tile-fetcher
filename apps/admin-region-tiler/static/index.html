@@ -7,7 +7,7 @@
     <meta name="description" content="创建任务并批量下载地图图片。">
     <link rel="icon" type="image/svg+xml" href="/static/assets/favicon/favicon.svg?v=1">
     <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css?v=1">
-    <link rel="stylesheet" href="/static/styles.css?v=1">
+    <link rel="stylesheet" href="/static/styles.css?v=19">
 </head>
 <body>
     <div class="page-shell">
@@ -61,7 +61,7 @@
                 </div>
             </header>
 
-            <main class="dashboard">
+            <main id="dashboard" class="dashboard">
                 <section class="panel panel--form">
                     <div class="panel-heading">
                         <div>
@@ -161,7 +161,7 @@
                         <section id="rangeModePanel" class="section-card range-panel is-hidden">
                             <div class="section-card__header">
                                 <h3>范围框选配置</h3>
-                                <p>点击地图两次生成下载范围，按 Tianditu img / cia / vec 创建子任务</p>
+                                <p>使用矩形或多边形选择下载范围，按 Tianditu img / cia / vec 创建子任务</p>
                             </div>
 
                             <label class="field">
@@ -184,11 +184,15 @@
                                 </label>
                             </div>
 
-                            <div class="range-map-card">
+                            <div id="rangeMapCard" class="range-map-card">
                                 <div class="range-map-toolbar">
-                                    <div>
+                                    <div class="range-map-title">
                                         <strong>范围预览</strong>
                                         <span>WGS84 / Web Mercator ｜ 移动：<b id="rangeHoverCoord">-</b> ｜ 点击：<b id="rangeClickCoord">-</b></span>
+                                    </div>
+                                    <div class="range-draw-mode" aria-label="范围选择方式">
+                                        <button type="button" class="range-draw-mode__button is-active" data-range-draw-mode="rectangle">矩形</button>
+                                        <button type="button" class="range-draw-mode__button" data-range-draw-mode="polygon">多边形</button>
                                     </div>
                                     <div class="range-map-actions">
                                         <label class="range-preview-source">
@@ -199,11 +203,17 @@
                                                 <option value="tdt-vec">天地图矢量</option>
                                             </select>
                                         </label>
+                                        <button id="undoRangePointBtn" type="button" class="ghost-button ghost-button--compact">撤销点</button>
                                         <button id="clearRangeBtn" type="button" class="ghost-button ghost-button--compact">清除</button>
                                         <button id="fitRangeBtn" type="button" class="ghost-button ghost-button--compact">适配</button>
+                                        <button id="expandRangeMapBtn" type="button" class="ghost-button ghost-button--compact">放大选择</button>
+                                        <button id="finishRangeMapBtn" type="button" class="primary-button primary-button--compact is-hidden">完成选择</button>
                                     </div>
                                 </div>
-                                <div id="rangePreviewHint" class="range-preview-hint">OSM 预览底图</div>
+                                <div class="range-preview-hint">
+                                    <span id="rangePreviewHint">OSM 预览底图</span>
+                                    <span id="rangeDrawHint">矩形：点击两个角点生成范围</span>
+                                </div>
                                 <div id="rangeMap" class="range-map"></div>
                             </div>
 
@@ -235,8 +245,8 @@
                             </div>
 
                             <div class="range-estimate">
-                                <span>单图层瓦片：<strong id="rangeTileCount">-</strong></span>
-                                <span>总瓦片：<strong id="rangeTotalTileCount">-</strong></span>
+                                <span>单图层瓦片估算：<strong id="rangeTileCount">-</strong></span>
+                                <span>总瓦片估算：<strong id="rangeTotalTileCount">-</strong></span>
                                 <span>估算体积：<strong id="rangeSizeEstimate">-</strong></span>
                             </div>
                         </section>
@@ -316,6 +326,6 @@
     </div>
 
     <script src="/static/vendor/leaflet/leaflet.js?v=1"></script>
-    <script src="/static/script.js?v=17"></script>
+    <script src="/static/script.js?v=19"></script>
 </body>
 </html>

@@ -3,8 +3,11 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -43,10 +46,16 @@ type BBoxRequest struct {
 	MaxLat float64 `json:"maxLat"`
 }
 
+type CoordinateRequest struct {
+	Lon float64 `json:"lon"`
+	Lat float64 `json:"lat"`
+}
+
 type AreaRequest struct {
-	BBox     *BBoxRequest `json:"bbox,omitempty"`
-	GeoJSON  string       `json:"geojson,omitempty"`
-	RegionID string       `json:"regionId,omitempty"`
+	BBox     *BBoxRequest        `json:"bbox,omitempty"`
+	Polygon  []CoordinateRequest `json:"polygon,omitempty"`
+	GeoJSON  string              `json:"geojson,omitempty"`
+	RegionID string              `json:"regionId,omitempty"`
 }
 
 type ZoomRangeRequest struct {
@@ -696,7 +705,7 @@ func buildPlansFromRequest(userID int64, req CreateTaskRequest) (*PlanRecord, []
 
 func normalizeAreaLevels(req *CreateTaskRequest) error {
 	mode := strings.ToLower(strings.TrimSpace(req.Mode))
-	if mode == "" && req.Area.BBox != nil {
+	if mode == "" && (req.Area.BBox != nil || len(req.Area.Polygon) > 0) {
 		mode = string(area.ModeBBox)
 	}
 	if mode == "" {
@@ -726,11 +735,27 @@ func normalizeAreaLevels(req *CreateTaskRequest) error {
 		}}
 		return nil
 	case area.ModeBBox:
-		if req.Area.BBox == nil {
-			return errors.New("area.bbox is required for bbox tasks")
+		if req.Area.BBox == nil && len(req.Area.Polygon) == 0 {
+			return errors.New("area.bbox or area.polygon is required for bbox tasks")
 		}
 		if req.Zoom == nil {
 			return errors.New("zoom is required for bbox tasks")
+		}
+		zoom := area.ZoomRange{Min: req.Zoom.Min, Max: req.Zoom.Max}
+		if err := zoom.Validate(); err != nil {
+			return err
+		}
+		if len(req.Area.Polygon) > 0 {
+			geojsonPath, err := writeGeneratedPolygonGeoJSON(req.Area.Polygon)
+			if err != nil {
+				return err
+			}
+			req.Levels = []LevelRequest{{
+				MinZoom: zoom.Min,
+				MaxZoom: zoom.Max,
+				Geojson: geojsonPath,
+			}}
+			return nil
 		}
 		box := area.BBox{
 			MinLon: req.Area.BBox.MinLon,
@@ -738,7 +763,6 @@ func normalizeAreaLevels(req *CreateTaskRequest) error {
 			MaxLon: req.Area.BBox.MaxLon,
 			MaxLat: req.Area.BBox.MaxLat,
 		}
-		zoom := area.ZoomRange{Min: req.Zoom.Min, Max: req.Zoom.Max}
 		count, err := downloader.CountBBoxTiles(box, zoom)
 		if err != nil {
 			return err
@@ -756,6 +780,93 @@ func normalizeAreaLevels(req *CreateTaskRequest) error {
 	default:
 		return errors.New("mode must be bbox or region")
 	}
+}
+
+func writeGeneratedPolygonGeoJSON(points []CoordinateRequest) (string, error) {
+	normalized, err := normalizePolygonCoordinates(points)
+	if err != nil {
+		return "", err
+	}
+
+	id, err := shortid.Generate()
+	if err != nil {
+		return "", err
+	}
+
+	ring := make([][]float64, 0, len(normalized)+1)
+	for _, point := range normalized {
+		ring = append(ring, []float64{point.Lon, point.Lat})
+	}
+	ring = append(ring, []float64{normalized[0].Lon, normalized[0].Lat})
+
+	featureCollection := map[string]any{
+		"type": "FeatureCollection",
+		"features": []map[string]any{{
+			"type": "Feature",
+			"properties": map[string]any{
+				"name": "range-polygon",
+			},
+			"geometry": map[string]any{
+				"type":        "Polygon",
+				"coordinates": [][][]float64{ring},
+			},
+		}},
+	}
+	data, err := json.MarshalIndent(featureCollection, "", "  ")
+	if err != nil {
+		return "", err
+	}
+
+	dir := filepath.Join("data", "generated-areas")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, "range-polygon-"+id+".geojson")
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return "", err
+	}
+	return filepath.ToSlash(path), nil
+}
+
+func normalizePolygonCoordinates(points []CoordinateRequest) ([]CoordinateRequest, error) {
+	if len(points) < 3 {
+		return nil, errors.New("area.polygon requires at least three points")
+	}
+
+	normalized := make([]CoordinateRequest, 0, len(points))
+	unique := make(map[string]struct{}, len(points))
+	minLon, minLat := math.Inf(1), math.Inf(1)
+	maxLon, maxLat := math.Inf(-1), math.Inf(-1)
+	for _, point := range points {
+		if !isValidRangeCoordinate(point) {
+			return nil, errors.New("area.polygon contains invalid coordinates")
+		}
+		normalized = append(normalized, point)
+		key := strings.TrimRight(strings.TrimRight(formatFloat6(point.Lon), "0"), ".") + "," + strings.TrimRight(strings.TrimRight(formatFloat6(point.Lat), "0"), ".")
+		unique[key] = struct{}{}
+		minLon = math.Min(minLon, point.Lon)
+		minLat = math.Min(minLat, point.Lat)
+		maxLon = math.Max(maxLon, point.Lon)
+		maxLat = math.Max(maxLat, point.Lat)
+	}
+	if len(unique) < 3 {
+		return nil, errors.New("area.polygon requires at least three unique points")
+	}
+	if minLon >= maxLon || minLat >= maxLat {
+		return nil, errors.New("area.polygon has no area")
+	}
+	return normalized, nil
+}
+
+func isValidRangeCoordinate(point CoordinateRequest) bool {
+	if math.IsNaN(point.Lon) || math.IsNaN(point.Lat) || math.IsInf(point.Lon, 0) || math.IsInf(point.Lat, 0) {
+		return false
+	}
+	return point.Lon >= -180 && point.Lon <= 180 && point.Lat >= -85.05112878 && point.Lat <= 85.05112878
+}
+
+func formatFloat6(value float64) string {
+	return strconv.FormatFloat(value, 'f', 6, 64)
 }
 
 func normalizeSources(req CreateTaskRequest) ([]SourceRequest, error) {

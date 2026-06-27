@@ -9,7 +9,14 @@ let taskMode = "region";
 let rangeMap = null;
 let rangeBaseLayer = null;
 let rangeRectangle = null;
+let rangePolyline = null;
+let rangePolygon = null;
+let rangePointMarkers = [];
 let rangeClickPoints = [];
+let rangeDrawMode = "rectangle";
+let rangeMapExpanded = false;
+let rangeMapOriginalParent = null;
+let rangeMapOriginalNextSibling = null;
 let currentTaskFilter = "all";
 let cachedTasks = [];
 const expandedProviders = new Set();
@@ -74,12 +81,19 @@ function bindEvents() {
 
     document.getElementById("rangePreviewSource").addEventListener("change", updateRangeBaseLayer);
 
+    document.querySelectorAll("[data-range-draw-mode]").forEach((button) => {
+        button.addEventListener("click", () => setRangeDrawMode(button.dataset.rangeDrawMode));
+    });
+
     document.querySelectorAll(".range-layer-option").forEach((element) => {
         element.addEventListener("change", updateRangeEstimate);
     });
 
+    document.getElementById("undoRangePointBtn").addEventListener("click", undoRangePoint);
     document.getElementById("clearRangeBtn").addEventListener("click", clearRangeSelection);
     document.getElementById("fitRangeBtn").addEventListener("click", fitRangeMapToFields);
+    document.getElementById("expandRangeMapBtn").addEventListener("click", () => setRangeMapExpanded(true));
+    document.getElementById("finishRangeMapBtn").addEventListener("click", () => setRangeMapExpanded(false));
 
     document.getElementById("tilemapSelector").addEventListener("change", (event) => {
         if (event.target.matches(".tilemap-source-option")) {
@@ -217,6 +231,12 @@ function bindEvents() {
         document.getElementById("taskMoreMenu").classList.add("is-hidden");
         closeAllTaskMenus();
     });
+
+    document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && rangeMapExpanded) {
+            setRangeMapExpanded(false);
+        }
+    });
 }
 
 async function bootstrap() {
@@ -261,9 +281,11 @@ function setTaskMode(mode) {
     document.getElementById("regionModePanel").classList.toggle("is-hidden", taskMode !== "region");
     document.getElementById("rangeModePanel").classList.toggle("is-hidden", taskMode !== "bbox");
     document.getElementById("addLevelBtn").classList.toggle("is-hidden", taskMode !== "region");
+    document.getElementById("dashboard").classList.toggle("dashboard--range-mode", taskMode === "bbox");
 
     if (taskMode === "bbox") {
         initRangeMap();
+        updateRangeDrawControls();
         updateRangeEstimate();
         updateRangeOverlay();
         window.setTimeout(() => {
@@ -386,6 +408,12 @@ function updateRangeBaseLayer() {
 }
 
 function handleRangeMapClick(latlng) {
+    document.getElementById("rangeClickCoord").textContent = formatLngLat(latlng);
+    if (rangeDrawMode === "polygon") {
+        handleRangePolygonClick(latlng);
+        return;
+    }
+
     if (rangeClickPoints.length >= 2) {
         rangeClickPoints = [];
     }
@@ -403,12 +431,43 @@ function handleRangeMapClick(latlng) {
     updateRangeEstimate();
 }
 
+function handleRangePolygonClick(latlng) {
+    rangeClickPoints.push(latlng);
+    setRangeFieldsFromPolygon(rangeClickPoints);
+    updateRangeOverlay();
+    updateRangeEstimate();
+    updateRangeDrawControls();
+}
+
 function setRangeFieldsFromPoints(first, second) {
     const form = document.getElementById("taskForm");
     form.elements.rangeMinLon.value = Math.min(first.lng, second.lng).toFixed(6);
     form.elements.rangeMaxLon.value = Math.max(first.lng, second.lng).toFixed(6);
     form.elements.rangeMinLat.value = Math.min(first.lat, second.lat).toFixed(6);
     form.elements.rangeMaxLat.value = Math.max(first.lat, second.lat).toFixed(6);
+}
+
+function setRangeFieldsFromPolygon(points) {
+    if (!Array.isArray(points) || points.length === 0) {
+        return;
+    }
+    const first = points[0];
+    const bounds = points.reduce((acc, point) => ({
+        minLon: Math.min(acc.minLon, point.lng),
+        minLat: Math.min(acc.minLat, point.lat),
+        maxLon: Math.max(acc.maxLon, point.lng),
+        maxLat: Math.max(acc.maxLat, point.lat)
+    }), {
+        minLon: first.lng,
+        minLat: first.lat,
+        maxLon: first.lng,
+        maxLat: first.lat
+    });
+    const form = document.getElementById("taskForm");
+    form.elements.rangeMinLon.value = bounds.minLon.toFixed(6);
+    form.elements.rangeMaxLon.value = bounds.maxLon.toFixed(6);
+    form.elements.rangeMinLat.value = bounds.minLat.toFixed(6);
+    form.elements.rangeMaxLat.value = bounds.maxLat.toFixed(6);
 }
 
 function formatLngLat(latlng) {
@@ -418,13 +477,125 @@ function formatLngLat(latlng) {
     return `${latlng.lng.toFixed(6)}, ${latlng.lat.toFixed(6)}`;
 }
 
+function setRangeDrawMode(mode) {
+    const nextMode = mode === "polygon" ? "polygon" : "rectangle";
+    if (rangeDrawMode === nextMode) {
+        return;
+    }
+    rangeDrawMode = nextMode;
+    rangeClickPoints = [];
+    clearRangeOverlays();
+    updateRangeDrawControls();
+    updateRangeEstimate();
+    updateRangeOverlay();
+}
+
+function setRangeMapExpanded(expanded) {
+    rangeMapExpanded = Boolean(expanded);
+    const card = document.getElementById("rangeMapCard");
+    if (rangeMapExpanded && card.parentElement !== document.body) {
+        rangeMapOriginalParent = card.parentElement;
+        rangeMapOriginalNextSibling = card.nextSibling;
+        document.body.appendChild(card);
+    } else if (!rangeMapExpanded && rangeMapOriginalParent && card.parentElement === document.body) {
+        rangeMapOriginalParent.insertBefore(card, rangeMapOriginalNextSibling);
+    }
+    card.classList.toggle("is-expanded", rangeMapExpanded);
+    document.body.classList.toggle("range-map-expanded", rangeMapExpanded);
+    document.getElementById("expandRangeMapBtn").classList.toggle("is-hidden", rangeMapExpanded);
+    document.getElementById("finishRangeMapBtn").classList.toggle("is-hidden", !rangeMapExpanded);
+
+    window.setTimeout(() => {
+        if (rangeMap) {
+            rangeMap.invalidateSize();
+            fitRangeMapToFields();
+        }
+    }, 80);
+}
+
+function updateRangeDrawControls() {
+    document.querySelectorAll("[data-range-draw-mode]").forEach((button) => {
+        const active = button.dataset.rangeDrawMode === rangeDrawMode;
+        button.classList.toggle("is-active", active);
+        button.setAttribute("aria-pressed", active ? "true" : "false");
+    });
+
+    const undoButton = document.getElementById("undoRangePointBtn");
+    if (undoButton) {
+        undoButton.disabled = rangeClickPoints.length === 0;
+    }
+
+    const hint = document.getElementById("rangeDrawHint");
+    if (!hint) {
+        return;
+    }
+    if (rangeDrawMode === "polygon") {
+        if (rangeClickPoints.length === 0) {
+            hint.textContent = "多边形：在地图上逐点点击，至少 3 个点";
+        } else if (rangeClickPoints.length < 3) {
+            hint.textContent = `多边形：已选 ${rangeClickPoints.length} 个点，还需至少 ${3 - rangeClickPoints.length} 个点`;
+        } else {
+            hint.textContent = `多边形：已选 ${rangeClickPoints.length} 个点，可撤销、清除或直接创建任务`;
+        }
+        return;
+    }
+    if (rangeClickPoints.length === 0) {
+        hint.textContent = "矩形：点击第一个角点";
+    } else if (rangeClickPoints.length === 1) {
+        hint.textContent = "矩形：点击对角点生成范围";
+    } else {
+        hint.textContent = "矩形：已生成范围，可重新点击开始新范围";
+    }
+}
+
+function undoRangePoint() {
+    if (rangeClickPoints.length === 0) {
+        return;
+    }
+    rangeClickPoints.pop();
+    if (rangeClickPoints.length === 0) {
+        clearRangeOverlays();
+        updateRangeEstimate();
+        updateRangeDrawControls();
+        return;
+    }
+    if (rangeDrawMode === "polygon") {
+        setRangeFieldsFromPolygon(rangeClickPoints);
+    } else if (rangeClickPoints.length === 1) {
+        setRangeFieldsFromPoints(rangeClickPoints[0], rangeClickPoints[0]);
+    }
+    updateRangeOverlay();
+    updateRangeEstimate();
+    updateRangeDrawControls();
+}
+
 function clearRangeSelection() {
     rangeClickPoints = [];
+    clearRangeOverlays();
+    document.getElementById("rangeClickCoord").textContent = "-";
+    updateRangeEstimate();
+    updateRangeDrawControls();
+}
+
+function clearRangeOverlays() {
     if (rangeRectangle && rangeMap) {
         rangeMap.removeLayer(rangeRectangle);
         rangeRectangle = null;
     }
-    document.getElementById("rangeClickCoord").textContent = "-";
+    if (rangePolyline && rangeMap) {
+        rangeMap.removeLayer(rangePolyline);
+        rangePolyline = null;
+    }
+    if (rangePolygon && rangeMap) {
+        rangeMap.removeLayer(rangePolygon);
+        rangePolygon = null;
+    }
+    rangePointMarkers.forEach((marker) => {
+        if (rangeMap) {
+            rangeMap.removeLayer(marker);
+        }
+    });
+    rangePointMarkers = [];
 }
 
 function fitRangeMapToFields() {
@@ -441,6 +612,20 @@ function fitRangeMapToFields() {
 function updateRangeOverlay(fit = false) {
     if (!rangeMap) {
         return;
+    }
+    if (rangeDrawMode === "polygon") {
+        updateRangePolygonOverlay(fit);
+        return;
+    }
+    updateRangeRectangleOverlay(fit);
+}
+
+function updateRangeRectangleOverlay(fit = false) {
+    if (!rangeMap) {
+        return;
+    }
+    if (rangePolyline || rangePolygon || rangePointMarkers.length > 0) {
+        clearRangeOverlays();
     }
     const bounds = readRangeBoundsFromFields();
     if (!bounds) {
@@ -462,6 +647,65 @@ function updateRangeOverlay(fit = false) {
     if (fit) {
         rangeMap.fitBounds(bounds.pad(0.3), { animate: false, maxZoom: 16 });
     }
+    updateRangeDrawControls();
+}
+
+function updateRangePolygonOverlay(fit = false) {
+    if (!rangeMap) {
+        return;
+    }
+    if (rangeRectangle) {
+        rangeMap.removeLayer(rangeRectangle);
+        rangeRectangle = null;
+    }
+    if (rangePolyline) {
+        rangeMap.removeLayer(rangePolyline);
+        rangePolyline = null;
+    }
+    if (rangePolygon) {
+        rangeMap.removeLayer(rangePolygon);
+        rangePolygon = null;
+    }
+    rangePointMarkers.forEach((marker) => rangeMap.removeLayer(marker));
+    rangePointMarkers = [];
+
+    if (rangeClickPoints.length === 0) {
+        updateRangeDrawControls();
+        return;
+    }
+
+    rangePointMarkers = rangeClickPoints.map((point) => L.circleMarker(point, {
+        radius: 5,
+        color: "#1d4ed8",
+        weight: 2,
+        fillColor: "#ffffff",
+        fillOpacity: 1
+    }).addTo(rangeMap));
+
+    if (rangeClickPoints.length >= 2) {
+        rangePolyline = L.polyline(rangeClickPoints, {
+            color: "#2563eb",
+            weight: 2,
+            dashArray: "5 5"
+        }).addTo(rangeMap);
+    }
+
+    if (rangeClickPoints.length >= 3) {
+        rangePolygon = L.polygon(rangeClickPoints, {
+            color: "#2563eb",
+            weight: 2,
+            fillColor: "#2563eb",
+            fillOpacity: 0.16
+        }).addTo(rangeMap);
+    }
+
+    if (fit) {
+        const bounds = L.latLngBounds(rangeClickPoints);
+        if (bounds.isValid()) {
+            rangeMap.fitBounds(bounds.pad(0.3), { animate: false, maxZoom: 16 });
+        }
+    }
+    updateRangeDrawControls();
 }
 
 function readRangeBoundsFromFields() {
@@ -948,14 +1192,18 @@ async function createRangeTask(event, formData) {
 
     const tileCount = calculateRangeTileCount(request.bbox, request.zoom);
     const sources = request.layers.map((layer, index) => buildTianDiTuSource(layer, request.token, index));
+    const areaSummary = request.selectionMode === "polygon"
+        ? `多边形：${request.polygon.length} 个顶点`
+        : `矩形：${request.bbox.minLon},${request.bbox.minLat} - ${request.bbox.maxLon},${request.bbox.maxLat}`;
     const summary = [
         `任务名称：${request.name}`,
         `下载模式：范围框选`,
-        `范围：${request.bbox.minLon},${request.bbox.minLat} - ${request.bbox.maxLon},${request.bbox.maxLat}`,
+        `范围：${areaSummary}`,
+        `包围盒：${request.bbox.minLon},${request.bbox.minLat} - ${request.bbox.maxLon},${request.bbox.maxLat}`,
         `层级：${request.zoom.min}-${request.zoom.max}`,
         `图层：${request.layers.join("、")}`,
-        `单图层瓦片：${tileCount}`,
-        `总瓦片：${tileCount * request.layers.length}`,
+        `单图层瓦片估算：${tileCount}`,
+        `总瓦片估算：${tileCount * request.layers.length}`,
         `执行时间：${schedule.label}`,
         `产物格式：${output.label}`,
         `下载线程：${workerCount}`,
@@ -977,7 +1225,9 @@ async function createRangeTask(event, formData) {
             timeDelay,
             scheduleMode: schedule.scheduleMode,
             runAt: schedule.runAt,
-            area: { bbox: request.bbox },
+            area: request.selectionMode === "polygon"
+                ? { polygon: request.polygon }
+                : { bbox: request.bbox },
             zoom: request.zoom,
             sources,
             output: { format: output.format }
@@ -998,16 +1248,19 @@ async function createRangeTask(event, formData) {
 }
 
 function readRangeRequest(formData) {
+    const bbox = {
+        minLon: Number(formData.get("rangeMinLon")),
+        minLat: Number(formData.get("rangeMinLat")),
+        maxLon: Number(formData.get("rangeMaxLon")),
+        maxLat: Number(formData.get("rangeMaxLat"))
+    };
     return {
         name: String(formData.get("name") || "").trim() || "天地图范围下载任务",
         token: String(formData.get("tdtToken") || "").trim(),
         layers: getSelectedRangeLayers(),
-        bbox: {
-            minLon: Number(formData.get("rangeMinLon")),
-            minLat: Number(formData.get("rangeMinLat")),
-            maxLon: Number(formData.get("rangeMaxLon")),
-            maxLat: Number(formData.get("rangeMaxLat"))
-        },
+        selectionMode: rangeDrawMode,
+        bbox,
+        polygon: getRangePolygonRequest(),
         zoom: {
             min: Number.parseInt(formData.get("rangeMinZoom"), 10),
             max: Number.parseInt(formData.get("rangeMaxZoom"), 10)
@@ -1019,12 +1272,22 @@ function getSelectedRangeLayers() {
     return Array.from(document.querySelectorAll(".range-layer-option:checked")).map((element) => element.value);
 }
 
+function getRangePolygonRequest() {
+    return rangeClickPoints.map((point) => ({
+        lon: Number(point.lng.toFixed(6)),
+        lat: Number(point.lat.toFixed(6))
+    }));
+}
+
 function validateRangeRequest(request) {
     if (!request.token || request.token === "YOUR_TIANDITU_TOKEN") {
         return "请输入真实的天地图 Token。";
     }
     if (request.layers.length === 0) {
         return "请至少选择一个天地图图层。";
+    }
+    if (request.selectionMode === "polygon" && !isValidPolygon(request.polygon)) {
+        return "请在地图上点击至少 3 个有效点形成多边形范围。";
     }
     if (!isValidBBox(request.bbox, true)) {
         return "范围坐标无效，请确认最小经度、最小纬度、最大经度、最大纬度。";
@@ -1036,6 +1299,30 @@ function validateRangeRequest(request) {
         return "天地图范围下载层级必须在 0 到 18 之间，且最小级别不能大于最大级别。";
     }
     return "";
+}
+
+function isValidRangeSelection(request) {
+    if (request.selectionMode === "polygon") {
+        return isValidPolygon(request.polygon) && isValidBBox(request.bbox, true);
+    }
+    return isValidBBox(request.bbox, true);
+}
+
+function isValidPolygon(points) {
+    if (!Array.isArray(points) || points.length < 3) {
+        return false;
+    }
+    const unique = new Set();
+    for (const point of points) {
+        if (!point || !Number.isFinite(point.lon) || !Number.isFinite(point.lat)) {
+            return false;
+        }
+        if (point.lon < -180 || point.lon > 180 || point.lat < -85.05112878 || point.lat > 85.05112878) {
+            return false;
+        }
+        unique.add(`${point.lon.toFixed(6)},${point.lat.toFixed(6)}`);
+    }
+    return unique.size >= 3;
 }
 
 function isValidBBox(bbox, requireArea) {
@@ -1064,7 +1351,7 @@ function updateRangeEstimate() {
     const totalElement = document.getElementById("rangeTotalTileCount");
     const sizeElement = document.getElementById("rangeSizeEstimate");
 
-    if (!isValidBBox(request.bbox, true) || !Number.isInteger(request.zoom.min) || !Number.isInteger(request.zoom.max) || request.zoom.min < 0 || request.zoom.max > 18 || request.zoom.min > request.zoom.max || request.layers.length === 0) {
+    if (!isValidRangeSelection(request) || !Number.isInteger(request.zoom.min) || !Number.isInteger(request.zoom.max) || request.zoom.min < 0 || request.zoom.max > 18 || request.zoom.min > request.zoom.max || request.layers.length === 0) {
         tileElement.textContent = "-";
         totalElement.textContent = "-";
         sizeElement.textContent = "-";

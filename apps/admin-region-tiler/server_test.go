@@ -3,6 +3,8 @@ package main
 import (
 	"errors"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -96,6 +98,56 @@ func TestBuildPlansFromRequestRejectsInvalidBBoxWithoutWritingData(t *testing.T)
 	}
 	if _, statErr := os.Stat("data"); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("invalid bbox should not write generated data, stat error: %v", statErr)
+	}
+}
+
+func TestBuildPlansFromRequestPolygonCreatesGeneratedGeoJSONLevel(t *testing.T) {
+	withTempWorkingDir(t)
+
+	parent, children, err := buildPlansFromRequest(42, CreateTaskRequest{
+		Name: "polygon task",
+		Mode: "bbox",
+		Area: AreaRequest{Polygon: []CoordinateRequest{
+			{Lon: 100, Lat: 20},
+			{Lon: 101, Lat: 20},
+			{Lon: 101, Lat: 21},
+			{Lon: 100, Lat: 21},
+		}},
+		Zoom: &ZoomRangeRequest{Min: 2, Max: 2},
+		Sources: []SourceRequest{{
+			Name:   "img",
+			URL:    "https://example.test/img/{z}/{x}/{y}.png",
+			Format: PNG,
+			Schema: "xyz",
+		}},
+		Output: OutputRequest{Format: "zip"},
+	})
+	if err != nil {
+		t.Fatalf("buildPlansFromRequest returned error: %v", err)
+	}
+	if len(parent.Levels) != 1 {
+		t.Fatalf("expected 1 polygon level, got %d", len(parent.Levels))
+	}
+	level := parent.Levels[0]
+	if level.BBox != nil || level.Mode == "bbox" {
+		t.Fatalf("polygon level should use generated geojson, got %#v", level)
+	}
+	if level.Geojson == "" {
+		t.Fatal("expected generated geojson path")
+	}
+	normalizedPath := filepath.ToSlash(level.Geojson)
+	if !strings.HasPrefix(normalizedPath, "data/generated-areas/") && !strings.Contains(normalizedPath, "/data/generated-areas/") {
+		t.Fatalf("expected generated area path, got %s", level.Geojson)
+	}
+	if _, err := os.Stat(level.Geojson); err != nil {
+		t.Fatalf("generated polygon geojson missing: %v", err)
+	}
+	task, err := buildTaskFromPlan(children[0])
+	if err != nil {
+		t.Fatalf("polygon child task should build: %v", err)
+	}
+	if task.Total == 0 {
+		t.Fatal("polygon task should enumerate tiles")
 	}
 }
 
