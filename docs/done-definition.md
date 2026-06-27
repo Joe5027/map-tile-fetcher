@@ -25,6 +25,7 @@ with the required bilingual commit message.
 | `apps/admin-region-tiler` Go backend | From `apps/admin-region-tiler`: `go test ./...` |
 | `apps/admin-region-tiler/static/script.js` | `node --check .\static\script.js`, plus `go test ./...` if API contracts changed |
 | `apps/admin-region-tiler/scripts/smoke_ui.mjs` | `node --check .\scripts\smoke_ui.mjs`, then `node .\scripts\smoke_ui.mjs` with local or global Playwright available |
+| `apps/admin-region-tiler/scripts/release_preflight.mjs` or CI workflow | `node --check .\scripts\release_preflight.mjs`, then `node .\scripts\release_preflight.mjs` |
 | `apps/admin-region-tiler/static/styles.css` or HTML-only polish | Browser or static inspection when available; otherwise state manual UI check missing |
 | Config, release, or repository docs | Source-to-doc comparison plus the sensitive-value scan below |
 | Local AI control-surface docs or skills | Workspace audit plus Markdown/source inspection; validate handoff docs with the handoff validator |

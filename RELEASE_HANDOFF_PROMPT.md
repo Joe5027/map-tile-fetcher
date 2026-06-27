@@ -23,8 +23,12 @@
 3. 验证 Go 项目：
    - `cd apps/admin-region-tiler`
    - 安装/使用 Go 1.25+
+   - 安装/使用 Node.js 22+ 或当前稳定版本
+   - 如需运行 UI 冒烟测试，确保本地或全局可用 Playwright，并安装 Chromium：
+     `npm install -g playwright` 和 `npx playwright install chromium`
    - 执行 `go test ./...`
    - 前端脚本变更后执行 `node --check .\static\script.js`
+   - 发布前执行完整预检：`node .\scripts\release_preflight.mjs`
 4. 不要提交运行目录或构建目录：`.env`、`data/`、`output/`、`tiles/`、`bin/`、`obj/`、`publish*/`、历史二进制和压缩包都不应进 Git。
 5. README 语言分工：
    - `README.md`: English

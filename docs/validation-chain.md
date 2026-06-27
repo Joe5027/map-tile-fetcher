@@ -54,6 +54,14 @@ node --check .\scripts\smoke_ui.mjs
 node .\scripts\smoke_ui.mjs
 ```
 
+For release preflight or CI workflow changes:
+
+```powershell
+cd apps/admin-region-tiler
+node --check .\scripts\release_preflight.mjs
+node .\scripts\release_preflight.mjs
+```
+
 For handoff artifacts:
 
 ```powershell

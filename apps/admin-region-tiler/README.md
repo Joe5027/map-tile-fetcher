@@ -83,6 +83,13 @@ node .\scripts\smoke_ui.mjs --url http://127.0.0.1:8081
 脚本需要本地或全局可用的 Playwright 包。如缺失，可执行
 `npm install -g playwright` 和 `npx playwright install chromium`。
 
+完整发布预检会依次运行 Go 测试、前端脚本语法检查、UI 冒烟脚本语法检查和
+UI 冒烟测试：
+
+```powershell
+node .\scripts\release_preflight.mjs
+```
+
 ## 生产部署
 
 - Docker 部署可直接使用 `Dockerfile` 和 `docker-compose.yml`

@@ -60,6 +60,13 @@ The smoke script requires the Playwright package to be available locally or
 globally. If needed, install it with `npm install -g playwright` and
 `npx playwright install chromium`.
 
+Run the full release preflight:
+
+```powershell
+cd apps/admin-region-tiler
+node .\scripts\release_preflight.mjs
+```
+
 ## Local Runtime Notes
 
 Runtime secrets and generated data must stay local:

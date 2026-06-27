@@ -51,6 +51,13 @@ node .\scripts\smoke_ui.mjs
 该脚本需要本地或全局可用的 Playwright 包。如缺失，可执行
 `npm install -g playwright` 和 `npx playwright install chromium`。
 
+运行完整发布预检：
+
+```powershell
+cd apps/admin-region-tiler
+node .\scripts\release_preflight.mjs
+```
+
 ## 本地运行注意事项
 
 - 真实天地图或 Mapbox token 只能放在本地配置中。

@@ -22,7 +22,7 @@ Out of scope unless the user explicitly changes direction:
 
 | Path | Stack | Primary role | Entry points | Narrow validation |
 | --- | --- | --- | --- | --- |
-| `apps/admin-region-tiler` | Go 1.25+, Gin, SQLite, static frontend | Unified map tile downloader with bbox range mode, administrative-region mode, persistent tasks, scheduled runs, multiple map sources, failures, artifacts, and deploy assets | `main.go`, `server.go`, `runtime.go`, `task.go`, `db.go`, `static/script.js`, `scripts/smoke_ui.mjs` | `go test ./...`; `node --check .\static\script.js` when frontend JS changes; `node .\scripts\smoke_ui.mjs` for UI smoke |
+| `apps/admin-region-tiler` | Go 1.25+, Gin, SQLite, static frontend | Unified map tile downloader with bbox range mode, administrative-region mode, persistent tasks, scheduled runs, multiple map sources, failures, artifacts, and deploy assets | `main.go`, `server.go`, `runtime.go`, `task.go`, `db.go`, `static/script.js`, `scripts/smoke_ui.mjs`, `scripts/release_preflight.mjs` | `go test ./...`; `node --check .\static\script.js` when frontend JS changes; `node .\scripts\smoke_ui.mjs` for UI smoke; `node .\scripts\release_preflight.mjs` for full preflight |
 
 ## Admin Region Tiler Map
 
@@ -81,6 +81,12 @@ Out of scope unless the user explicitly changes direction:
     bounding-box payload creation
   - starts a temporary Go server by default and intercepts `/api/tasks` POSTs
     so smoke runs do not launch real downloads
+- `scripts/release_preflight.mjs`
+  - one-command release preflight for Go tests, JavaScript syntax checks, and
+    UI smoke validation
+- `.github/workflows/validate.yml`
+  - GitHub Actions validation entrypoint that installs Go, Node, browser
+    automation dependencies, and runs the release preflight
 - `geojson/`
   - repository-shipped region resources. Avoid broad scanning unless the task is
     specifically about region data.

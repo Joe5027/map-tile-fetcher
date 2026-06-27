@@ -37,7 +37,6 @@ Keep `apps/admin-region-tiler` as the base for:
 - Continue reducing old `plans` naming in favor of `tasks` only after migration
   compatibility is no longer needed.
 - Improve failure retry UX on top of the persisted failure records.
-- Add browser automation for range-mode and region-mode smoke tests when a
-  local browser automation dependency is available.
+- Keep browser UI smoke and release preflight running in CI before release.
 - Keep real service tokens out of Git and keep runtime outputs in ignored
   filesystem paths.

@@ -30,6 +30,9 @@
   Playwright browser smoke test for login, region task payload creation, and
   bbox task payload creation. It starts a temporary Go server by default and
   intercepts `/api/tasks` POSTs so it does not launch real tile downloads.
+- On 2026-06-27, `apps/admin-region-tiler/scripts/release_preflight.mjs` and
+  `.github/workflows/validate.yml` were added so local release checks and
+  GitHub Actions use the same validation route.
 
 ## Decisions
 
@@ -66,8 +69,14 @@
 - UI smoke automation changes require `node --check .\scripts\smoke_ui.mjs` and
   `node .\scripts\smoke_ui.mjs` with local or global Playwright available; keep
   generated database files, screenshots, traces, and tile outputs out of Git.
+- Release preflight or CI workflow changes require
+  `node --check .\scripts\release_preflight.mjs` and
+  `node .\scripts\release_preflight.mjs`.
 - Future sessions should rerun runtime preflight before making capability,
   MCP, or plugin availability claims because session exposure can change.
+- GitHub Actions workflow syntax could not be locally linted on 2026-06-27
+  because `actionlint` and a local YAML parser were unavailable; the first
+  remote workflow run remains the source of truth for runner-specific behavior.
 - GeoJSON resources are intentional repository data; broad scans should exclude
   them unless the task is about region data.
 - Real service tokens must stay out of Git.
@@ -98,9 +107,15 @@
 - The 2026-06-27 UI smoke run verified login, region task creation payload
   shape, bbox mode switching, bbox estimate update, bbox task creation payload
   shape, and two accepted confirmation dialogs without launching real downloads.
+- 2026-06-27 release preflight tranche validation passed:
+  `node --check .\scripts\release_preflight.mjs` and
+  `node .\scripts\release_preflight.mjs`.
+- Local workflow validation on 2026-06-27 was limited to manual source
+  inspection because `actionlint` was not installed and Ruby/YAML parsing was
+  unavailable in the session.
 
 ## Next Action
 
-- Run the new UI smoke script in CI or a release preflight once a stable
-  Playwright browser cache is available, then decide whether to make it a
-  required release gate alongside `go test ./...`.
+- Monitor the first GitHub Actions run after pushing this repository; if remote
+  browser dependency installation is slow or flaky, add dependency caching or
+  split UI smoke into a separate workflow job.
