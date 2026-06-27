@@ -33,6 +33,8 @@
   database, one static Web UI with range and administrative-region modes.
 - Every validated change batch must be committed immediately with detailed
   English and Chinese commit notes.
+- The Go app now has a future `internal/` package boundary for API, auth,
+  config, area, planner, downloader, artifact, and Web responsibilities.
 
 ## Assumptions
 

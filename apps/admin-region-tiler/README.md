@@ -86,3 +86,18 @@ A well-polished tile downloader
 - GeoJSON 读取与任务创建失败会返回 API 错误，不再直接退出服务
 - Docker Compose 支持通过 `.env` 覆盖 `HOST_PORT`、`APP_PORT`、`APP_DATABASE` 和默认登录账号
 - 当前页面仍使用 Tailwind CDN，适合本地开发和联调
+
+## 合并方向
+
+本应用是后续统一产品的 Go 后端基座。新的内部包结构从 `internal/` 开始：
+
+- `internal/api`: 统一 HTTP API
+- `internal/auth`: 可选登录和会话
+- `internal/config`: 应用配置、地图源和输出路径
+- `internal/area`: bbox 和行政区划区域选择
+- `internal/planner`: 任务定义、运行记录和子任务规划
+- `internal/downloader`: 瓦片枚举、下载、重试和写入
+- `internal/artifact`: ZIP、MBTiles 和兼容产物
+- `internal/web`: 统一静态前端辅助
+
+旧 `.NET` 范围下载器在迁移完成前只作为框选交互和简单天地图流程参考。

@@ -70,6 +70,9 @@ Important endpoints:
   - loads `conf.toml`, environment overrides, logging, database, runtime
     manager, and HTTP server
   - supports worker mode via runtime flags/environment
+- `internal/`
+  - future single-app package boundaries for API, auth, config, area selection,
+    planning, downloading, artifacts, and static Web helpers
 - `server.go`
   - Gin routes for login, current user, task CRUD, task control, artifact
     download, map source config, region catalog, and GeoJSON file listing
