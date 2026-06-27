@@ -5,10 +5,15 @@ on:
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: validate-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   admin-region-tiler:
     name: Admin Region Tiler
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: apps/admin-region-tiler

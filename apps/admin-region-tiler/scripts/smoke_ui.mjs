@@ -209,6 +209,7 @@ async function startApp() {
     },
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
+    detached: process.platform !== "win32",
   });
   startedProcesses.push(child);
 
@@ -510,7 +511,7 @@ function trimRecentOutput(value) {
 async function cleanup() {
   cleaningUp = true;
   for (const child of startedProcesses) {
-    if (!child.killed && !options.keepServer) {
+    if (!options.keepServer) {
       await stopProcessTree(child);
     }
   }
@@ -531,6 +532,10 @@ async function cleanupGeneratedFiles() {
 }
 
 async function stopProcessTree(child) {
+  if (!child.pid) {
+    return;
+  }
+
   if (process.platform === "win32") {
     await new Promise((resolveKill) => {
       execFile("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true }, () => resolveKill());
@@ -538,13 +543,25 @@ async function stopProcessTree(child) {
     return;
   }
 
-  child.kill("SIGTERM");
-  await Promise.race([
-    once(child, "exit"),
-    new Promise((resolveWait) => setTimeout(resolveWait, 3000)),
-  ]);
-  if (!child.killed) {
-    child.kill("SIGKILL");
+  let exited = false;
+  const exitPromise = once(child, "exit").then(() => {
+    exited = true;
+  });
+
+  try {
+    process.kill(-child.pid, "SIGTERM");
+  } catch {
+    child.kill("SIGTERM");
+  }
+  await Promise.race([exitPromise, sleep(3000)]);
+
+  if (!exited) {
+    try {
+      process.kill(-child.pid, "SIGKILL");
+    } catch {
+      child.kill("SIGKILL");
+    }
+    await Promise.race([exitPromise, sleep(1000)]);
   }
 }
 
