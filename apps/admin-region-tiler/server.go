@@ -19,12 +19,13 @@ import (
 )
 
 type LevelRequest struct {
-	MinZoom int          `json:"minZoom" binding:"required"`
-	MaxZoom int          `json:"maxZoom" binding:"required"`
-	Geojson string       `json:"geojson,omitempty"`
-	URL     string       `json:"url"`
-	Mode    string       `json:"mode,omitempty"`
-	BBox    *BBoxRequest `json:"bbox,omitempty"`
+	MinZoom      int          `json:"minZoom" binding:"required"`
+	MaxZoom      int          `json:"maxZoom" binding:"required"`
+	Geojson      string       `json:"geojson,omitempty"`
+	URL          string       `json:"url"`
+	Mode         string       `json:"mode,omitempty"`
+	BBox         *BBoxRequest `json:"bbox,omitempty"`
+	OutputFormat string       `json:"outputFormat,omitempty"`
 }
 
 type SourceRequest struct {
@@ -53,6 +54,10 @@ type ZoomRangeRequest struct {
 	Max int `json:"max"`
 }
 
+type OutputRequest struct {
+	Format string `json:"format,omitempty"`
+}
+
 type CreateTaskRequest struct {
 	Name         string            `json:"name" binding:"required"`
 	Mode         string            `json:"mode,omitempty"`
@@ -69,6 +74,7 @@ type CreateTaskRequest struct {
 	RunAt        string            `json:"runAt"`
 	Levels       []LevelRequest    `json:"levels"`
 	Sources      []SourceRequest   `json:"sources"`
+	Output       OutputRequest     `json:"output,omitempty"`
 }
 
 type TaskAreaLevelResponse struct {
@@ -591,6 +597,10 @@ func buildPlansFromRequest(userID int64, req CreateTaskRequest) (*PlanRecord, []
 	if err != nil {
 		return nil, nil, err
 	}
+	outputFormat, err := normalizeOutputFormat(req.Output.Format)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	if err := normalizeAreaLevels(&req); err != nil {
 		return nil, nil, err
@@ -606,6 +616,7 @@ func buildPlansFromRequest(userID int64, req CreateTaskRequest) (*PlanRecord, []
 		if err != nil {
 			return nil, nil, err
 		}
+		normalized.OutputFormat = outputFormat
 		levels = append(levels, normalized)
 	}
 
@@ -837,6 +848,20 @@ func isSupportedFormat(format string) bool {
 	default:
 		return false
 	}
+}
+
+func normalizeOutputFormat(format string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(format))
+	if normalized == "" {
+		normalized = strings.ToLower(strings.TrimSpace(viper.GetString("output.format")))
+	}
+	if normalized == "" || normalized == "file" || normalized == "zip" {
+		return "zip", nil
+	}
+	if normalized == "mbtiles" {
+		return "mbtiles", nil
+	}
+	return "", errors.New("unsupported output format")
 }
 
 func planResponseFromPlan(plan *PlanRecord) TaskResponse {

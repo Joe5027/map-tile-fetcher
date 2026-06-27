@@ -320,7 +320,7 @@ func buildTaskFromRequest(req CreateTaskRequest) (*Task, error) {
 		TimeJitter:     maxInt(viper.GetInt("task.time_jitter_ms"), 0),
 		RetryPasses:    maxInt(viper.GetInt("task.retry_passes"), 0),
 		BufferSize:     firstPositive(viper.GetInt("task.mergebuf"), 32),
-		OutputFormat:   viper.GetString("output.format"),
+		OutputFormat:   outputFormatFromRequest(req),
 		MaxRetries:     firstPositive(viper.GetInt("task.max_retries"), 2),
 		RequestTTL:     time.Duration(firstPositive(viper.GetInt("task.request_timeout_seconds"), 20)) * time.Second,
 		RetryBackoff:   time.Duration(firstPositive(viper.GetInt("task.retry_backoff_ms"), 300)) * time.Millisecond,
@@ -335,6 +335,28 @@ func buildTaskFromRequest(req CreateTaskRequest) (*Task, error) {
 	}
 
 	return task, nil
+}
+
+func outputFormatFromRequest(req CreateTaskRequest) string {
+	if normalized := strings.ToLower(strings.TrimSpace(req.Output.Format)); normalized != "" {
+		if normalized == "file" {
+			return "zip"
+		}
+		return normalized
+	}
+	for _, level := range req.Levels {
+		if normalized := strings.ToLower(strings.TrimSpace(level.OutputFormat)); normalized != "" {
+			if normalized == "file" {
+				return "zip"
+			}
+			return normalized
+		}
+	}
+	configured := strings.ToLower(strings.TrimSpace(viper.GetString("output.format")))
+	if configured == "" || configured == "file" {
+		return "zip"
+	}
+	return configured
 }
 
 func isBBoxLevel(level LevelRequest) bool {

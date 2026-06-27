@@ -307,6 +307,20 @@ function readScheduleRequest(formData) {
     };
 }
 
+function readOutputRequest(formData) {
+    const format = String(formData.get("outputFormat") || "zip").trim().toLowerCase();
+    if (format === "mbtiles") {
+        return {
+            format: "mbtiles",
+            label: "MBTiles"
+        };
+    }
+    return {
+        format: "zip",
+        label: "ZIP 文件树"
+    };
+}
+
 function initRangeMap() {
     if (rangeMap || !window.L) {
         return;
@@ -891,6 +905,7 @@ async function createRangeTask(event, formData) {
         showMessage("taskError", schedule.error);
         return;
     }
+    const output = readOutputRequest(formData);
 
     const tileCount = calculateRangeTileCount(request.bbox, request.zoom);
     const sources = request.layers.map((layer, index) => buildTianDiTuSource(layer, request.token, index));
@@ -903,6 +918,7 @@ async function createRangeTask(event, formData) {
         `单图层瓦片：${tileCount}`,
         `总瓦片：${tileCount * request.layers.length}`,
         `执行时间：${schedule.label}`,
+        `产物格式：${output.label}`,
         `下载线程：${workerCount}`,
         `保存线程：${savePipe}`,
         `请求间隔：${timeDelay}ms`
@@ -924,7 +940,8 @@ async function createRangeTask(event, formData) {
             runAt: schedule.runAt,
             area: { bbox: request.bbox },
             zoom: request.zoom,
-            sources
+            sources,
+            output: { format: output.format }
         })
     });
 
@@ -1123,6 +1140,7 @@ async function createTask(event) {
         showMessage("taskError", schedule.error);
         return;
     }
+    const output = readOutputRequest(formData);
 
     const sources = selectedTilemaps.map((tilemap, index) => ({
         id: toNumericSourceId(tilemap.id, index),
@@ -1143,6 +1161,7 @@ async function createTask(event) {
         `图层明细：${selectedTilemaps.map((item) => item.name).join("、")}`,
         `瓦片格式：${selectedFormats}`,
         `执行时间：${schedule.label}`,
+        `产物格式：${output.label}`,
         `下载线程：${effectiveWorkerLabel}`,
         `保存线程：${savePipe}`,
         `请求间隔：${timeDelay}ms`
@@ -1162,7 +1181,8 @@ async function createTask(event) {
             scheduleMode: schedule.scheduleMode,
             runAt: schedule.runAt,
             levels,
-            sources
+            sources,
+            output: { format: output.format }
         })
     });
 

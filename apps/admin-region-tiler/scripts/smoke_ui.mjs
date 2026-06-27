@@ -383,6 +383,7 @@ async function smokeRegionFlow(page, createdPayloads) {
   assert(Array.isArray(payload.sources) && payload.sources.length > 0, "region payload should include sources");
   assert(!payload.mode, "region payload should use the legacy-compatible region request shape");
   assert(payload.scheduleMode === "immediate", "region payload should create an immediate task");
+  assert(payload.output?.format === "zip", "region payload should default to zip output");
 }
 
 async function smokeRangeFlow(page, createdPayloads) {
@@ -409,6 +410,7 @@ async function smokeRangeFlow(page, createdPayloads) {
   await page.locator("input[name='scheduleMode'][value='once']").check({ force: true });
   await page.locator("#runAtField").waitFor({ state: "visible", timeout: options.timeoutMs });
   await page.locator("input[name='runAt']").fill(formatDateTimeLocal(new Date(Date.now() + 60 * 60 * 1000)));
+  await page.locator("select[name='outputFormat']").selectOption("mbtiles");
 
   await waitForTextNotEqual(page.locator("#rangeTileCount"), "-");
   await waitForTextNotEqual(page.locator("#rangeTotalTileCount"), "-");
@@ -423,6 +425,7 @@ async function smokeRangeFlow(page, createdPayloads) {
   assert(payload.zoom?.min === 10 && payload.zoom?.max === 10, "range payload should include the requested zoom");
   assert(payload.scheduleMode === "once", "range payload should support scheduled once mode");
   assert(typeof payload.runAt === "string" && payload.runAt.includes("T"), "range payload should include scheduled runAt");
+  assert(payload.output?.format === "mbtiles", "range payload should include selected mbtiles output");
   assert(Array.isArray(payload.sources) && payload.sources.length === 1, "range payload should include the selected layer source");
   assert(String(payload.sources[0].name || "").includes("img"), "range payload should include the img layer source");
   assert(String(payload.sources[0].url || "").includes("smoke-test-token"), "range source URL should include the supplied token");

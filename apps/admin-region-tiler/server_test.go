@@ -24,6 +24,7 @@ func TestBuildPlansFromRequestBBoxCreatesDirectLevel(t *testing.T) {
 			{Name: "img", URL: "https://example.test/img/{z}/{x}/{y}.png", Format: PNG, Schema: "xyz"},
 			{Name: "cia", URL: "https://example.test/cia/{z}/{x}/{y}.png", Format: PNG, Schema: "xyz"},
 		},
+		Output: OutputRequest{Format: "mbtiles"},
 	})
 	if err != nil {
 		t.Fatalf("buildPlansFromRequest returned error: %v", err)
@@ -45,6 +46,9 @@ func TestBuildPlansFromRequestBBoxCreatesDirectLevel(t *testing.T) {
 	if level.Mode != "bbox" || level.BBox == nil {
 		t.Fatalf("expected direct bbox level, got %#v", level)
 	}
+	if level.OutputFormat != "mbtiles" {
+		t.Fatalf("expected mbtiles output metadata, got %s", level.OutputFormat)
+	}
 	if level.Geojson != "" {
 		t.Fatalf("bbox level should not depend on generated geojson, got %s", level.Geojson)
 	}
@@ -61,6 +65,9 @@ func TestBuildPlansFromRequestBBoxCreatesDirectLevel(t *testing.T) {
 	}
 	if task.Total == 0 {
 		t.Fatal("direct bbox task should enumerate tiles")
+	}
+	if task.outformat != "mbtiles" {
+		t.Fatalf("expected task output format mbtiles, got %s", task.outformat)
 	}
 }
 
