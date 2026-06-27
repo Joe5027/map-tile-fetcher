@@ -938,6 +938,15 @@ func (s *SQLiteStore) authenticateUser(username, password string) (*UserRecord, 
 	return user, nil
 }
 
+func (s *SQLiteStore) defaultUser() (*UserRecord, error) {
+	username := strings.TrimSpace(viper.GetString("auth.default_username"))
+	if username == "" {
+		username = "admin"
+	}
+	row := s.db.QueryRow(`SELECT id, username, password_hash, created_at FROM users WHERE username = ?`, username)
+	return scanUser(row)
+}
+
 func (s *SQLiteStore) createSession(userID int64) (*SessionRecord, error) {
 	token, err := newToken()
 	if err != nil {

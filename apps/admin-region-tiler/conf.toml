@@ -27,6 +27,12 @@
 	slow_backoff_ms = 1000
 	max_slow_backoff_ms = 10000
 
+[auth]
+	# Keep login enabled by default for deployed use. Set AUTH_ENABLED=false for trusted local development.
+	enabled = true
+	default_username = "admin"
+	default_password = "adminmap"
+
 # Optional per-source fetch policies.
 # Match by host_contains and/or source_name_contains, then override fetch behavior.
 # [[source_policies]]

@@ -65,6 +65,9 @@ A well-polished tile downloader
 2. 在项目根目录执行 `go run .`
 3. 浏览器打开 `http://127.0.0.1:8081/`
 
+登录默认启用，开发默认账号为 `admin` / `adminmap`。可信本地环境可设置
+`AUTH_ENABLED=false` 免登录；生产部署应保持登录启用并通过 `.env` 覆盖默认账号。
+
 ## UI 冒烟测试
 
 浏览器测试脚本会自动启动临时端口的 Go 服务，登录默认开发账号，验证行政区划

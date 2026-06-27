@@ -82,6 +82,7 @@ func initConf(cfgFile string) {
 	viper.SetDefault("task.retry_backoff_ms", 300)
 	viper.SetDefault("task.slow_backoff_ms", 1000)
 	viper.SetDefault("task.max_slow_backoff_ms", 10000)
+	viper.SetDefault("auth.enabled", true)
 	viper.SetDefault("auth.default_username", "admin")
 	viper.SetDefault("auth.default_password", "adminmap")
 }

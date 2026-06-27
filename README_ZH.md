@@ -61,6 +61,7 @@ node .\scripts\release_preflight.mjs
 ## 本地运行注意事项
 
 - 真实天地图或 Mapbox token 只能放在本地配置中。
+- 登录默认启用。可信本地开发可设置 `AUTH_ENABLED=false` 免登录；部署环境应保持登录启用并覆盖默认用户名和密码。
 - `.env`、`data/`、`output/`、`tiles/`、`bin/`、`obj/`、`publish*/` 和发布包不得进入 Git。
 - `YOUR_TIANDITU_TOKEN`、`YOUR_MAPBOX_TOKEN` 等占位符可以保留在示例中。
 

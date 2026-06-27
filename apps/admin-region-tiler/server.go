@@ -271,6 +271,16 @@ func initServer() {
 }
 
 func loginHandler(c *gin.Context) {
+	if !authEnabled() {
+		user, err := store.defaultUser()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load default user"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"id": user.ID, "username": user.Username, "authEnabled": false})
+		return
+	}
+
 	var req AuthLoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -294,6 +304,10 @@ func loginHandler(c *gin.Context) {
 }
 
 func logoutHandler(c *gin.Context) {
+	if !authEnabled() {
+		c.JSON(http.StatusOK, gin.H{"status": "ok", "authEnabled": false})
+		return
+	}
 	token, _ := c.Cookie(sessionCookie)
 	if token != "" {
 		_ = store.deleteSession(token)
@@ -304,11 +318,23 @@ func logoutHandler(c *gin.Context) {
 
 func meHandler(c *gin.Context) {
 	user := currentUser(c)
-	c.JSON(http.StatusOK, gin.H{"id": user.ID, "username": user.Username})
+	c.JSON(http.StatusOK, gin.H{"id": user.ID, "username": user.Username, "authEnabled": authEnabled()})
 }
 
 func authMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if !authEnabled() {
+			user, err := store.defaultUser()
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load default user"})
+				c.Abort()
+				return
+			}
+			c.Set("user", user)
+			c.Next()
+			return
+		}
+
 		token, err := c.Cookie(sessionCookie)
 		if err != nil || token == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
@@ -333,6 +359,10 @@ func authMiddleware() gin.HandlerFunc {
 		c.Set("user", user)
 		c.Next()
 	}
+}
+
+func authEnabled() bool {
+	return viper.GetBool("auth.enabled")
 }
 
 func currentUser(c *gin.Context) *UserRecord {

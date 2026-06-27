@@ -72,6 +72,9 @@ node .\scripts\release_preflight.mjs
 Runtime secrets and generated data must stay local:
 
 - Put real Tianditu or Mapbox tokens in local configuration only.
+- Login is enabled by default. For trusted local development, set
+  `AUTH_ENABLED=false`; for deployed use, keep login enabled and override the
+  default username/password.
 - Keep `.env`, `data/`, `output/`, `tiles/`, `bin/`, `obj/`, `publish*/`, and
   release archives out of Git.
 - Placeholder values such as `YOUR_TIANDITU_TOKEN` and `YOUR_MAPBOX_TOKEN` are

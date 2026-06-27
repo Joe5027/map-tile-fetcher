@@ -357,7 +357,21 @@ async function expectTitle(page) {
 }
 
 async function login(page) {
-  await page.locator("#loginView").waitFor({ state: "visible", timeout: options.timeoutMs });
+  await page.waitForFunction(() => {
+    const loginView = document.getElementById("loginView");
+    const appView = document.getElementById("appView");
+    return Boolean(
+      loginView && appView &&
+      (!loginView.classList.contains("is-hidden") || !appView.classList.contains("is-hidden"))
+    );
+  }, { timeout: options.timeoutMs });
+  const appVisible = await page.locator("#appView").evaluate((element) => !element.classList.contains("is-hidden"));
+  if (appVisible) {
+    await page.locator("#taskForm").waitFor({ state: "visible", timeout: options.timeoutMs });
+    await page.locator("#taskList").waitFor({ state: "visible", timeout: options.timeoutMs });
+    return;
+  }
+
   await page.locator("input[name='username']").fill(devUsername);
   await page.locator("input[name='password']").fill(devPassword);
   await page.locator("#loginForm button[type='submit']").click();
