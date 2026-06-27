@@ -109,6 +109,9 @@ Important endpoints:
 - `static/`
   - browser UI for authentication, task creation, progress, task controls,
     map-source and region selection
+  - now exposes two creation modes: administrative-region downloads through the
+    existing region catalog flow, and bounding-box Tianditu range downloads
+    through the unified `/api/tasks` path
 - `deploy/`
   - Linux, Nginx, and systemd deployment references
 - `geojson/`

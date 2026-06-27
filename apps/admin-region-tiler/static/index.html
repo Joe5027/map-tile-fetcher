@@ -6,6 +6,7 @@
     <title>地图图片下载中心</title>
     <meta name="description" content="创建任务并批量下载地图图片。">
     <link rel="icon" type="image/svg+xml" href="/static/assets/favicon/favicon.svg?v=1">
+    <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css?v=1">
     <link rel="stylesheet" href="/static/styles.css?v=1">
 </head>
 <body>
@@ -76,7 +77,18 @@
                             <input type="text" name="name" required placeholder="例如：南京影像下载">
                         </label>
 
-                        <section class="section-card">
+                        <div class="mode-switch" role="tablist" aria-label="下载模式">
+                            <button type="button" class="mode-toggle is-active" data-task-mode="region" aria-pressed="true">
+                                <img src="/static/assets/icons/layers.svg" alt="">
+                                <span>行政区划下载</span>
+                            </button>
+                            <button type="button" class="mode-toggle" data-task-mode="bbox" aria-pressed="false">
+                                <img src="/static/assets/icons/map.svg" alt="">
+                                <span>范围框选下载</span>
+                            </button>
+                        </div>
+
+                        <section id="sourceSection" class="section-card">
                             <div class="section-card__header">
                                 <h3>地图源选择</h3>
                                 <p>选择地图服务作为数据源，它们会作为一个任务下的子任务创建</p>
@@ -110,7 +122,81 @@
                             </label>
                         </section>
 
-                        <section class="section-card">
+                        <section id="rangeModePanel" class="section-card range-panel is-hidden">
+                            <div class="section-card__header">
+                                <h3>范围框选配置</h3>
+                                <p>点击地图两次生成下载范围，按 Tianditu img / cia / vec 创建子任务</p>
+                            </div>
+
+                            <label class="field">
+                                <span class="field-label">天地图 Token</span>
+                                <input type="text" name="tdtToken" autocomplete="off" spellcheck="false" placeholder="YOUR_TIANDITU_TOKEN">
+                            </label>
+
+                            <div class="range-layer-grid" aria-label="天地图图层">
+                                <label class="range-layer">
+                                    <input class="range-layer-option" type="checkbox" name="rangeLayers" value="img" checked>
+                                    <span>img 卫星图</span>
+                                </label>
+                                <label class="range-layer">
+                                    <input class="range-layer-option" type="checkbox" name="rangeLayers" value="cia" checked>
+                                    <span>cia 路网</span>
+                                </label>
+                                <label class="range-layer">
+                                    <input class="range-layer-option" type="checkbox" name="rangeLayers" value="vec" checked>
+                                    <span>vec 电子图</span>
+                                </label>
+                            </div>
+
+                            <div class="range-map-card">
+                                <div class="range-map-toolbar">
+                                    <div>
+                                        <strong>范围预览</strong>
+                                        <span>移动：<b id="rangeHoverCoord">-</b> ｜ 点击：<b id="rangeClickCoord">-</b></span>
+                                    </div>
+                                    <div class="range-map-actions">
+                                        <button id="clearRangeBtn" type="button" class="ghost-button ghost-button--compact">清除</button>
+                                        <button id="fitRangeBtn" type="button" class="ghost-button ghost-button--compact">适配</button>
+                                    </div>
+                                </div>
+                                <div id="rangeMap" class="range-map"></div>
+                            </div>
+
+                            <div class="range-coordinate-grid">
+                                <label class="field">
+                                    <span class="field-label">最小经度</span>
+                                    <input type="number" name="rangeMinLon" step="0.000001" value="116.300000">
+                                </label>
+                                <label class="field">
+                                    <span class="field-label">最大纬度</span>
+                                    <input type="number" name="rangeMaxLat" step="0.000001" value="39.980000">
+                                </label>
+                                <label class="field">
+                                    <span class="field-label">最大经度</span>
+                                    <input type="number" name="rangeMaxLon" step="0.000001" value="116.460000">
+                                </label>
+                                <label class="field">
+                                    <span class="field-label">最小纬度</span>
+                                    <input type="number" name="rangeMinLat" step="0.000001" value="39.860000">
+                                </label>
+                                <label class="field">
+                                    <span class="field-label">最小级别</span>
+                                    <input type="number" name="rangeMinZoom" min="0" max="20" step="1" value="10">
+                                </label>
+                                <label class="field">
+                                    <span class="field-label">最大级别</span>
+                                    <input type="number" name="rangeMaxZoom" min="0" max="20" step="1" value="12">
+                                </label>
+                            </div>
+
+                            <div class="range-estimate">
+                                <span>单图层瓦片：<strong id="rangeTileCount">-</strong></span>
+                                <span>总瓦片：<strong id="rangeTotalTileCount">-</strong></span>
+                                <span>估算体积：<strong id="rangeSizeEstimate">-</strong></span>
+                            </div>
+                        </section>
+
+                        <section id="regionModePanel" class="section-card">
                             <div class="section-card__header section-card__header--split">
                                 <div>
                                     <h3>下载区域配置</h3>
@@ -184,6 +270,7 @@
         </div>
     </div>
 
-    <script src="/static/script.js?v=16"></script>
+    <script src="/static/vendor/leaflet/leaflet.js?v=1"></script>
+    <script src="/static/script.js?v=17"></script>
 </body>
 </html>

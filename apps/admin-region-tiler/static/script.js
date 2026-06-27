@@ -5,6 +5,10 @@ let levelConfigs = [];
 let activeLevelCount = 4;
 let selectedProvider = "";
 let selectedSourceIds = new Set();
+let taskMode = "region";
+let rangeMap = null;
+let rangeRectangle = null;
+let rangeClickPoints = [];
 let currentTaskFilter = "all";
 let cachedTasks = [];
 const expandedProviders = new Set();
@@ -31,6 +35,12 @@ const FALLBACK_TILEMAPS = [
     { id: 10, name: "Mapbox地形图", url: "https://api.mapbox.com/v4/mapbox.mapbox-terrain-v2/{z}/{x}/{y}.vector.pbf?sku=YOUR_MAPBOX_SKU&access_token=YOUR_MAPBOX_TOKEN", format: "pbf", schema: "xyz", min_zoom: 0, max_zoom: 14 }
 ];
 
+const RANGE_LAYER_NAMES = {
+    img: "天地图 img 卫星图",
+    cia: "天地图 cia 路网",
+    vec: "天地图 vec 电子图"
+};
+
 document.addEventListener("DOMContentLoaded", async () => {
     bindEvents();
     await bootstrap();
@@ -42,6 +52,24 @@ function bindEvents() {
     document.getElementById("taskForm").addEventListener("submit", createTask);
     document.getElementById("refreshBtn").addEventListener("click", loadTasks);
     document.getElementById("addLevelBtn").addEventListener("click", addLevelConfig);
+
+    document.querySelectorAll("[data-task-mode]").forEach((button) => {
+        button.addEventListener("click", () => setTaskMode(button.dataset.taskMode));
+    });
+
+    document.querySelectorAll("[name^='range'], [name='tdtToken']").forEach((element) => {
+        element.addEventListener("input", () => {
+            updateRangeEstimate();
+            updateRangeOverlay();
+        });
+    });
+
+    document.querySelectorAll(".range-layer-option").forEach((element) => {
+        element.addEventListener("change", updateRangeEstimate);
+    });
+
+    document.getElementById("clearRangeBtn").addEventListener("click", clearRangeSelection);
+    document.getElementById("fitRangeBtn").addEventListener("click", fitRangeMapToFields);
 
     document.getElementById("tilemapSelector").addEventListener("change", (event) => {
         if (event.target.matches(".tilemap-source-option")) {
@@ -192,6 +220,8 @@ async function bootstrap() {
     await Promise.all([loadTilemaps(), loadRegionCatalog()]);
     initDefaultLevelConfigs();
     renderLevelConfigs();
+    setTaskMode(taskMode);
+    updateRangeEstimate();
     await loadTasks();
     window.setInterval(loadTasks, 5000);
 }
@@ -205,6 +235,140 @@ function showApp(user) {
     document.getElementById("currentUsername").textContent = user.username;
     document.getElementById("loginView").classList.add("is-hidden");
     document.getElementById("appView").classList.remove("is-hidden");
+}
+
+function setTaskMode(mode) {
+    taskMode = mode === "bbox" ? "bbox" : "region";
+
+    document.querySelectorAll("[data-task-mode]").forEach((button) => {
+        const active = button.dataset.taskMode === taskMode;
+        button.classList.toggle("is-active", active);
+        button.setAttribute("aria-pressed", active ? "true" : "false");
+    });
+
+    document.getElementById("sourceSection").classList.toggle("is-hidden", taskMode !== "region");
+    document.getElementById("regionModePanel").classList.toggle("is-hidden", taskMode !== "region");
+    document.getElementById("rangeModePanel").classList.toggle("is-hidden", taskMode !== "bbox");
+    document.getElementById("addLevelBtn").classList.toggle("is-hidden", taskMode !== "region");
+
+    if (taskMode === "bbox") {
+        initRangeMap();
+        updateRangeEstimate();
+        updateRangeOverlay();
+        window.setTimeout(() => {
+            if (rangeMap) {
+                rangeMap.invalidateSize();
+            }
+        }, 40);
+    }
+}
+
+function initRangeMap() {
+    if (rangeMap || !window.L) {
+        return;
+    }
+
+    rangeMap = L.map("rangeMap", {
+        zoomControl: true,
+        attributionControl: false
+    }).setView([35.8617, 104.1954], 4);
+
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        minZoom: 1,
+        maxZoom: 19
+    }).addTo(rangeMap);
+
+    rangeMap.on("mousemove", (event) => {
+        document.getElementById("rangeHoverCoord").textContent = formatLngLat(event.latlng);
+    });
+
+    rangeMap.on("click", (event) => {
+        document.getElementById("rangeClickCoord").textContent = formatLngLat(event.latlng);
+        handleRangeMapClick(event.latlng);
+    });
+}
+
+function handleRangeMapClick(latlng) {
+    if (rangeClickPoints.length >= 2) {
+        rangeClickPoints = [];
+    }
+    rangeClickPoints.push(latlng);
+
+    if (rangeClickPoints.length === 1) {
+        setRangeFieldsFromPoints(latlng, latlng);
+        updateRangeOverlay();
+        updateRangeEstimate();
+        return;
+    }
+
+    setRangeFieldsFromPoints(rangeClickPoints[0], rangeClickPoints[1]);
+    updateRangeOverlay(true);
+    updateRangeEstimate();
+}
+
+function setRangeFieldsFromPoints(first, second) {
+    const form = document.getElementById("taskForm");
+    form.elements.rangeMinLon.value = Math.min(first.lng, second.lng).toFixed(6);
+    form.elements.rangeMaxLon.value = Math.max(first.lng, second.lng).toFixed(6);
+    form.elements.rangeMinLat.value = Math.min(first.lat, second.lat).toFixed(6);
+    form.elements.rangeMaxLat.value = Math.max(first.lat, second.lat).toFixed(6);
+}
+
+function clearRangeSelection() {
+    rangeClickPoints = [];
+    if (rangeRectangle && rangeMap) {
+        rangeMap.removeLayer(rangeRectangle);
+        rangeRectangle = null;
+    }
+    document.getElementById("rangeClickCoord").textContent = "-";
+}
+
+function fitRangeMapToFields() {
+    if (!rangeMap) {
+        return;
+    }
+    const bounds = readRangeBoundsFromFields();
+    if (!bounds) {
+        return;
+    }
+    updateRangeOverlay(true);
+}
+
+function updateRangeOverlay(fit = false) {
+    if (!rangeMap) {
+        return;
+    }
+    const bounds = readRangeBoundsFromFields();
+    if (!bounds) {
+        return;
+    }
+
+    if (!rangeRectangle) {
+        rangeRectangle = L.rectangle(bounds, {
+            color: "#2563eb",
+            weight: 2,
+            dashArray: "6 6",
+            fillColor: "#2563eb",
+            fillOpacity: 0.14
+        }).addTo(rangeMap);
+    } else {
+        rangeRectangle.setBounds(bounds);
+    }
+
+    if (fit) {
+        rangeMap.fitBounds(bounds.pad(0.3), { animate: false, maxZoom: 16 });
+    }
+}
+
+function readRangeBoundsFromFields() {
+    const request = readRangeRequest(new FormData(document.getElementById("taskForm")));
+    if (!isValidBBox(request.bbox, false)) {
+        return null;
+    }
+    return L.latLngBounds(
+        L.latLng(request.bbox.minLat, request.bbox.minLon),
+        L.latLng(request.bbox.maxLat, request.bbox.maxLon)
+    );
 }
 
 async function login(event) {
@@ -656,11 +820,196 @@ function compareTilemapGroups(left, right) {
     return left.localeCompare(right, "zh-CN");
 }
 
+async function createRangeTask(event, formData) {
+    const request = readRangeRequest(formData);
+    const validation = validateRangeRequest(request);
+    if (validation) {
+        showMessage("taskError", validation);
+        return;
+    }
+
+    const workerCount = Number.parseInt(formData.get("workers"), 10) || 0;
+    const savePipe = Number.parseInt(formData.get("savePipe"), 10) || 0;
+    const timeDelay = Number.parseInt(formData.get("timeDelay"), 10) || 0;
+    if (timeDelay < 50) {
+        showMessage("taskError", "请求间隔不能小于 50ms。");
+        return;
+    }
+
+    const tileCount = calculateRangeTileCount(request.bbox, request.zoom);
+    const sources = request.layers.map((layer, index) => buildTianDiTuSource(layer, request.token, index));
+    const summary = [
+        `任务名称：${request.name}`,
+        `下载模式：范围框选`,
+        `范围：${request.bbox.minLon},${request.bbox.minLat} - ${request.bbox.maxLon},${request.bbox.maxLat}`,
+        `层级：${request.zoom.min}-${request.zoom.max}`,
+        `图层：${request.layers.join("、")}`,
+        `单图层瓦片：${tileCount}`,
+        `总瓦片：${tileCount * request.layers.length}`,
+        `下载线程：${workerCount}`,
+        `保存线程：${savePipe}`,
+        `请求间隔：${timeDelay}ms`
+    ].join("\n");
+
+    if (!window.confirm(`请确认本次任务信息：\n\n${summary}`)) {
+        return;
+    }
+
+    const response = await fetchJSON("/api/tasks", {
+        method: "POST",
+        body: JSON.stringify({
+            name: request.name,
+            mode: "bbox",
+            workers: workerCount,
+            savePipe,
+            timeDelay,
+            scheduleMode: "immediate",
+            runAt: "",
+            area: { bbox: request.bbox },
+            zoom: request.zoom,
+            sources
+        })
+    });
+
+    if (!response.ok) {
+        showMessage("taskError", response.data.error || "范围任务创建失败，请稍后重试。");
+        return;
+    }
+
+    event.target.reset();
+    rangeClickPoints = [];
+    updateRangeEstimate();
+    updateRangeOverlay(true);
+    await loadTasks();
+}
+
+function readRangeRequest(formData) {
+    return {
+        name: String(formData.get("name") || "").trim() || "天地图范围下载任务",
+        token: String(formData.get("tdtToken") || "").trim(),
+        layers: getSelectedRangeLayers(),
+        bbox: {
+            minLon: Number(formData.get("rangeMinLon")),
+            minLat: Number(formData.get("rangeMinLat")),
+            maxLon: Number(formData.get("rangeMaxLon")),
+            maxLat: Number(formData.get("rangeMaxLat"))
+        },
+        zoom: {
+            min: Number.parseInt(formData.get("rangeMinZoom"), 10),
+            max: Number.parseInt(formData.get("rangeMaxZoom"), 10)
+        }
+    };
+}
+
+function getSelectedRangeLayers() {
+    return Array.from(document.querySelectorAll(".range-layer-option:checked")).map((element) => element.value);
+}
+
+function validateRangeRequest(request) {
+    if (!request.token || request.token === "YOUR_TIANDITU_TOKEN") {
+        return "请输入真实的天地图 Token。";
+    }
+    if (request.layers.length === 0) {
+        return "请至少选择一个天地图图层。";
+    }
+    if (!isValidBBox(request.bbox, true)) {
+        return "范围坐标无效，请确认最小经度、最小纬度、最大经度、最大纬度。";
+    }
+    if (!Number.isInteger(request.zoom.min) || !Number.isInteger(request.zoom.max)) {
+        return "层级必须是整数。";
+    }
+    if (request.zoom.min < 0 || request.zoom.max > 18 || request.zoom.min > request.zoom.max) {
+        return "天地图范围下载层级必须在 0 到 18 之间，且最小级别不能大于最大级别。";
+    }
+    return "";
+}
+
+function isValidBBox(bbox, requireArea) {
+    if (!bbox) {
+        return false;
+    }
+    const values = [bbox.minLon, bbox.minLat, bbox.maxLon, bbox.maxLat];
+    if (!values.every(Number.isFinite)) {
+        return false;
+    }
+    if (bbox.minLon < -180 || bbox.maxLon > 180) {
+        return false;
+    }
+    if (bbox.minLat < -85.05112878 || bbox.maxLat > 85.05112878) {
+        return false;
+    }
+    if (requireArea) {
+        return bbox.minLon < bbox.maxLon && bbox.minLat < bbox.maxLat;
+    }
+    return bbox.minLon <= bbox.maxLon && bbox.minLat <= bbox.maxLat;
+}
+
+function updateRangeEstimate() {
+    const request = readRangeRequest(new FormData(document.getElementById("taskForm")));
+    const tileElement = document.getElementById("rangeTileCount");
+    const totalElement = document.getElementById("rangeTotalTileCount");
+    const sizeElement = document.getElementById("rangeSizeEstimate");
+
+    if (!isValidBBox(request.bbox, true) || !Number.isInteger(request.zoom.min) || !Number.isInteger(request.zoom.max) || request.zoom.min < 0 || request.zoom.max > 18 || request.zoom.min > request.zoom.max || request.layers.length === 0) {
+        tileElement.textContent = "-";
+        totalElement.textContent = "-";
+        sizeElement.textContent = "-";
+        return;
+    }
+
+    const tileCount = calculateRangeTileCount(request.bbox, request.zoom);
+    const total = tileCount * request.layers.length;
+    tileElement.textContent = String(tileCount);
+    totalElement.textContent = String(total);
+    sizeElement.textContent = `${((total * 8) / 1024).toFixed(2)} MB`;
+}
+
+function calculateRangeTileCount(bbox, zoom) {
+    let count = 0;
+    for (let z = zoom.min; z <= zoom.max; z += 1) {
+        const leftTop = rangeTileForLonLat(bbox.minLon, bbox.maxLat, z);
+        const rightBottom = rangeTileForLonLat(bbox.maxLon, bbox.minLat, z);
+        count += (rightBottom.x - leftTop.x + 1) * (rightBottom.y - leftTop.y + 1);
+    }
+    return count;
+}
+
+function rangeTileForLonLat(lon, lat, z) {
+    const n = 2 ** z;
+    const max = n - 1;
+    const x = Math.floor(((lon + 180) / 360) * n);
+    const rad = (lat * Math.PI) / 180;
+    const y = Math.floor(((1 - Math.log(Math.tan(rad) + 1 / Math.cos(rad)) / Math.PI) / 2) * n);
+    return {
+        x: clampInt(x, 0, max),
+        y: clampInt(y, 0, max)
+    };
+}
+
+function clampInt(value, min, max) {
+    return Math.min(max, Math.max(min, value));
+}
+
+function buildTianDiTuSource(layer, token, index) {
+    return {
+        id: index + 1,
+        name: RANGE_LAYER_NAMES[layer] || `天地图 ${layer}`,
+        url: `https://t0.tianditu.gov.cn/DataServer?T=${layer}_w&x={x}&y={y}&l={z}&tk=${encodeURIComponent(token)}`,
+        format: "png",
+        schema: "xyz"
+    };
+}
+
 async function createTask(event) {
     event.preventDefault();
     hideMessage("taskError");
 
     const formData = new FormData(event.target);
+    if (taskMode === "bbox") {
+        await createRangeTask(event, formData);
+        return;
+    }
+
     const provider = getSelectedProviderGroup();
     if (!provider) {
         showMessage("taskError", "请选择地图源。");

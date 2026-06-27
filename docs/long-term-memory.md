@@ -42,6 +42,10 @@
   `area.bbox`, `zoom`, and `sources`; the server converts bbox tasks into
   ignored `data/generated-areas/*.geojson` files so the existing Go execution,
   retry, progress, SQLite run, and artifact path stays active.
+- The Go static UI now has a two-mode task form. Region mode keeps the existing
+  map-source and region catalog flow; bbox mode adds a Leaflet range preview,
+  Tianditu token input, `img`/`cia`/`vec` layer selection, bbox coordinates,
+  tile estimates, and unified `/api/tasks` submission.
 
 ## Assumptions
 
