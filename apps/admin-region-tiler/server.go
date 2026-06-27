@@ -3,8 +3,10 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -13,6 +15,9 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 	"github.com/teris-io/shortid"
+
+	"tiler/internal/area"
+	"tiler/internal/downloader"
 )
 
 type LevelRequest struct {
@@ -30,51 +35,72 @@ type SourceRequest struct {
 	Schema string `json:"schema"`
 }
 
+type BBoxRequest struct {
+	MinLon float64 `json:"minLon"`
+	MinLat float64 `json:"minLat"`
+	MaxLon float64 `json:"maxLon"`
+	MaxLat float64 `json:"maxLat"`
+}
+
+type AreaRequest struct {
+	BBox     *BBoxRequest `json:"bbox,omitempty"`
+	GeoJSON  string       `json:"geojson,omitempty"`
+	RegionID string       `json:"regionId,omitempty"`
+}
+
+type ZoomRangeRequest struct {
+	Min int `json:"min"`
+	Max int `json:"max"`
+}
+
 type CreateTaskRequest struct {
-	Name         string          `json:"name" binding:"required"`
-	SourceName   string          `json:"sourceName,omitempty"`
-	URL          string          `json:"url"`
-	Format       string          `json:"format"`
-	Schema       string          `json:"schema"`
-	Workers      int             `json:"workers"`
-	SavePipe     int             `json:"savePipe"`
-	TimeDelay    int             `json:"timeDelay"`
-	ScheduleMode ScheduleMode    `json:"scheduleMode"`
-	RunAt        string          `json:"runAt"`
-	Levels       []LevelRequest  `json:"levels" binding:"required"`
-	Sources      []SourceRequest `json:"sources"`
+	Name         string            `json:"name" binding:"required"`
+	Mode         string            `json:"mode,omitempty"`
+	Area         AreaRequest       `json:"area,omitempty"`
+	Zoom         *ZoomRangeRequest `json:"zoom,omitempty"`
+	SourceName   string            `json:"sourceName,omitempty"`
+	URL          string            `json:"url"`
+	Format       string            `json:"format"`
+	Schema       string            `json:"schema"`
+	Workers      int               `json:"workers"`
+	SavePipe     int               `json:"savePipe"`
+	TimeDelay    int               `json:"timeDelay"`
+	ScheduleMode ScheduleMode      `json:"scheduleMode"`
+	RunAt        string            `json:"runAt"`
+	Levels       []LevelRequest    `json:"levels"`
+	Sources      []SourceRequest   `json:"sources"`
 }
 
 type TaskResponse struct {
-	ID             string         `json:"id"`
-	ParentID       string         `json:"parentId,omitempty"`
-	Kind           string         `json:"kind"`
-	Name           string         `json:"name"`
-	SourceName     string         `json:"sourceName,omitempty"`
-	File           string         `json:"file,omitempty"`
-	MinZoom        int            `json:"minZoom"`
-	MaxZoom        int            `json:"maxZoom"`
-	Total          int64          `json:"total"`
-	Current        int64          `json:"current"`
-	Progress       float64        `json:"progress"`
-	Status         string         `json:"status"`
-	SuccessCount   int64          `json:"successCount"`
-	FailureCount   int64          `json:"failureCount"`
-	StartedAt      string         `json:"startedAt,omitempty"`
-	FinishedAt     string         `json:"finishedAt,omitempty"`
-	ErrorMessage   string         `json:"errorMessage,omitempty"`
-	ScheduleMode   ScheduleMode   `json:"scheduleMode"`
-	RunAt          string         `json:"runAt"`
-	ArtifactStatus ArtifactStatus `json:"artifactStatus"`
-	ArtifactName   string         `json:"artifactName,omitempty"`
-	DownloadURL    string         `json:"downloadUrl,omitempty"`
-	TotalChildren  int            `json:"totalChildren,omitempty"`
-	CompletedChildren int         `json:"completedChildren,omitempty"`
-	RunningChildren int           `json:"runningChildren,omitempty"`
-	PausedChildren int            `json:"pausedChildren,omitempty"`
-	FailedChildren int            `json:"failedChildren,omitempty"`
-	CancelledChildren int         `json:"cancelledChildren,omitempty"`
-	Children       []TaskResponse `json:"children,omitempty"`
+	ID                string         `json:"id"`
+	ParentID          string         `json:"parentId,omitempty"`
+	Kind              string         `json:"kind"`
+	Name              string         `json:"name"`
+	SourceName        string         `json:"sourceName,omitempty"`
+	File              string         `json:"file,omitempty"`
+	MinZoom           int            `json:"minZoom"`
+	MaxZoom           int            `json:"maxZoom"`
+	Total             int64          `json:"total"`
+	Current           int64          `json:"current"`
+	Progress          float64        `json:"progress"`
+	Status            string         `json:"status"`
+	SuccessCount      int64          `json:"successCount"`
+	FailureCount      int64          `json:"failureCount"`
+	StartedAt         string         `json:"startedAt,omitempty"`
+	FinishedAt        string         `json:"finishedAt,omitempty"`
+	ErrorMessage      string         `json:"errorMessage,omitempty"`
+	ScheduleMode      ScheduleMode   `json:"scheduleMode"`
+	RunAt             string         `json:"runAt"`
+	ArtifactStatus    ArtifactStatus `json:"artifactStatus"`
+	ArtifactName      string         `json:"artifactName,omitempty"`
+	DownloadURL       string         `json:"downloadUrl,omitempty"`
+	TotalChildren     int            `json:"totalChildren,omitempty"`
+	CompletedChildren int            `json:"completedChildren,omitempty"`
+	RunningChildren   int            `json:"runningChildren,omitempty"`
+	PausedChildren    int            `json:"pausedChildren,omitempty"`
+	FailedChildren    int            `json:"failedChildren,omitempty"`
+	CancelledChildren int            `json:"cancelledChildren,omitempty"`
+	Children          []TaskResponse `json:"children,omitempty"`
 }
 
 type AuthLoginRequest struct {
@@ -399,9 +425,6 @@ func buildPlansFromRequest(userID int64, req CreateTaskRequest) (*PlanRecord, []
 	if req.Name == "" {
 		return nil, nil, errors.New("name is required")
 	}
-	if len(req.Levels) == 0 {
-		return nil, nil, errors.New("at least one level configuration is required")
-	}
 
 	mode := req.ScheduleMode
 	if mode == "" {
@@ -423,6 +446,19 @@ func buildPlansFromRequest(userID int64, req CreateTaskRequest) (*PlanRecord, []
 		runAt = parsed
 	}
 
+	sources, err := normalizeSources(req)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if err := normalizeAreaLevels(&req); err != nil {
+		return nil, nil, err
+	}
+
+	if len(req.Levels) == 0 {
+		return nil, nil, errors.New("at least one level configuration is required")
+	}
+
 	levels := make([]LevelConfig, 0, len(req.Levels))
 	for _, level := range req.Levels {
 		resolvedGeoJSON, err := validateLevel(level)
@@ -431,11 +467,6 @@ func buildPlansFromRequest(userID int64, req CreateTaskRequest) (*PlanRecord, []
 		}
 		level.Geojson = resolvedGeoJSON
 		levels = append(levels, LevelConfig(level))
-	}
-
-	sources, err := normalizeSources(req)
-	if err != nil {
-		return nil, nil, err
 	}
 
 	groupID, _ := shortid.Generate()
@@ -480,6 +511,116 @@ func buildPlansFromRequest(userID int64, req CreateTaskRequest) (*PlanRecord, []
 	}
 
 	return parent, children, nil
+}
+
+func normalizeAreaLevels(req *CreateTaskRequest) error {
+	mode := strings.ToLower(strings.TrimSpace(req.Mode))
+	if mode == "" && req.Area.BBox != nil {
+		mode = string(area.ModeBBox)
+	}
+	if mode == "" {
+		mode = string(area.ModeRegion)
+	}
+
+	switch area.Mode(mode) {
+	case area.ModeRegion:
+		if len(req.Levels) > 0 {
+			return nil
+		}
+		if req.Zoom == nil {
+			return errors.New("zoom is required when region levels are omitted")
+		}
+		zoom := area.ZoomRange{Min: req.Zoom.Min, Max: req.Zoom.Max}
+		if err := zoom.Validate(); err != nil {
+			return err
+		}
+		geojsonPath := strings.TrimSpace(req.Area.GeoJSON)
+		if geojsonPath == "" {
+			return errors.New("area.geojson is required for region tasks without levels")
+		}
+		req.Levels = []LevelRequest{{
+			MinZoom: zoom.Min,
+			MaxZoom: zoom.Max,
+			Geojson: geojsonPath,
+		}}
+		return nil
+	case area.ModeBBox:
+		if req.Area.BBox == nil {
+			return errors.New("area.bbox is required for bbox tasks")
+		}
+		if req.Zoom == nil {
+			return errors.New("zoom is required for bbox tasks")
+		}
+		box := area.BBox{
+			MinLon: req.Area.BBox.MinLon,
+			MinLat: req.Area.BBox.MinLat,
+			MaxLon: req.Area.BBox.MaxLon,
+			MaxLat: req.Area.BBox.MaxLat,
+		}
+		zoom := area.ZoomRange{Min: req.Zoom.Min, Max: req.Zoom.Max}
+		count, err := downloader.CountBBoxTiles(box, zoom)
+		if err != nil {
+			return err
+		}
+		if count == 0 {
+			return errors.New("bbox task has no tiles")
+		}
+		geojsonPath, err := writeGeneratedBBoxGeoJSON(req.Name, box)
+		if err != nil {
+			return err
+		}
+		req.Levels = []LevelRequest{{
+			MinZoom: zoom.Min,
+			MaxZoom: zoom.Max,
+			Geojson: geojsonPath,
+		}}
+		return nil
+	default:
+		return errors.New("mode must be bbox or region")
+	}
+}
+
+func writeGeneratedBBoxGeoJSON(name string, box area.BBox) (string, error) {
+	id, err := shortid.Generate()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join("data", "generated-areas")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", err
+	}
+
+	path := filepath.Join(dir, fmt.Sprintf("bbox-%s.geojson", id))
+	payload := map[string]any{
+		"type": "FeatureCollection",
+		"features": []map[string]any{
+			{
+				"type": "Feature",
+				"properties": map[string]any{
+					"name": strings.TrimSpace(name),
+					"mode": string(area.ModeBBox),
+				},
+				"geometry": map[string]any{
+					"type": "Polygon",
+					"coordinates": [][][]float64{{
+						{box.MinLon, box.MinLat},
+						{box.MaxLon, box.MinLat},
+						{box.MaxLon, box.MaxLat},
+						{box.MinLon, box.MaxLat},
+						{box.MinLon, box.MinLat},
+					}},
+				},
+			},
+		},
+	}
+	data, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 func normalizeSources(req CreateTaskRequest) ([]SourceRequest, error) {

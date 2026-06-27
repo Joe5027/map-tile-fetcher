@@ -80,6 +80,9 @@ Important endpoints:
   - Gin routes for login, current user, task CRUD, task control, artifact
     download, map source config, region catalog, and GeoJSON file listing
   - validates task creation requests and builds parent/child plans
+  - accepts legacy region `levels` requests and unified `mode: "bbox"`
+    requests; bbox requests are converted to ignored `data/generated-areas`
+    GeoJSON so the existing Go worker and artifact pipeline can run them
 - `db.go`
   - SQLite schema, user/session records, plan records, run records, child plan
     relations, and interrupted-plan recovery
@@ -91,6 +94,9 @@ Important endpoints:
 - `task.go`
   - tile download engine, output setup, file/MBTiles writing, retry and throttle
     behavior, proxy rotation, request headers, and final status
+- `internal/downloader`
+  - contains bbox tile math shared by API validation and future range UI
+    estimates
 - `fetch_policy.go`
   - per-source fetch behavior, retryable status classification, proxy and
     throttling policy

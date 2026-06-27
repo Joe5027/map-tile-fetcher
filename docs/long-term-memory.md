@@ -38,6 +38,10 @@
 - `internal/area` and `internal/planner` contain the first unified task-model
   primitives with tests for bbox, region, source, schedule, output, and zoom
   normalization.
+- `/api/tasks` now accepts unified bbox task creation through `mode: "bbox"`,
+  `area.bbox`, `zoom`, and `sources`; the server converts bbox tasks into
+  ignored `data/generated-areas/*.geojson` files so the existing Go execution,
+  retry, progress, SQLite run, and artifact path stays active.
 
 ## Assumptions
 
