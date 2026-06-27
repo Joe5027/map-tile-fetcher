@@ -59,8 +59,13 @@ not run.
 
 - Start substantial work from `docs/project-map.md`, then `docs/done-definition.md`
   and the README for the affected app.
+- For repository-local AI enhancement, deep-execution, or control-surface work,
+  use `docs/ai-operating-handbook.md` as the compact execution entrypoint after
+  the project map and done definition.
 - Use `docs/validation-chain.md` to pick the narrowest meaningful check and
   `docs/automation-guardrails.md` for read-only recurring review prompts.
+- Use `docs/knowledge-graph.md` to recover durable relationships before broad
+  exploration.
 - For merge, release, or long-running handoff work, update
   `docs/long-term-memory.md` when a durable fact, decision, assumption,
   validation result, or next action changes.

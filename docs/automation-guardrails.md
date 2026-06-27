@@ -33,10 +33,11 @@ Use this as the base prompt for a read-only workspace review:
 Review the current repository as a read-only Codex workspace harness check.
 
 Facts:
-- Start from AGENTS.md, docs/project-map.md, docs/done-definition.md, and git status.
+- Start from AGENTS.md, docs/project-map.md, docs/done-definition.md, docs/ai-operating-handbook.md, and git status.
 - Confirm the repository only contains the in-scope app under apps/admin-region-tiler.
 - Confirm retired .NET range downloader runtime code has not reappeared.
 - Check for drift between README.md, PROJECT_MANIFEST.md, RELEASE_HANDOFF_PROMPT.md, LICENSE, and docs/merge-plan.md.
+- Check that docs/knowledge-graph.md still names the current single-app architecture and AI control surfaces.
 - Check that docs/long-term-memory.md still follows the handoff contract if it exists.
 - Check for sensitive token or password literals, allowing documented placeholders and the documented development default admin password only.
 
@@ -74,6 +75,33 @@ rg -n "TIANDITU|MAPBOX|TOKEN|PASSWORD|SECRET|adminmap|YOUR_" -g "!**/bin/**" -g 
 python C:\Users\32674\.codex\skills\deep-execution-upgrade\scripts\validate_handoff_contract.py --path docs\long-term-memory.md --format text
 ```
 
+## AI Control-Surface Review Prompt
+
+Use this prompt when the recurring review is specifically about AI harness
+drift:
+
+```text
+Review the current repository as a read-only AI control-surface drift check.
+
+Facts:
+- Start from AGENTS.md, docs/project-map.md, docs/ai-operating-handbook.md, docs/validation-chain.md, docs/knowledge-graph.md, docs/long-term-memory.md, .codex/skills/README.md, and .codex/skills/two-projects-handoff/SKILL.md.
+- Confirm the local skill still describes the repository as a single Go map tile downloader workspace.
+- Confirm AI guidance still routes through existing docs instead of creating a parallel methodology layer.
+- Confirm validation commands match docs/done-definition.md and docs/validation-chain.md.
+- Confirm automation guidance remains read-only by default.
+
+Checks Run / Checks Missing:
+- Run read-only scans only.
+- Do not edit files, start servers, run downloads, create databases, write archives, or commit.
+- List any stronger validation that should be run in an explicit implementation turn.
+
+Risk:
+- Report only real drift, missing validation, stale capability routing, invalid handoff memory, or scope creep.
+
+Next Highest-Value Action:
+- Name exactly one concrete fix or validation action.
+```
+
 ## Escalation Rules
 
 Escalate to a direct implementation turn when a review finds:
@@ -84,6 +112,7 @@ Escalate to a direct implementation turn when a review finds:
 - missing required workspace contract surfaces
 - invalid handoff contract
 - validation commands that are stale or no longer match the project
+- local skill or AI operating handbook drift
 
 Escalation should still preserve the user's repository rules and run the
 narrowest meaningful validation before reporting completion.

@@ -10,6 +10,7 @@ graph TD
   WC --> AG["AGENTS.md"]
   WC --> PM["docs/project-map.md"]
   WC --> DD["docs/done-definition.md"]
+  WC --> AOH["docs/ai-operating-handbook.md"]
   WC --> LS[".codex/skills/two-projects-handoff"]
 
   Repo["Map Tile Fetcher repo"] --> Manifest["PROJECT_MANIFEST.md"]
@@ -37,6 +38,9 @@ graph TD
   DD --> VNode["node --check changed JS"]
   DD --> VSecrets["sensitive-value scan"]
   DD --> VHandoff["handoff validator"]
+  AOH --> VChain["docs/validation-chain.md"]
+  AOH --> KG["docs/knowledge-graph.md"]
+  AOH --> LTM["docs/long-term-memory.md"]
 
   Auto["docs/automation-guardrails.md"] --> ReadOnly["Read-only recurring reviews"]
   ReadOnly --> Report["Facts / Checks / Risk / Next Action"]
@@ -46,9 +50,11 @@ graph TD
 
 - The global charter authorizes proactive workspace improvement, but project
   facts belong in this repository, not in global `.codex` docs.
+- `docs/ai-operating-handbook.md` is the compact route for repository-local AI
+  enhancement and control-surface work.
 - `docs/project-map.md` is the first durable context packet for future sessions.
 - `docs/long-term-memory.md` carries restart-ready state for long-running merge
-  or cleanup work.
+  or cleanup work, including AI-control tranches.
 - `apps/admin-region-tiler` is the single runtime application.
 - The old .NET range downloader is represented only by
   `docs/range-migration.md`.

@@ -28,6 +28,8 @@ For AI-control changes, read:
 - `AGENTS.md`
 - `docs/project-map.md`
 - `docs/done-definition.md`
+- `docs/ai-operating-handbook.md`
+- `docs/knowledge-graph.md` when relationship recovery or continuity matters
 - `.codex/skills/README.md`
 
 ## 3. Syntax And Build Gate
@@ -54,6 +56,12 @@ For workspace control-surface changes:
 
 ```powershell
 python C:\Users\32674\.codex\skills\deep-execution-upgrade\scripts\audit_environment.py --mode workspace --workspace . --format text
+```
+
+For runtime capability or MCP/plugin routing claims:
+
+```powershell
+python C:\Users\32674\.codex\skills\deep-execution-upgrade\scripts\runtime_preflight.py --format text
 ```
 
 ## 4. Secret And Generated-File Gate

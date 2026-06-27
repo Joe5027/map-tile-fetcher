@@ -119,6 +119,17 @@ See `docs/range-migration.md` for the historical note.
 - Generated or local-only paths stay out of Git: `.env`, `data/`, `output/`,
   `tiles/`, `bin/`, `obj/`, `publish*/`, logs, binaries, and archives.
 
+## AI Control Surface Map
+
+| Path | Role | When to load |
+| --- | --- | --- |
+| `docs/ai-operating-handbook.md` | Compact operating entrypoint for AI-assisted repository work | Deep-execution, AI enhancement, local skill, validation, automation, or memory updates |
+| `.codex/skills/two-projects-handoff/SKILL.md` | Repository-local skill for scoped map tile downloader maintenance | Any release, validation, merge, or AI-control task in this workspace |
+| `docs/validation-chain.md` | Ordered validation and commit gate | Before claiming completion or committing a validated batch |
+| `docs/knowledge-graph.md` | Durable relationship graph | When recovering context or avoiding broad re-exploration |
+| `docs/long-term-memory.md` | Handoff-style restart state | Long-running, merge, release, or AI-control work |
+| `docs/automation-guardrails.md` | Read-only recurring review constraints | Automation prompt creation or review |
+
 ## Context Loading Order
 
 For future AI-assisted work, load context in this order:
@@ -128,8 +139,11 @@ For future AI-assisted work, load context in this order:
 3. `PROJECT_MANIFEST.md`
 4. `docs/project-map.md`
 5. `docs/done-definition.md`
-6. `apps/admin-region-tiler/README.md` and the affected source files
-7. deeper files only when the current edit still lacks evidence
+6. `docs/ai-operating-handbook.md` for repository-local AI control-surface work
+7. `docs/knowledge-graph.md` and `docs/long-term-memory.md` when continuity,
+   release state, or relationship recovery matters
+8. `apps/admin-region-tiler/README.md` and the affected source files
+9. deeper files only when the current edit still lacks evidence
 
 Avoid starting with broad reads of `apps/admin-region-tiler/geojson/` unless the
 task is explicitly about region files.

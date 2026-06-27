@@ -1,6 +1,6 @@
 ---
 name: two-projects-handoff
-description: Use for repository-specific maintenance, release preparation, validation, and post-merge cleanup in this Go map tile downloader workspace.
+description: Use for repository-specific maintenance, release preparation, validation, AI control-surface updates, and post-merge cleanup in this single Go map tile downloader workspace.
 ---
 
 # Map Tile Fetcher Handoff
@@ -15,7 +15,8 @@ Apply this skill when the task mentions:
 - `apps/admin-region-tiler`
 - this repository's GitHub handoff, release, license, validation, or merge plan
 - range download vs administrative-region download unification
-- repository-local AI docs, project map, done definition, or handoff memory
+- repository-local AI docs, project map, knowledge graph, validation chain,
+  automation guardrails, done definition, or handoff memory
 
 Do not use this skill for unrelated global `.codex` changes unless the user
 explicitly asks to connect this repository to global operating policy.
@@ -27,7 +28,9 @@ explicitly asks to connect this repository to global operating policy.
 3. `PROJECT_MANIFEST.md`
 4. `docs/project-map.md`
 5. `docs/done-definition.md`
-6. the README and source files for the affected app
+6. `docs/ai-operating-handbook.md` for repository-local AI control-surface work
+7. `docs/validation-chain.md`
+8. the README and source files for the affected app
 
 Avoid broad reads of `apps/admin-region-tiler/geojson/` unless the task is
 about region resources.
@@ -49,8 +52,8 @@ about region resources.
 - Admin region tiler code: run `go test ./...` from
   `apps/admin-region-tiler`.
 - Changed frontend JavaScript: run `node --check` on the changed file.
-- Repository docs or local skill changes: run the workspace audit and source
-  consistency checks from `docs/validation-chain.md`.
+- Repository docs or local skill changes: run the workspace audit, source
+  consistency checks, and sensitive-value scan from `docs/validation-chain.md`.
 - Handoff-memory changes: validate `docs/long-term-memory.md` with the global
   handoff validator.
 
