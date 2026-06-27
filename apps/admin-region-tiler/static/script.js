@@ -314,6 +314,13 @@ function setRangeFieldsFromPoints(first, second) {
     form.elements.rangeMaxLat.value = Math.max(first.lat, second.lat).toFixed(6);
 }
 
+function formatLngLat(latlng) {
+    if (!latlng || !Number.isFinite(latlng.lng) || !Number.isFinite(latlng.lat)) {
+        return "-";
+    }
+    return `${latlng.lng.toFixed(6)}, ${latlng.lat.toFixed(6)}`;
+}
+
 function clearRangeSelection() {
     rangeClickPoints = [];
     if (rangeRectangle && rangeMap) {

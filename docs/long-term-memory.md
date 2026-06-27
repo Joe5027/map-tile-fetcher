@@ -26,6 +26,10 @@
 - On 2026-06-27, workspace audit found no high-signal drift before the AI
   enhancement tranche; global audit warned that `imagegen`, `openai-docs`,
   `plugin-creator`, and `skill-creator` are overgrown global skills.
+- On 2026-06-27, `apps/admin-region-tiler/scripts/smoke_ui.mjs` was added as a
+  Playwright browser smoke test for login, region task payload creation, and
+  bbox task payload creation. It starts a temporary Go server by default and
+  intercepts `/api/tasks` POSTs so it does not launch real tile downloads.
 
 ## Decisions
 
@@ -59,6 +63,9 @@
   should verify actual tool availability before claiming behavior.
 - Documentation-only AI control-surface changes do not require `go test ./...`
   or `node --check` unless app source files or frontend JavaScript changed.
+- UI smoke automation changes require `node --check .\scripts\smoke_ui.mjs` and
+  `node .\scripts\smoke_ui.mjs` with local or global Playwright available; keep
+  generated database files, screenshots, traces, and tile outputs out of Git.
 - Future sessions should rerun runtime preflight before making capability,
   MCP, or plugin availability claims because session exposure can change.
 - GeoJSON resources are intentional repository data; broad scans should exclude
@@ -84,10 +91,16 @@
 - `go test ./...` and `node --check .\static\script.js` were intentionally not
   run for the 2026-06-27 AI-control tranche because it changed only repository
   docs and local skill guidance.
+- 2026-06-27 UI smoke tranche validation passed:
+  `go test ./...`, `node --check .\static\script.js`,
+  `node --check .\scripts\smoke_ui.mjs`, and
+  `node .\scripts\smoke_ui.mjs`.
+- The 2026-06-27 UI smoke run verified login, region task creation payload
+  shape, bbox mode switching, bbox estimate update, bbox task creation payload
+  shape, and two accepted confirmation dialogs without launching real downloads.
 
 ## Next Action
 
-- Add browser automation for the two UI modes when a local Playwright or
-  equivalent dependency is available: login, switch to range mode, click two map
-  points, verify bbox/estimate updates, create a scheduled bbox task, switch to
-  region mode, and verify region task creation.
+- Run the new UI smoke script in CI or a release preflight once a stable
+  Playwright browser cache is available, then decide whether to make it a
+  required release gate alongside `go test ./...`.

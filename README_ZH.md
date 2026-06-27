@@ -41,6 +41,16 @@ cd apps/admin-region-tiler
 node --check .\static\script.js
 ```
 
+运行浏览器 UI 冒烟测试，覆盖登录、行政区划和范围框选任务创建 payload：
+
+```powershell
+cd apps/admin-region-tiler
+node .\scripts\smoke_ui.mjs
+```
+
+该脚本需要本地或全局可用的 Playwright 包。如缺失，可执行
+`npm install -g playwright` 和 `npx playwright install chromium`。
+
 ## 本地运行注意事项
 
 - 真实天地图或 Mapbox token 只能放在本地配置中。

@@ -46,6 +46,14 @@ cd apps/admin-region-tiler
 node --check .\static\script.js
 ```
 
+For browser UI smoke automation:
+
+```powershell
+cd apps/admin-region-tiler
+node --check .\scripts\smoke_ui.mjs
+node .\scripts\smoke_ui.mjs
+```
+
 For handoff artifacts:
 
 ```powershell

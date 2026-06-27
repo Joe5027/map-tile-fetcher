@@ -48,6 +48,18 @@ cd apps/admin-region-tiler
 node --check .\static\script.js
 ```
 
+Run the browser UI smoke test for login plus region and bbox task creation
+payloads:
+
+```powershell
+cd apps/admin-region-tiler
+node .\scripts\smoke_ui.mjs
+```
+
+The smoke script requires the Playwright package to be available locally or
+globally. If needed, install it with `npm install -g playwright` and
+`npx playwright install chromium`.
+
 ## Local Runtime Notes
 
 Runtime secrets and generated data must stay local:

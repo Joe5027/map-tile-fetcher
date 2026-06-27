@@ -22,7 +22,7 @@ Out of scope unless the user explicitly changes direction:
 
 | Path | Stack | Primary role | Entry points | Narrow validation |
 | --- | --- | --- | --- | --- |
-| `apps/admin-region-tiler` | Go 1.25+, Gin, SQLite, static frontend | Unified map tile downloader with bbox range mode, administrative-region mode, persistent tasks, scheduled runs, multiple map sources, failures, artifacts, and deploy assets | `main.go`, `server.go`, `runtime.go`, `task.go`, `db.go`, `static/script.js` | `go test ./...`; `node --check .\static\script.js` when frontend JS changes |
+| `apps/admin-region-tiler` | Go 1.25+, Gin, SQLite, static frontend | Unified map tile downloader with bbox range mode, administrative-region mode, persistent tasks, scheduled runs, multiple map sources, failures, artifacts, and deploy assets | `main.go`, `server.go`, `runtime.go`, `task.go`, `db.go`, `static/script.js`, `scripts/smoke_ui.mjs` | `go test ./...`; `node --check .\static\script.js` when frontend JS changes; `node .\scripts\smoke_ui.mjs` for UI smoke |
 
 ## Admin Region Tiler Map
 
@@ -76,6 +76,11 @@ Out of scope unless the user explicitly changes direction:
     through the unified `/api/tasks` path
 - `deploy/`
   - Linux, Nginx, and systemd deployment references
+- `scripts/smoke_ui.mjs`
+  - browser smoke test for login, administrative-region payload creation, and
+    bounding-box payload creation
+  - starts a temporary Go server by default and intercepts `/api/tasks` POSTs
+    so smoke runs do not launch real downloads
 - `geojson/`
   - repository-shipped region resources. Avoid broad scanning unless the task is
     specifically about region data.
@@ -118,6 +123,12 @@ See `docs/range-migration.md` for the historical note.
   `.env` overrides.
 - Generated or local-only paths stay out of Git: `.env`, `data/`, `output/`,
   `tiles/`, `bin/`, `obj/`, `publish*/`, logs, binaries, and archives.
+- Browser UI smoke validation uses an optional local or global browser
+  automation package. If that package is unavailable, run the relevant
+  `node --check` command, perform a manual browser check for the touched flow,
+  and record the missing automated smoke as a validation limit.
+- UI smoke runs should not commit screenshots, traces, runtime databases, or
+  generated downloads.
 
 ## AI Control Surface Map
 

@@ -44,6 +44,9 @@ Facts:
 Checks Run / Checks Missing:
 - Run read-only scans only.
 - Do not run builds, start servers, download tiles, create databases, write archives, or edit files during this recurring review.
+- Do not run `scripts/smoke_ui.mjs` during recurring read-only reviews unless
+  the automation was explicitly authorized to start a temporary local server and
+  browser.
 - List any stronger checks that should be run manually or in an explicit implementation turn.
 
 Risk:
