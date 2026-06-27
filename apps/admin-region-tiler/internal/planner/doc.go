@@ -1,3 +1,4 @@
-// Package planner will translate validated task requests into persistent task
-// definitions, runs, and child source/layer work items.
+// Package planner translates unified task requests into validated task
+// definitions that can later be persisted and expanded into child source/layer
+// work items.
 package planner

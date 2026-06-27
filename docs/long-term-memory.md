@@ -35,6 +35,9 @@
   English and Chinese commit notes.
 - The Go app now has a future `internal/` package boundary for API, auth,
   config, area, planner, downloader, artifact, and Web responsibilities.
+- `internal/area` and `internal/planner` contain the first unified task-model
+  primitives with tests for bbox, region, source, schedule, output, and zoom
+  normalization.
 
 ## Assumptions
 

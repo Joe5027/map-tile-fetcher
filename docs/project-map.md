@@ -73,6 +73,9 @@ Important endpoints:
 - `internal/`
   - future single-app package boundaries for API, auth, config, area selection,
     planning, downloading, artifacts, and static Web helpers
+  - `internal/area` validates bbox and region area selectors plus zoom ranges
+  - `internal/planner` normalizes unified task requests before persistence or
+    execution
 - `server.go`
   - Gin routes for login, current user, task CRUD, task control, artifact
     download, map source config, region catalog, and GeoJSON file listing
