@@ -86,6 +86,9 @@ Important endpoints:
 - `db.go`
   - SQLite schema, user/session records, plan records, run records, child plan
     relations, and interrupted-plan recovery
+  - includes normalized forward schema tables `tasks`, `task_sources`,
+    `artifacts`, and `failures`; current `plans`/`task_runs` writes mirror into
+    these tables while the existing runtime remains compatible
 - `runtime.go`
   - scheduler, active run coordination, worker launch, pause/resume/cancel,
     artifact preparation, purge safety, and parent status aggregation

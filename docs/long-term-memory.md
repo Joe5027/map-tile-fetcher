@@ -46,6 +46,10 @@
   map-source and region catalog flow; bbox mode adds a Leaflet range preview,
   Tianditu token input, `img`/`cia`/`vec` layer selection, bbox coordinates,
   tile estimates, and unified `/api/tasks` submission.
+- SQLite now has normalized forward tables for `tasks`, `task_sources`,
+  `artifacts`, and `failures`. The existing `plans` and `task_runs` runtime
+  tables remain active for compatibility, with create/update/run paths mirrored
+  into the new model.
 
 ## Assumptions
 
