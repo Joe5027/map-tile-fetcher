@@ -1545,6 +1545,15 @@ async function runBulkMutation(tasks, fn) {
 }
 
 function toPercent(progress) {
+    if (progress && typeof progress === "object") {
+        if (Number.isFinite(progress.ratio)) {
+            return Math.max(0, Math.min(100, Math.round(progress.ratio * 100)));
+        }
+        if (Number.isFinite(progress.total) && progress.total > 0 && Number.isFinite(progress.current)) {
+            return Math.max(0, Math.min(100, Math.round((progress.current / progress.total) * 100)));
+        }
+        return 0;
+    }
     if (!Number.isFinite(progress)) {
         return 0;
     }

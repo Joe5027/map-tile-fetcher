@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"testing"
+	"time"
 )
 
 func TestBuildPlansFromRequestBBoxCreatesDirectLevel(t *testing.T) {
@@ -88,6 +89,70 @@ func TestBuildPlansFromRequestRejectsInvalidBBoxWithoutWritingData(t *testing.T)
 	}
 	if _, statErr := os.Stat("data"); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("invalid bbox should not write generated data, stat error: %v", statErr)
+	}
+}
+
+func TestPlanResponseIncludesUnifiedTaskContractFields(t *testing.T) {
+	previousStore := store
+	store = newSQLiteTestStore(t)
+	t.Cleanup(func() {
+		store = previousStore
+	})
+
+	runAt := time.Unix(2000, 0)
+	parent := &PlanRecord{
+		ID:           "task-contract",
+		UserID:       42,
+		Kind:         PlanKindGroup,
+		Name:         "bbox contract",
+		URL:          "https://example.test/img/{z}/{x}/{y}.png",
+		Format:       PNG,
+		Schema:       "xyz",
+		ScheduleMode: ScheduleImmediate,
+		RunAt:        runAt,
+		Status:       PlanScheduled,
+		Levels: []LevelConfig{{
+			MinZoom: 3,
+			MaxZoom: 4,
+			Mode:    "bbox",
+			BBox:    &BBoxRequest{MinLon: 100, MinLat: 20, MaxLon: 101, MaxLat: 21},
+		}},
+	}
+	child := &PlanRecord{
+		ID:           "task-contract-img",
+		UserID:       42,
+		ParentID:     parent.ID,
+		Kind:         PlanKindChild,
+		Name:         parent.Name,
+		SourceName:   "img",
+		URL:          parent.URL,
+		Format:       PNG,
+		Schema:       "xyz",
+		ScheduleMode: ScheduleImmediate,
+		RunAt:        runAt,
+		Status:       PlanScheduled,
+		Levels:       parent.Levels,
+	}
+	parent.Children = []*PlanRecord{child}
+	if err := store.createPlan(parent); err != nil {
+		t.Fatalf("create parent failed: %v", err)
+	}
+	if err := store.createPlan(child); err != nil {
+		t.Fatalf("create child failed: %v", err)
+	}
+
+	response := planResponseFromPlan(parent)
+	if response.Mode != "bbox" || response.Area.BBox == nil {
+		t.Fatalf("expected bbox response area, got %#v", response.Area)
+	}
+	if response.Zoom == nil || response.Zoom.Min != 3 || response.Zoom.Max != 4 {
+		t.Fatalf("unexpected response zoom: %#v", response.Zoom)
+	}
+	if len(response.Sources) != 1 || response.Sources[0].Layer != "img" {
+		t.Fatalf("unexpected response sources: %#v", response.Sources)
+	}
+	if response.Progress.Total != response.Total || response.Artifact.Status != response.ArtifactStatus {
+		t.Fatalf("unified response mirrors are inconsistent: %#v", response)
 	}
 }
 

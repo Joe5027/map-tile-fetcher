@@ -425,20 +425,26 @@ func (task *Task) snapshot() TaskResponse {
 		finishedAt = task.FinishedAt.Format(time.RFC3339)
 	}
 
-	progress := 0.0
-	if task.Total > 0 {
-		progress = float64(task.Current) / float64(task.Total)
-	}
-
 	return TaskResponse{
-		ID:           task.ID,
-		Name:         task.Name,
-		File:         task.File,
-		MinZoom:      task.Min,
-		MaxZoom:      task.Max,
-		Total:        task.Total,
-		Current:      task.Current,
-		Progress:     progress,
+		ID:      task.ID,
+		Name:    task.Name,
+		File:    task.File,
+		MinZoom: task.Min,
+		MaxZoom: task.Max,
+		Total:   task.Total,
+		Current: task.Current,
+		Progress: TaskProgressResponse{
+			Total:   task.Total,
+			Current: task.Current,
+			Success: task.SuccessCount,
+			Failure: task.FailureCount,
+			Ratio: func() float64 {
+				if task.Total == 0 {
+					return 0
+				}
+				return float64(task.Current) / float64(task.Total)
+			}(),
+		},
 		Status:       string(task.Status),
 		SuccessCount: task.SuccessCount,
 		FailureCount: task.FailureCount,

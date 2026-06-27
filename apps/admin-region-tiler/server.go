@@ -71,38 +71,87 @@ type CreateTaskRequest struct {
 	Sources      []SourceRequest   `json:"sources"`
 }
 
+type TaskAreaLevelResponse struct {
+	MinZoom int    `json:"minZoom"`
+	MaxZoom int    `json:"maxZoom"`
+	GeoJSON string `json:"geojson,omitempty"`
+}
+
+type TaskAreaResponse struct {
+	Mode   string                  `json:"mode"`
+	BBox   *BBoxRequest            `json:"bbox,omitempty"`
+	Levels []TaskAreaLevelResponse `json:"levels,omitempty"`
+}
+
+type TaskSourceResponse struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Layer  string `json:"layer,omitempty"`
+	URL    string `json:"url"`
+	Format string `json:"format"`
+	Schema string `json:"schema"`
+}
+
+type TaskProgressResponse struct {
+	Total   int64   `json:"total"`
+	Current int64   `json:"current"`
+	Success int64   `json:"success"`
+	Failure int64   `json:"failure"`
+	Ratio   float64 `json:"ratio"`
+}
+
+type TaskArtifactResponse struct {
+	Status        ArtifactStatus `json:"status"`
+	Name          string         `json:"name,omitempty"`
+	DownloadURL   string         `json:"downloadUrl,omitempty"`
+	Format        string         `json:"format,omitempty"`
+	PackageFormat string         `json:"packageFormat,omitempty"`
+}
+
+type TaskFailureSummaryResponse struct {
+	FailureCount          int64 `json:"failureCount"`
+	RetryableFailureCount int64 `json:"retryableFailureCount"`
+	CanRetryFailures      bool  `json:"canRetryFailures"`
+}
+
 type TaskResponse struct {
-	ID                    string         `json:"id"`
-	ParentID              string         `json:"parentId,omitempty"`
-	Kind                  string         `json:"kind"`
-	Name                  string         `json:"name"`
-	SourceName            string         `json:"sourceName,omitempty"`
-	File                  string         `json:"file,omitempty"`
-	MinZoom               int            `json:"minZoom"`
-	MaxZoom               int            `json:"maxZoom"`
-	Total                 int64          `json:"total"`
-	Current               int64          `json:"current"`
-	Progress              float64        `json:"progress"`
-	Status                string         `json:"status"`
-	SuccessCount          int64          `json:"successCount"`
-	FailureCount          int64          `json:"failureCount"`
-	RetryableFailureCount int64          `json:"retryableFailureCount"`
-	CanRetryFailures      bool           `json:"canRetryFailures"`
-	StartedAt             string         `json:"startedAt,omitempty"`
-	FinishedAt            string         `json:"finishedAt,omitempty"`
-	ErrorMessage          string         `json:"errorMessage,omitempty"`
-	ScheduleMode          ScheduleMode   `json:"scheduleMode"`
-	RunAt                 string         `json:"runAt"`
-	ArtifactStatus        ArtifactStatus `json:"artifactStatus"`
-	ArtifactName          string         `json:"artifactName,omitempty"`
-	DownloadURL           string         `json:"downloadUrl,omitempty"`
-	TotalChildren         int            `json:"totalChildren,omitempty"`
-	CompletedChildren     int            `json:"completedChildren,omitempty"`
-	RunningChildren       int            `json:"runningChildren,omitempty"`
-	PausedChildren        int            `json:"pausedChildren,omitempty"`
-	FailedChildren        int            `json:"failedChildren,omitempty"`
-	CancelledChildren     int            `json:"cancelledChildren,omitempty"`
-	Children              []TaskResponse `json:"children,omitempty"`
+	ID                    string                     `json:"id"`
+	ParentID              string                     `json:"parentId,omitempty"`
+	Kind                  string                     `json:"kind"`
+	Mode                  string                     `json:"mode"`
+	Name                  string                     `json:"name"`
+	SourceName            string                     `json:"sourceName,omitempty"`
+	Area                  TaskAreaResponse           `json:"area"`
+	Sources               []TaskSourceResponse       `json:"sources,omitempty"`
+	Zoom                  *ZoomRangeRequest          `json:"zoom,omitempty"`
+	File                  string                     `json:"file,omitempty"`
+	MinZoom               int                        `json:"minZoom"`
+	MaxZoom               int                        `json:"maxZoom"`
+	Total                 int64                      `json:"total"`
+	Current               int64                      `json:"current"`
+	Progress              TaskProgressResponse       `json:"progress"`
+	Status                string                     `json:"status"`
+	SuccessCount          int64                      `json:"successCount"`
+	FailureCount          int64                      `json:"failureCount"`
+	RetryableFailureCount int64                      `json:"retryableFailureCount"`
+	CanRetryFailures      bool                       `json:"canRetryFailures"`
+	Artifact              TaskArtifactResponse       `json:"artifact"`
+	FailureSummary        TaskFailureSummaryResponse `json:"failureSummary"`
+	StartedAt             string                     `json:"startedAt,omitempty"`
+	FinishedAt            string                     `json:"finishedAt,omitempty"`
+	ErrorMessage          string                     `json:"errorMessage,omitempty"`
+	ScheduleMode          ScheduleMode               `json:"scheduleMode"`
+	RunAt                 string                     `json:"runAt"`
+	ArtifactStatus        ArtifactStatus             `json:"artifactStatus"`
+	ArtifactName          string                     `json:"artifactName,omitempty"`
+	DownloadURL           string                     `json:"downloadUrl,omitempty"`
+	TotalChildren         int                        `json:"totalChildren,omitempty"`
+	CompletedChildren     int                        `json:"completedChildren,omitempty"`
+	RunningChildren       int                        `json:"runningChildren,omitempty"`
+	PausedChildren        int                        `json:"pausedChildren,omitempty"`
+	FailedChildren        int                        `json:"failedChildren,omitempty"`
+	CancelledChildren     int                        `json:"cancelledChildren,omitempty"`
+	Children              []TaskResponse             `json:"children,omitempty"`
 }
 
 type FailureRecordResponse struct {
@@ -795,8 +844,11 @@ func planResponseFromPlan(plan *PlanRecord) TaskResponse {
 		ID:             plan.ID,
 		ParentID:       plan.ParentID,
 		Kind:           string(plan.Kind),
+		Mode:           taskModeFromLevels(plan.Levels),
 		Name:           plan.Name,
 		SourceName:     plan.SourceName,
+		Area:           taskAreaFromLevels(plan.Levels),
+		Sources:        taskSourcesFromPlan(plan),
 		Status:         string(plan.Status),
 		ScheduleMode:   plan.ScheduleMode,
 		RunAt:          plan.RunAt.Format(time.RFC3339),
@@ -819,10 +871,14 @@ func planResponseFromPlan(plan *PlanRecord) TaskResponse {
 	if maxZoom >= 0 {
 		response.MaxZoom = maxZoom
 	}
+	if response.MinZoom != 0 || response.MaxZoom != 0 {
+		response.Zoom = &ZoomRangeRequest{Min: response.MinZoom, Max: response.MaxZoom}
+	}
 
 	if plan.Kind == PlanKindGroup {
 		applyGroupSummary(plan, &response)
 		applyFailureSummary(plan.ID, &response)
+		applyProgressAndArtifact(&response)
 		return response
 	}
 
@@ -831,9 +887,6 @@ func planResponseFromPlan(plan *PlanRecord) TaskResponse {
 		response.File = run.OutputPath
 		response.Total = run.Total
 		response.Current = run.Current
-		if run.Total > 0 {
-			response.Progress = float64(run.Current) / float64(run.Total)
-		}
 		response.Status = string(effectiveTaskStatusForResponse(plan, run))
 		response.SuccessCount = run.SuccessCount
 		response.FailureCount = run.FailureCount
@@ -852,6 +905,7 @@ func planResponseFromPlan(plan *PlanRecord) TaskResponse {
 	}
 
 	applyFailureSummary(plan.ID, &response)
+	applyProgressAndArtifact(&response)
 	return response
 }
 
@@ -869,6 +923,89 @@ func applyFailureSummary(planID string, response *TaskResponse) {
 	}
 	response.RetryableFailureCount = summary.Retryable
 	response.CanRetryFailures = summary.Retryable > 0 && canRetryFailureStatus(PlanStatus(response.Status))
+	response.FailureSummary = TaskFailureSummaryResponse{
+		FailureCount:          response.FailureCount,
+		RetryableFailureCount: response.RetryableFailureCount,
+		CanRetryFailures:      response.CanRetryFailures,
+	}
+}
+
+func applyProgressAndArtifact(response *TaskResponse) {
+	ratio := 0.0
+	if response.Total > 0 {
+		ratio = float64(response.Current) / float64(response.Total)
+	}
+	response.Progress = TaskProgressResponse{
+		Total:   response.Total,
+		Current: response.Current,
+		Success: response.SuccessCount,
+		Failure: response.FailureCount,
+		Ratio:   ratio,
+	}
+	response.Artifact = TaskArtifactResponse{
+		Status:      response.ArtifactStatus,
+		Name:        response.ArtifactName,
+		DownloadURL: response.DownloadURL,
+	}
+	if response.ArtifactName != "" {
+		switch {
+		case strings.HasSuffix(strings.ToLower(response.ArtifactName), ".zip"):
+			response.Artifact.PackageFormat = "zip"
+		case strings.HasSuffix(strings.ToLower(response.ArtifactName), ".mbtiles"):
+			response.Artifact.Format = "mbtiles"
+		}
+	}
+}
+
+func taskAreaFromLevels(levels []LevelConfig) TaskAreaResponse {
+	mode := taskModeFromLevels(levels)
+	result := TaskAreaResponse{Mode: mode}
+	if mode == string(area.ModeBBox) {
+		for _, level := range levels {
+			if level.BBox != nil {
+				result.BBox = level.BBox
+				return result
+			}
+		}
+	}
+	result.Levels = make([]TaskAreaLevelResponse, 0, len(levels))
+	for _, level := range levels {
+		result.Levels = append(result.Levels, TaskAreaLevelResponse{
+			MinZoom: level.MinZoom,
+			MaxZoom: level.MaxZoom,
+			GeoJSON: level.Geojson,
+		})
+	}
+	return result
+}
+
+func taskSourcesFromPlan(plan *PlanRecord) []TaskSourceResponse {
+	if plan.Kind == PlanKindGroup && len(plan.Children) > 0 {
+		sources := make([]TaskSourceResponse, 0, len(plan.Children))
+		for _, child := range plan.Children {
+			sources = append(sources, taskSourceFromPlan(child))
+		}
+		return sources
+	}
+	if strings.TrimSpace(plan.URL) == "" {
+		return nil
+	}
+	return []TaskSourceResponse{taskSourceFromPlan(plan)}
+}
+
+func taskSourceFromPlan(plan *PlanRecord) TaskSourceResponse {
+	name := strings.TrimSpace(plan.SourceName)
+	if name == "" {
+		name = strings.TrimSpace(plan.Name)
+	}
+	return TaskSourceResponse{
+		ID:     plan.ID,
+		Name:   name,
+		Layer:  inferLayerName(name, plan.URL),
+		URL:    plan.URL,
+		Format: plan.Format,
+		Schema: plan.Schema,
+	}
 }
 
 func effectiveTaskStatusForResponse(plan *PlanRecord, run *TaskRunRecord) TaskStatus {
@@ -938,9 +1075,6 @@ func applyGroupSummary(plan *PlanRecord, response *TaskResponse) {
 
 	response.Total = totalTiles
 	response.Current = currentTiles
-	if totalTiles > 0 {
-		response.Progress = float64(currentTiles) / float64(totalTiles)
-	}
 
 	switch {
 	case response.CompletedChildren == response.TotalChildren:
