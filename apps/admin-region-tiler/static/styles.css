@@ -832,6 +832,30 @@ input::placeholder {
     flex-shrink: 0;
 }
 
+.range-preview-source {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.range-preview-source select {
+    width: 112px;
+    min-height: 34px;
+    padding: 0 28px 0 10px;
+    font-size: 12px;
+}
+
+.range-preview-hint {
+    padding: 7px 12px;
+    border-bottom: 1px solid rgba(229, 231, 235, 0.92);
+    background: rgba(248, 250, 252, 0.92);
+    color: var(--muted);
+    font-size: 12px;
+}
+
 .range-map {
     height: 280px;
     background: #e2e8f0;

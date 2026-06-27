@@ -7,6 +7,7 @@ let selectedProvider = "";
 let selectedSourceIds = new Set();
 let taskMode = "region";
 let rangeMap = null;
+let rangeBaseLayer = null;
 let rangeRectangle = null;
 let rangeClickPoints = [];
 let currentTaskFilter = "all";
@@ -65,8 +66,13 @@ function bindEvents() {
         element.addEventListener("input", () => {
             updateRangeEstimate();
             updateRangeOverlay();
+            if (element.name === "tdtToken") {
+                updateRangeBaseLayer();
+            }
         });
     });
+
+    document.getElementById("rangePreviewSource").addEventListener("change", updateRangeBaseLayer);
 
     document.querySelectorAll(".range-layer-option").forEach((element) => {
         element.addEventListener("change", updateRangeEstimate);
@@ -331,10 +337,7 @@ function initRangeMap() {
         attributionControl: false
     }).setView([35.8617, 104.1954], 4);
 
-    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        minZoom: 1,
-        maxZoom: 19
-    }).addTo(rangeMap);
+    updateRangeBaseLayer();
 
     rangeMap.on("mousemove", (event) => {
         document.getElementById("rangeHoverCoord").textContent = formatLngLat(event.latlng);
@@ -344,6 +347,42 @@ function initRangeMap() {
         document.getElementById("rangeClickCoord").textContent = formatLngLat(event.latlng);
         handleRangeMapClick(event.latlng);
     });
+}
+
+function updateRangeBaseLayer() {
+    if (!rangeMap || !window.L) {
+        return;
+    }
+    const source = document.getElementById("rangePreviewSource")?.value || "osm";
+    const token = String(document.querySelector("input[name='tdtToken']")?.value || "").trim();
+    const hasToken = token && token !== "YOUR_TIANDITU_TOKEN";
+    const hint = document.getElementById("rangePreviewHint");
+
+    let url = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+    let maxZoom = 19;
+    let hintText = "OSM 预览底图";
+    if (source === "tdt-img" && hasToken) {
+        url = `https://t0.tianditu.gov.cn/DataServer?T=img_w&x={x}&y={y}&l={z}&tk=${encodeURIComponent(token)}`;
+        maxZoom = 18;
+        hintText = "天地图影像预览";
+    } else if (source === "tdt-vec" && hasToken) {
+        url = `https://t0.tianditu.gov.cn/DataServer?T=vec_w&x={x}&y={y}&l={z}&tk=${encodeURIComponent(token)}`;
+        maxZoom = 18;
+        hintText = "天地图矢量预览";
+    } else if (source.startsWith("tdt-")) {
+        hintText = "输入天地图 Token 后显示天地图预览";
+    }
+
+    if (rangeBaseLayer) {
+        rangeMap.removeLayer(rangeBaseLayer);
+    }
+    rangeBaseLayer = L.tileLayer(url, {
+        minZoom: 1,
+        maxZoom
+    }).addTo(rangeMap);
+    if (hint) {
+        hint.textContent = hintText;
+    }
 }
 
 function handleRangeMapClick(latlng) {

@@ -188,13 +188,22 @@
                                 <div class="range-map-toolbar">
                                     <div>
                                         <strong>范围预览</strong>
-                                        <span>移动：<b id="rangeHoverCoord">-</b> ｜ 点击：<b id="rangeClickCoord">-</b></span>
+                                        <span>WGS84 / Web Mercator ｜ 移动：<b id="rangeHoverCoord">-</b> ｜ 点击：<b id="rangeClickCoord">-</b></span>
                                     </div>
                                     <div class="range-map-actions">
+                                        <label class="range-preview-source">
+                                            <span>底图</span>
+                                            <select id="rangePreviewSource" name="rangePreviewSource">
+                                                <option value="osm" selected>OSM</option>
+                                                <option value="tdt-img">天地图影像</option>
+                                                <option value="tdt-vec">天地图矢量</option>
+                                            </select>
+                                        </label>
                                         <button id="clearRangeBtn" type="button" class="ghost-button ghost-button--compact">清除</button>
                                         <button id="fitRangeBtn" type="button" class="ghost-button ghost-button--compact">适配</button>
                                     </div>
                                 </div>
+                                <div id="rangePreviewHint" class="range-preview-hint">OSM 预览底图</div>
                                 <div id="rangeMap" class="range-map"></div>
                             </div>
 
