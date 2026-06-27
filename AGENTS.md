@@ -40,9 +40,15 @@ Keep the subject concise, but do not omit the bilingual body. Prefer
 Conventional Commit types such as `feat`, `fix`, `docs`, `chore`, `refactor`,
 `test`, and `ci`.
 
+After each validated change batch, commit immediately. Do not accumulate
+multiple unrelated validated batches in one working tree. The commit body must
+name the checks that were actually run and any checks that were intentionally
+not run.
+
 ## Validation Before Completion
 
 - Run the narrowest meaningful check before claiming completion.
+- Commit the validated batch before starting the next implementation batch.
 - For `apps/range-downloader`, prefer:
   `dotnet build .\TianDiTuDownLoader.Web.csproj -c Release`.
 - For `apps/admin-region-tiler`, prefer: `go test ./...`.

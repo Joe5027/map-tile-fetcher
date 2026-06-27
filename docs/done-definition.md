@@ -2,7 +2,9 @@
 
 Completion in this repository means the change is scoped to the two application
 surfaces, generated files stay out of Git, and the strongest practical check for
-the touched surface has been run or explicitly recorded as missing.
+the touched surface has been run or explicitly recorded as missing. A validated
+change batch is not complete until it has been committed with the required
+bilingual commit message.
 
 ## Universal Criteria
 
@@ -13,6 +15,8 @@ the touched surface has been run or explicitly recorded as missing.
   boundaries.
 - The final report separates checks run, checks missing, assumptions, and any
   environment limit.
+- Each validated change batch is committed before the next implementation batch
+  starts.
 
 ## Validation Matrix
 

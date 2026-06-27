@@ -1,0 +1,66 @@
+# Map Tile Fetcher
+
+Map Tile Fetcher 正在合并为一个基于 Go 的 Web 应用，用于按地图框选范围或行政区划
+GeoJSON 下载地图瓦片。
+
+当前仓库在合并过渡期仍保留两个来源应用。Go 应用是后端基座；.NET 范围下载器只作为
+框选交互和简洁天地图下载流程的参考，直到这些能力完整迁移到 Go 应用中。
+
+## 仓库结构
+
+- `apps/admin-region-tiler` - Go 1.25+ Web 应用，支持行政区划 GeoJSON、多地图源、
+  多任务、计划任务、持久化状态、Docker 部署和产物下载。
+- `apps/range-downloader` - 旧 .NET 6 参考应用，支持地图框选、输入天地图 token，并
+  下载 `img`、`cia`、`vec` 图层。
+- `docs/merge-plan.md` - 两个应用合并为单一产品的路线。
+- `README.md` - 与本文对应的英文 README。
+
+仓库不包含旧还原源码目录、UI 设计包、临时目录、截图、运行数据库、下载瓦片或历史发布包。
+
+## 产品方向
+
+- 后端：只保留 Go。
+- 数据库：SQLite 作为轻量控制数据库，用于任务、运行记录、状态、可选登录会话、失败记录、
+  产物索引和计划任务。
+- 存储：下载瓦片、MBTiles、ZIP/TAR 产物、日志和运行数据放在文件系统中，不进入 Git。
+- 前端：一个静态 Web 界面，提供两个模式：
+  - 范围框选下载
+  - 行政区划下载
+
+## 快速验证
+
+验证 Go 后端：
+
+```powershell
+cd apps/admin-region-tiler
+go test ./...
+```
+
+在旧范围下载器仍保留期间，验证 .NET 参考应用：
+
+```powershell
+cd apps/range-downloader
+dotnet build .\TianDiTuDownLoader.Web.csproj -c Release
+```
+
+前端脚本变更后验证：
+
+```powershell
+node --check apps/admin-region-tiler/static/script.js
+node --check apps/range-downloader/wwwroot/app.js
+```
+
+## 本地运行注意事项
+
+- 真实天地图或 Mapbox token 只能放在本地配置中。
+- `.env`、`data/`、`output/`、`tiles/`、`bin/`、`obj/`、`publish*/` 和发布包不得进入 Git。
+- `YOUR_TIANDITU_TOKEN`、`YOUR_MAPBOX_TOKEN` 等占位符可以保留在示例中。
+
+## 提交规则
+
+每个验证完成的变更批次必须立即提交。每次提交信息必须包含详细英文和中文说明，并列出
+实际运行的验证命令。详见 [`docs/commit-policy.md`](docs/commit-policy.md)。
+
+## 许可证
+
+本仓库使用 Apache License 2.0。详见 [`LICENSE`](LICENSE)。

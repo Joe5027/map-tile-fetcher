@@ -6,6 +6,10 @@ merged product should offer two download modes in one Web backend:
 - bounding-box range download
 - administrative-region download
 
+The selected implementation direction is a single Go backend with SQLite as the
+control database. The existing .NET range downloader remains only as a reference
+until the bounding-box workflow has been ported and validated in Go.
+
 ## Product Direction
 
 Keep `apps/admin-region-tiler` as the base for backend capabilities:

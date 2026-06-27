@@ -13,3 +13,7 @@ English:
 Validation:
 - Exact commands or checks run.
 - Any checks intentionally not run, with reason.
+
+Commit Discipline:
+- This commit represents one validated change batch.
+- Follow-up implementation starts only after this commit is recorded.

@@ -4,6 +4,10 @@ All commits in this repository must use detailed bilingual messages in English
 and Chinese. This keeps the project readable for contributors who work in either
 language and preserves enough context for future merge work.
 
+Every validated change batch must be committed immediately before the next
+implementation batch starts. Do not leave validated changes uncommitted while
+continuing into unrelated code, schema, UI, or documentation work.
+
 ## Required Format
 
 ```text

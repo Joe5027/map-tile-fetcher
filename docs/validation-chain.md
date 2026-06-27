@@ -97,3 +97,16 @@ For environment-upgrade work, also include:
 - agents or skills used
 - surfaces added or updated
 - residual risk
+
+## 6. Commit Gate
+
+After validation passes, commit the batch before starting the next batch:
+
+```powershell
+git status --short
+git add <validated files>
+git commit
+```
+
+The commit message must follow `.gitmessage` and include English, Chinese, and
+Validation sections.

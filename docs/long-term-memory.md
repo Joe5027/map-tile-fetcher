@@ -29,6 +29,10 @@
 - Use `docs/automation-guardrails.md` for read-only recurring review prompts.
 - Treat `apps/admin-region-tiler` as the likely backend base for the future
   merged product and `apps/range-downloader` as the bounding-box UX reference.
+- The merge implementation direction is Go-only backend, SQLite control
+  database, one static Web UI with range and administrative-region modes.
+- Every validated change batch must be committed immediately with detailed
+  English and Chinese commit notes.
 
 ## Assumptions
 
