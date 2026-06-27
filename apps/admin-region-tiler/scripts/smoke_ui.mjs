@@ -406,6 +406,9 @@ async function smokeRangeFlow(page, createdPayloads) {
   await page.locator("input[name='rangeMaxZoom']").fill("10");
   await page.locator("input[name='rangeLayers'][value='cia']").setChecked(false);
   await page.locator("input[name='rangeLayers'][value='vec']").setChecked(false);
+  await page.locator("input[name='scheduleMode'][value='once']").check({ force: true });
+  await page.locator("#runAtField").waitFor({ state: "visible", timeout: options.timeoutMs });
+  await page.locator("input[name='runAt']").fill(formatDateTimeLocal(new Date(Date.now() + 60 * 60 * 1000)));
 
   await waitForTextNotEqual(page.locator("#rangeTileCount"), "-");
   await waitForTextNotEqual(page.locator("#rangeTotalTileCount"), "-");
@@ -418,9 +421,26 @@ async function smokeRangeFlow(page, createdPayloads) {
   assert(payload.mode === "bbox", "range payload should use bbox mode");
   assert(payload.area?.bbox, "range payload should include area.bbox");
   assert(payload.zoom?.min === 10 && payload.zoom?.max === 10, "range payload should include the requested zoom");
+  assert(payload.scheduleMode === "once", "range payload should support scheduled once mode");
+  assert(typeof payload.runAt === "string" && payload.runAt.includes("T"), "range payload should include scheduled runAt");
   assert(Array.isArray(payload.sources) && payload.sources.length === 1, "range payload should include the selected layer source");
   assert(String(payload.sources[0].name || "").includes("img"), "range payload should include the img layer source");
   assert(String(payload.sources[0].url || "").includes("smoke-test-token"), "range source URL should include the supplied token");
+}
+
+function formatDateTimeLocal(date) {
+  const pad = (value) => String(value).padStart(2, "0");
+  return [
+    date.getFullYear(),
+    "-",
+    pad(date.getMonth() + 1),
+    "-",
+    pad(date.getDate()),
+    "T",
+    pad(date.getHours()),
+    ":",
+    pad(date.getMinutes()),
+  ].join("");
 }
 
 async function waitForPayloadCount(payloads, count) {

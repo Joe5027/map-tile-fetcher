@@ -57,6 +57,10 @@ function bindEvents() {
         button.addEventListener("click", () => setTaskMode(button.dataset.taskMode));
     });
 
+    document.querySelectorAll("input[name='scheduleMode']").forEach((element) => {
+        element.addEventListener("change", syncScheduleControls);
+    });
+
     document.querySelectorAll("[name^='range'], [name='tdtToken']").forEach((element) => {
         element.addEventListener("input", () => {
             updateRangeEstimate();
@@ -221,6 +225,7 @@ async function bootstrap() {
     initDefaultLevelConfigs();
     renderLevelConfigs();
     setTaskMode(taskMode);
+    syncScheduleControls();
     updateRangeEstimate();
     await loadTasks();
     window.setInterval(loadTasks, 5000);
@@ -261,6 +266,45 @@ function setTaskMode(mode) {
             }
         }, 40);
     }
+}
+
+function syncScheduleControls() {
+    const selected = document.querySelector("input[name='scheduleMode']:checked");
+    const runAtField = document.getElementById("runAtField");
+    if (!selected || !runAtField) {
+        return;
+    }
+    const scheduled = selected.value === "once";
+    runAtField.classList.toggle("is-hidden", !scheduled);
+    const input = runAtField.querySelector("input[name='runAt']");
+    if (input) {
+        input.required = scheduled;
+    }
+}
+
+function readScheduleRequest(formData) {
+    const scheduleMode = String(formData.get("scheduleMode") || "immediate");
+    if (scheduleMode !== "once") {
+        return {
+            scheduleMode: "immediate",
+            runAt: "",
+            label: "立即执行"
+        };
+    }
+
+    const rawRunAt = String(formData.get("runAt") || "").trim();
+    if (!rawRunAt) {
+        return { error: "请选择计划执行时间。" };
+    }
+    const runAt = new Date(rawRunAt);
+    if (Number.isNaN(runAt.getTime())) {
+        return { error: "计划执行时间无效。" };
+    }
+    return {
+        scheduleMode: "once",
+        runAt: runAt.toISOString(),
+        label: `定时执行：${formatDate(runAt.toISOString())}`
+    };
 }
 
 function initRangeMap() {
@@ -842,6 +886,11 @@ async function createRangeTask(event, formData) {
         showMessage("taskError", "请求间隔不能小于 50ms。");
         return;
     }
+    const schedule = readScheduleRequest(formData);
+    if (schedule.error) {
+        showMessage("taskError", schedule.error);
+        return;
+    }
 
     const tileCount = calculateRangeTileCount(request.bbox, request.zoom);
     const sources = request.layers.map((layer, index) => buildTianDiTuSource(layer, request.token, index));
@@ -853,6 +902,7 @@ async function createRangeTask(event, formData) {
         `图层：${request.layers.join("、")}`,
         `单图层瓦片：${tileCount}`,
         `总瓦片：${tileCount * request.layers.length}`,
+        `执行时间：${schedule.label}`,
         `下载线程：${workerCount}`,
         `保存线程：${savePipe}`,
         `请求间隔：${timeDelay}ms`
@@ -870,8 +920,8 @@ async function createRangeTask(event, formData) {
             workers: workerCount,
             savePipe,
             timeDelay,
-            scheduleMode: "immediate",
-            runAt: "",
+            scheduleMode: schedule.scheduleMode,
+            runAt: schedule.runAt,
             area: { bbox: request.bbox },
             zoom: request.zoom,
             sources
@@ -885,6 +935,7 @@ async function createRangeTask(event, formData) {
 
     event.target.reset();
     rangeClickPoints = [];
+    syncScheduleControls();
     updateRangeEstimate();
     updateRangeOverlay(true);
     await loadTasks();
@@ -1067,9 +1118,11 @@ async function createTask(event) {
         showMessage("taskError", "请求间隔不能小于 50ms。");
         return;
     }
-
-    const scheduleMode = "immediate";
-    const runAt = "";
+    const schedule = readScheduleRequest(formData);
+    if (schedule.error) {
+        showMessage("taskError", schedule.error);
+        return;
+    }
 
     const sources = selectedTilemaps.map((tilemap, index) => ({
         id: toNumericSourceId(tilemap.id, index),
@@ -1089,6 +1142,7 @@ async function createTask(event) {
         `图层数量：${selectedTilemaps.length}`,
         `图层明细：${selectedTilemaps.map((item) => item.name).join("、")}`,
         `瓦片格式：${selectedFormats}`,
+        `执行时间：${schedule.label}`,
         `下载线程：${effectiveWorkerLabel}`,
         `保存线程：${savePipe}`,
         `请求间隔：${timeDelay}ms`
@@ -1105,8 +1159,8 @@ async function createTask(event) {
             workers: workerCount,
             savePipe,
             timeDelay,
-            scheduleMode,
-            runAt,
+            scheduleMode: schedule.scheduleMode,
+            runAt: schedule.runAt,
             levels,
             sources
         })
@@ -1118,6 +1172,7 @@ async function createTask(event) {
     }
 
     event.target.reset();
+    syncScheduleControls();
     selectedProvider = getProviderGroups()[0] ? getProviderGroups()[0].id : "";
     ensureProviderSelection();
     initDefaultLevelConfigs();
@@ -1779,6 +1834,9 @@ function formatDate(value) {
 function formatTaskStart(task, children = []) {
     if (task?.startedAt) {
         return formatDate(task.startedAt);
+    }
+    if ((task?.status === "scheduled" || task?.status === "pending") && task?.runAt) {
+        return `计划 ${formatDate(task.runAt)}`;
     }
     const startedCandidates = children
         .map((item) => item?.startedAt)

@@ -122,6 +122,35 @@
                             </label>
                         </section>
 
+                        <section class="section-card schedule-panel">
+                            <div class="section-card__header">
+                                <h3>执行时间</h3>
+                                <p>选择立即开始，或创建后等待指定时间自动执行</p>
+                            </div>
+                            <div class="schedule-mode" role="radiogroup" aria-label="执行时间">
+                                <label class="mode-card">
+                                    <input type="radio" name="scheduleMode" value="immediate" checked>
+                                    <span class="mode-card__icon"><img src="/static/assets/icons/task.svg" alt=""></span>
+                                    <span class="mode-card__body">
+                                        <strong>立即执行</strong>
+                                        <small>创建后马上进入队列</small>
+                                    </span>
+                                </label>
+                                <label class="mode-card">
+                                    <input type="radio" name="scheduleMode" value="once">
+                                    <span class="mode-card__icon"><img src="/static/assets/icons/success.svg" alt=""></span>
+                                    <span class="mode-card__body">
+                                        <strong>单次定时</strong>
+                                        <small>到达指定时间后启动</small>
+                                    </span>
+                                </label>
+                            </div>
+                            <label id="runAtField" class="field schedule-run-at is-hidden">
+                                <span class="field-label">计划执行时间</span>
+                                <input type="datetime-local" name="runAt">
+                            </label>
+                        </section>
+
                         <section id="rangeModePanel" class="section-card range-panel is-hidden">
                             <div class="section-card__header">
                                 <h3>范围框选配置</h3>

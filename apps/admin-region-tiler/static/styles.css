@@ -682,6 +682,15 @@ input::placeholder {
     gap: 12px;
 }
 
+.schedule-panel {
+    display: grid;
+    gap: 14px;
+}
+
+.schedule-run-at {
+    max-width: 360px;
+}
+
 .mode-card {
     position: relative;
     display: flex;
