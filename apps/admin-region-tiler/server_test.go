@@ -12,7 +12,7 @@ import (
 func TestBuildPlansFromRequestBBoxCreatesDirectLevel(t *testing.T) {
 	withTempWorkingDir(t)
 
-	parent, children, err := buildPlansFromRequest(42, CreateTaskRequest{
+	parent, children, err := buildTaskRecordsFromRequest(42, CreateTaskRequest{
 		Name: "bbox task",
 		Mode: "bbox",
 		Area: AreaRequest{BBox: &BBoxRequest{
@@ -29,9 +29,9 @@ func TestBuildPlansFromRequestBBoxCreatesDirectLevel(t *testing.T) {
 		Output: OutputRequest{Format: "mbtiles"},
 	})
 	if err != nil {
-		t.Fatalf("buildPlansFromRequest returned error: %v", err)
+		t.Fatalf("buildTaskRecordsFromRequest returned error: %v", err)
 	}
-	if parent.Kind != PlanKindGroup {
+	if parent.Kind != TaskRecordKindGroup {
 		t.Fatalf("expected group plan, got %s", parent.Kind)
 	}
 	if len(children) != 2 {
@@ -61,7 +61,7 @@ func TestBuildPlansFromRequestBBoxCreatesDirectLevel(t *testing.T) {
 		t.Fatalf("bbox task should not write generated data, stat error: %v", statErr)
 	}
 
-	task, err := buildTaskFromPlan(children[0])
+	task, err := buildTaskFromRecord(children[0])
 	if err != nil {
 		t.Fatalf("direct bbox child task should build: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestBuildPlansFromRequestBBoxCreatesDirectLevel(t *testing.T) {
 func TestBuildPlansFromRequestRejectsInvalidBBoxWithoutWritingData(t *testing.T) {
 	withTempWorkingDir(t)
 
-	_, _, err := buildPlansFromRequest(42, CreateTaskRequest{
+	_, _, err := buildTaskRecordsFromRequest(42, CreateTaskRequest{
 		Name: "bad bbox",
 		Mode: "bbox",
 		Area: AreaRequest{BBox: &BBoxRequest{
@@ -104,7 +104,7 @@ func TestBuildPlansFromRequestRejectsInvalidBBoxWithoutWritingData(t *testing.T)
 func TestBuildPlansFromRequestPolygonCreatesGeneratedGeoJSONLevel(t *testing.T) {
 	withTempWorkingDir(t)
 
-	parent, children, err := buildPlansFromRequest(42, CreateTaskRequest{
+	parent, children, err := buildTaskRecordsFromRequest(42, CreateTaskRequest{
 		Name: "polygon task",
 		Mode: "bbox",
 		Area: AreaRequest{Polygon: []CoordinateRequest{
@@ -123,7 +123,7 @@ func TestBuildPlansFromRequestPolygonCreatesGeneratedGeoJSONLevel(t *testing.T) 
 		Output: OutputRequest{Format: "zip"},
 	})
 	if err != nil {
-		t.Fatalf("buildPlansFromRequest returned error: %v", err)
+		t.Fatalf("buildTaskRecordsFromRequest returned error: %v", err)
 	}
 	if len(parent.Levels) != 1 {
 		t.Fatalf("expected 1 polygon level, got %d", len(parent.Levels))
@@ -142,7 +142,7 @@ func TestBuildPlansFromRequestPolygonCreatesGeneratedGeoJSONLevel(t *testing.T) 
 	if _, err := os.Stat(level.Geojson); err != nil {
 		t.Fatalf("generated polygon geojson missing: %v", err)
 	}
-	task, err := buildTaskFromPlan(children[0])
+	task, err := buildTaskFromRecord(children[0])
 	if err != nil {
 		t.Fatalf("polygon child task should build: %v", err)
 	}
@@ -159,17 +159,17 @@ func TestPlanResponseIncludesUnifiedTaskContractFields(t *testing.T) {
 	})
 
 	runAt := time.Unix(2000, 0)
-	parent := &PlanRecord{
+	parent := &TaskRecord{
 		ID:           "task-contract",
 		UserID:       42,
-		Kind:         PlanKindGroup,
+		Kind:         TaskRecordKindGroup,
 		Name:         "bbox contract",
 		URL:          "https://example.test/img/{z}/{x}/{y}.png",
 		Format:       PNG,
 		Schema:       "xyz",
 		ScheduleMode: ScheduleImmediate,
 		RunAt:        runAt,
-		Status:       PlanScheduled,
+		Status:       TaskRecordScheduled,
 		Levels: []LevelConfig{{
 			MinZoom: 3,
 			MaxZoom: 4,
@@ -177,11 +177,11 @@ func TestPlanResponseIncludesUnifiedTaskContractFields(t *testing.T) {
 			BBox:    &BBoxRequest{MinLon: 100, MinLat: 20, MaxLon: 101, MaxLat: 21},
 		}},
 	}
-	child := &PlanRecord{
+	child := &TaskRecord{
 		ID:           "task-contract-img",
 		UserID:       42,
 		ParentID:     parent.ID,
-		Kind:         PlanKindChild,
+		Kind:         TaskRecordKindChild,
 		Name:         parent.Name,
 		SourceName:   "img",
 		URL:          parent.URL,
@@ -189,18 +189,18 @@ func TestPlanResponseIncludesUnifiedTaskContractFields(t *testing.T) {
 		Schema:       "xyz",
 		ScheduleMode: ScheduleImmediate,
 		RunAt:        runAt,
-		Status:       PlanScheduled,
+		Status:       TaskRecordScheduled,
 		Levels:       parent.Levels,
 	}
-	parent.Children = []*PlanRecord{child}
-	if err := store.createPlan(parent); err != nil {
+	parent.Children = []*TaskRecord{child}
+	if err := store.createTaskRecord(parent); err != nil {
 		t.Fatalf("create parent failed: %v", err)
 	}
-	if err := store.createPlan(child); err != nil {
+	if err := store.createTaskRecord(child); err != nil {
 		t.Fatalf("create child failed: %v", err)
 	}
 
-	response := planResponseFromPlan(parent)
+	response := taskResponseFromRecord(parent)
 	if response.Mode != "bbox" || response.Area.BBox == nil {
 		t.Fatalf("expected bbox response area, got %#v", response.Area)
 	}

@@ -18,17 +18,17 @@ const workerDBRetryAttempts = 12
 const workerDBRetryDelay = 300 * time.Millisecond
 
 type workerController struct {
-	planID string
-	task   *Task
-	stop   chan struct{}
-	once   sync.Once
+	taskRecordID string
+	task         *Task
+	stop         chan struct{}
+	once         sync.Once
 }
 
-func runWorkerProcess(planID, runID string) error {
-	var plan *PlanRecord
+func runWorkerProcess(taskRecordID, runID string) error {
+	var taskRecord *TaskRecord
 	err := retryOnBusy(func() error {
 		var innerErr error
-		plan, innerErr = store.getPlanByID(planID)
+		taskRecord, innerErr = store.getTaskRecordByID(taskRecordID)
 		return innerErr
 	})
 	if err != nil {
@@ -44,25 +44,25 @@ func runWorkerProcess(planID, runID string) error {
 		return err
 	}
 
-	task, err := buildTaskFromPlan(plan)
+	task, err := buildTaskFromRecord(taskRecord)
 	if err != nil {
-		_ = failRunBeforeStart(plan, run, err)
+		_ = failRunBeforeStart(taskRecord, run, err)
 		return err
 	}
 	if run.TriggerMode == triggerRetryFailures {
 		var records []FailureRecord
 		err = retryOnBusy(func() error {
 			var innerErr error
-			records, innerErr = store.listRetryableFailureRecords(plan.ID)
+			records, innerErr = store.listRetryableFailureRecords(taskRecord.ID)
 			return innerErr
 		})
 		if err != nil {
-			_ = failRunBeforeStart(plan, run, err)
+			_ = failRunBeforeStart(taskRecord, run, err)
 			return err
 		}
 		retryJobs := tileJobsFromFailureRecords(records)
 		if len(retryJobs) == 0 {
-			_ = failRunBeforeStart(plan, run, errNoRetryableFailures)
+			_ = failRunBeforeStart(taskRecord, run, errNoRetryableFailures)
 			return errNoRetryableFailures
 		}
 		task.SetExplicitJobs(retryJobs)
@@ -76,9 +76,9 @@ func runWorkerProcess(planID, runID string) error {
 	}
 
 	controller := &workerController{
-		planID: planID,
-		task:   task,
-		stop:   make(chan struct{}),
+		taskRecordID: taskRecordID,
+		task:         task,
+		stop:         make(chan struct{}),
 	}
 
 	done := make(chan struct{})
@@ -120,13 +120,13 @@ func runWorkerProcess(planID, runID string) error {
 	if err := retryOnBusy(func() error { return store.finalizeRun(run) }); err != nil {
 		return err
 	}
-	if err := retryOnBusy(func() error { return store.updatePlanStatus(plan.ID, statusToPlanStatus(run.Status)) }); err != nil {
+	if err := retryOnBusy(func() error { return store.updateTaskRecordStatus(taskRecord.ID, statusToTaskRecordStatus(run.Status)) }); err != nil {
 		return err
 	}
-	if plan.ParentID != "" {
+	if taskRecord.ParentID != "" {
 		manager := NewRuntimeManager()
-		if err := retryOnBusy(func() error { return manager.refreshParentStatus(plan.ParentID) }); err != nil {
-			log.Errorf("failed to refresh parent plan %s from worker: %v", plan.ParentID, err)
+		if err := retryOnBusy(func() error { return manager.refreshParentStatus(taskRecord.ParentID) }); err != nil {
+			log.Errorf("failed to refresh parent task record %s from worker: %v", taskRecord.ParentID, err)
 		}
 	}
 	return nil
@@ -152,7 +152,7 @@ func tileJobsFromFailureRecords(records []FailureRecord) []TileJob {
 	return jobs
 }
 
-func launchWorkerProcess(planID, runID string) (*exec.Cmd, error) {
+func launchWorkerProcess(taskRecordID, runID string) (*exec.Cmd, error) {
 	exePath, err := os.Executable()
 	if err != nil {
 		return nil, err
@@ -160,7 +160,7 @@ func launchWorkerProcess(planID, runID string) (*exec.Cmd, error) {
 
 	args := []string{
 		"-c", resolveConfigPath(cf),
-		"-worker-plan-id", planID,
+		"-worker-task-record-id", taskRecordID,
 		"-worker-run-id", runID,
 	}
 
@@ -194,7 +194,7 @@ func (c *workerController) start() {
 			select {
 			case <-ticker.C:
 				if err := c.sync(); err != nil {
-					log.Errorf("worker control sync failed for plan %s: %v", c.planID, err)
+					log.Errorf("worker control sync failed for task record %s: %v", c.taskRecordID, err)
 				}
 			case <-c.stop:
 				return
@@ -210,10 +210,10 @@ func (c *workerController) stopLoop() {
 }
 
 func (c *workerController) sync() error {
-	var plan *PlanRecord
+	var plan *TaskRecord
 	err := retryOnBusy(func() error {
 		var innerErr error
-		plan, innerErr = store.getPlanByID(c.planID)
+		plan, innerErr = store.getTaskRecordByID(c.taskRecordID)
 		return innerErr
 	})
 	if err != nil {
@@ -225,15 +225,15 @@ func (c *workerController) sync() error {
 	c.task.mu.RUnlock()
 
 	switch plan.Status {
-	case PlanPaused:
+	case TaskRecordPaused:
 		if status == TaskRunning {
 			return c.task.Pause()
 		}
-	case PlanRunning:
+	case TaskRecordRunning:
 		if status == TaskPaused {
 			return c.task.Resume()
 		}
-	case PlanCancelled:
+	case TaskRecordCancelled:
 		if status != TaskCancelled && status != TaskCompleted && status != TaskFailed {
 			return c.task.Cancel()
 		}
@@ -287,7 +287,7 @@ func prepareArtifactForRun(task *Task, run *TaskRunRecord) error {
 	return nil
 }
 
-func finalizeUnexpectedWorkerExit(plan *PlanRecord, run *TaskRunRecord, waitErr error) {
+func finalizeUnexpectedWorkerExit(taskRecord *TaskRecord, run *TaskRunRecord, waitErr error) {
 	var refreshed *TaskRunRecord
 	err := retryOnBusy(func() error {
 		var innerErr error
@@ -315,12 +315,12 @@ func finalizeUnexpectedWorkerExit(plan *PlanRecord, run *TaskRunRecord, waitErr 
 	if err := retryOnBusy(func() error { return store.finalizeRun(refreshed) }); err != nil {
 		log.Errorf("failed to finalize unexpected worker exit for run %s: %v", refreshed.ID, err)
 	}
-	if err := retryOnBusy(func() error { return store.updatePlanStatus(plan.ID, PlanFailed) }); err != nil {
-		log.Errorf("failed to mark plan %s failed after worker exit: %v", plan.ID, err)
+	if err := retryOnBusy(func() error { return store.updateTaskRecordStatus(taskRecord.ID, TaskRecordFailed) }); err != nil {
+		log.Errorf("failed to mark task record %s failed after worker exit: %v", taskRecord.ID, err)
 	}
 }
 
-func failRunBeforeStart(plan *PlanRecord, run *TaskRunRecord, cause error) error {
+func failRunBeforeStart(taskRecord *TaskRecord, run *TaskRunRecord, cause error) error {
 	now := time.Now()
 	run.Status = TaskFailed
 	run.ErrorMessage = cause.Error()
@@ -331,7 +331,7 @@ func failRunBeforeStart(plan *PlanRecord, run *TaskRunRecord, cause error) error
 	if err := retryOnBusy(func() error { return store.finalizeRun(run) }); err != nil {
 		return err
 	}
-	return retryOnBusy(func() error { return store.updatePlanStatus(plan.ID, PlanFailed) })
+	return retryOnBusy(func() error { return store.updateTaskRecordStatus(taskRecord.ID, TaskRecordFailed) })
 }
 
 func timePtrOrNow(t *time.Time) *time.Time {

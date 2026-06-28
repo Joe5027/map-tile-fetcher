@@ -22,24 +22,24 @@ var (
 	errUserNotFound = errors.New("user not found")
 )
 
-type PlanStatus string
+type TaskRecordStatus string
 
 const (
-	PlanScheduled     PlanStatus = "scheduled"
-	PlanRunning       PlanStatus = "running"
-	PlanPaused        PlanStatus = "paused"
-	PlanCompleted     PlanStatus = "completed"
-	PlanPartialFailed PlanStatus = "partial_failed"
-	PlanFailed        PlanStatus = "failed"
-	PlanCancelled     PlanStatus = "cancelled"
+	TaskRecordScheduled     TaskRecordStatus = "scheduled"
+	TaskRecordRunning       TaskRecordStatus = "running"
+	TaskRecordPaused        TaskRecordStatus = "paused"
+	TaskRecordCompleted     TaskRecordStatus = "completed"
+	TaskRecordPartialFailed TaskRecordStatus = "partial_failed"
+	TaskRecordFailed        TaskRecordStatus = "failed"
+	TaskRecordCancelled     TaskRecordStatus = "cancelled"
 )
 
-type PlanKind string
+type TaskRecordKind string
 
 const (
-	PlanKindSingle PlanKind = "single"
-	PlanKindGroup  PlanKind = "group"
-	PlanKindChild  PlanKind = "child"
+	TaskRecordKindSingle TaskRecordKind = "single"
+	TaskRecordKindGroup  TaskRecordKind = "group"
+	TaskRecordKindChild  TaskRecordKind = "child"
 )
 
 type ScheduleMode string
@@ -82,11 +82,11 @@ type LevelConfig struct {
 	OutputFormat string       `json:"outputFormat,omitempty"`
 }
 
-type PlanRecord struct {
+type TaskRecord struct {
 	ID           string
 	UserID       int64
 	ParentID     string
-	Kind         PlanKind
+	Kind         TaskRecordKind
 	Name         string
 	SourceName   string
 	URL          string
@@ -97,18 +97,18 @@ type PlanRecord struct {
 	TimeDelay    int
 	ScheduleMode ScheduleMode
 	RunAt        time.Time
-	Status       PlanStatus
+	Status       TaskRecordStatus
 	Levels       []LevelConfig
 	LastRunID    string
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 	LastRun      *TaskRunRecord
-	Children     []*PlanRecord
+	Children     []*TaskRecord
 }
 
 type TaskRunRecord struct {
 	ID             string
-	PlanID         string
+	TaskRecordID   string
 	UserID         int64
 	Status         TaskStatus
 	TriggerMode    string
@@ -178,7 +178,7 @@ func initDB() {
 	if err := store.seedDefaultUser(); err != nil {
 		log.Fatalf("failed to seed default user: %v", err)
 	}
-	if err := store.recoverInterruptedPlans(); err != nil {
+	if err := store.recoverInterruptedTaskRecords(); err != nil {
 		log.Fatalf("failed to recover interrupted plans: %v", err)
 	}
 }
@@ -312,7 +312,7 @@ func (s *SQLiteStore) initSchema() error {
 			return err
 		}
 	}
-	if err := s.ensurePlanColumns(); err != nil {
+	if err := s.ensureLegacyPlanColumns(); err != nil {
 		return err
 	}
 	if err := s.ensureTaskRunColumns(); err != nil {
@@ -327,8 +327,8 @@ func (s *SQLiteStore) initSchema() error {
 	return s.backfillNormalizedRecords()
 }
 
-func (s *SQLiteStore) ensurePlanColumns() error {
-	columns, err := s.planColumnSet()
+func (s *SQLiteStore) ensureLegacyPlanColumns() error {
+	columns, err := s.legacyPlanColumnSet()
 	if err != nil {
 		return err
 	}
@@ -353,7 +353,7 @@ func (s *SQLiteStore) ensurePlanColumns() error {
 	return nil
 }
 
-func (s *SQLiteStore) planColumnSet() (map[string]bool, error) {
+func (s *SQLiteStore) legacyPlanColumnSet() (map[string]bool, error) {
 	return s.tableColumnSet("plans")
 }
 
@@ -413,11 +413,11 @@ func (s *SQLiteStore) backfillNormalizedRecords() error {
 	defer rows.Close()
 
 	for rows.Next() {
-		plan, err := scanPlan(rows)
+		plan, err := scanTaskRecord(rows)
 		if err != nil {
 			return err
 		}
-		if err := s.syncNormalizedPlan(plan); err != nil {
+		if err := s.syncNormalizedTaskRecord(plan); err != nil {
 			return err
 		}
 	}
@@ -444,14 +444,14 @@ func (s *SQLiteStore) backfillNormalizedRecords() error {
 	return runRows.Err()
 }
 
-func (s *SQLiteStore) syncNormalizedPlan(plan *PlanRecord) error {
+func (s *SQLiteStore) syncNormalizedTaskRecord(plan *TaskRecord) error {
 	if plan == nil {
 		return nil
 	}
 	switch plan.Kind {
-	case PlanKindChild:
+	case TaskRecordKindChild:
 		return s.upsertNormalizedTaskSource(plan.ParentID, plan.ID, plan.SourceName, plan.URL, plan.Format, plan.Schema, 0, plan.CreatedAt, plan.UpdatedAt)
-	case PlanKindSingle:
+	case TaskRecordKindSingle:
 		if err := s.upsertNormalizedTask(plan); err != nil {
 			return err
 		}
@@ -461,7 +461,7 @@ func (s *SQLiteStore) syncNormalizedPlan(plan *PlanRecord) error {
 	}
 }
 
-func (s *SQLiteStore) upsertNormalizedTask(plan *PlanRecord) error {
+func (s *SQLiteStore) upsertNormalizedTask(plan *TaskRecord) error {
 	areaJSON, err := json.Marshal(map[string]any{
 		"levels": plan.Levels,
 	})
@@ -556,7 +556,7 @@ func (s *SQLiteStore) upsertNormalizedTaskSource(taskID, sourceID, name, rawURL,
 }
 
 func (s *SQLiteStore) syncRunTaskID(runID, planID string) error {
-	taskID, err := s.taskIDForPlan(planID)
+	taskID, err := s.taskIDForTaskRecord(planID)
 	if err != nil {
 		return err
 	}
@@ -564,8 +564,8 @@ func (s *SQLiteStore) syncRunTaskID(runID, planID string) error {
 	return err
 }
 
-func (s *SQLiteStore) syncTaskStatus(planID string, status PlanStatus) error {
-	taskID, err := s.taskIDForPlan(planID)
+func (s *SQLiteStore) syncTaskStatus(planID string, status TaskRecordStatus) error {
+	taskID, err := s.taskIDForTaskRecord(planID)
 	if err != nil {
 		return err
 	}
@@ -580,7 +580,7 @@ func (s *SQLiteStore) upsertArtifactFromRun(run *TaskRunRecord) error {
 	if strings.TrimSpace(run.ArtifactPath) == "" && run.ArtifactStatus == ArtifactNone {
 		return nil
 	}
-	taskID, err := s.taskIDForPlan(run.PlanID)
+	taskID, err := s.taskIDForTaskRecord(run.TaskRecordID)
 	if err != nil {
 		return err
 	}
@@ -621,7 +621,7 @@ func (s *SQLiteStore) replaceFailureRecords(run *TaskRunRecord, records []TileFa
 	if run == nil {
 		return nil
 	}
-	taskID, err := s.taskIDForPlan(run.PlanID)
+	taskID, err := s.taskIDForTaskRecord(run.TaskRecordID)
 	if err != nil {
 		return err
 	}
@@ -636,7 +636,7 @@ func (s *SQLiteStore) replaceFailureRecords(run *TaskRunRecord, records []TileFa
 		return err
 	}
 
-	sourceID := run.PlanID
+	sourceID := run.TaskRecordID
 	for index, record := range records {
 		createdAt := record.CreatedAt
 		if createdAt.IsZero() {
@@ -802,7 +802,7 @@ func (s *SQLiteStore) failureRecordScope(planID string) (taskID string, sourceID
 	return planID, "", nil
 }
 
-func (s *SQLiteStore) taskIDForPlan(planID string) (string, error) {
+func (s *SQLiteStore) taskIDForTaskRecord(planID string) (string, error) {
 	var id string
 	var parentID string
 	err := s.db.QueryRow(`SELECT id, parent_id FROM plans WHERE id = ?`, planID).Scan(&id, &parentID)
@@ -900,7 +900,7 @@ func (s *SQLiteStore) seedDefaultUser() error {
 	return err
 }
 
-func (s *SQLiteStore) recoverInterruptedPlans() error {
+func (s *SQLiteStore) recoverInterruptedTaskRecords() error {
 	now := time.Now().Unix()
 	if _, err := s.db.Exec(
 		`UPDATE task_runs
@@ -919,9 +919,9 @@ func (s *SQLiteStore) recoverInterruptedPlans() error {
 		`UPDATE plans
 		 SET status = ?, updated_at = ?
 		 WHERE status = ?`,
-		string(PlanScheduled),
+		string(TaskRecordScheduled),
 		now,
-		string(PlanRunning),
+		string(TaskRecordRunning),
 	)
 	return err
 }
@@ -1003,7 +1003,7 @@ func (s *SQLiteStore) getUserByID(id int64) (*UserRecord, error) {
 	return scanUser(row)
 }
 
-func (s *SQLiteStore) createPlan(plan *PlanRecord) error {
+func (s *SQLiteStore) createTaskRecord(plan *TaskRecord) error {
 	levelsJSON, err := json.Marshal(plan.Levels)
 	if err != nil {
 		return err
@@ -1039,10 +1039,10 @@ func (s *SQLiteStore) createPlan(plan *PlanRecord) error {
 	if err != nil {
 		return err
 	}
-	return s.syncNormalizedPlan(plan)
+	return s.syncNormalizedTaskRecord(plan)
 }
 
-func (s *SQLiteStore) listPlansByUser(userID int64) ([]*PlanRecord, error) {
+func (s *SQLiteStore) listTaskRecordsByUser(userID int64) ([]*TaskRecord, error) {
 	rows, err := s.db.Query(
 		`SELECT id, user_id, parent_id, kind, name, source_name, url, format, schema, workers, save_pipe, time_delay,
 		        schedule_mode, run_at, status, levels_json, last_run_id, created_at, updated_at
@@ -1056,9 +1056,9 @@ func (s *SQLiteStore) listPlansByUser(userID int64) ([]*PlanRecord, error) {
 	}
 	defer rows.Close()
 
-	var plans []*PlanRecord
+	var plans []*TaskRecord
 	for rows.Next() {
-		plan, err := scanPlan(rows)
+		plan, err := scanTaskRecord(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -1068,10 +1068,10 @@ func (s *SQLiteStore) listPlansByUser(userID int64) ([]*PlanRecord, error) {
 		return nil, err
 	}
 
-	return s.attachPlanRelations(plans)
+	return s.attachTaskRecordRelations(plans)
 }
 
-func (s *SQLiteStore) getPlanForUser(userID int64, planID string) (*PlanRecord, error) {
+func (s *SQLiteStore) getTaskRecordForUser(userID int64, planID string) (*TaskRecord, error) {
 	row := s.db.QueryRow(
 		`SELECT id, user_id, parent_id, kind, name, source_name, url, format, schema, workers, save_pipe, time_delay,
 		        schedule_mode, run_at, status, levels_json, last_run_id, created_at, updated_at
@@ -1080,18 +1080,18 @@ func (s *SQLiteStore) getPlanForUser(userID int64, planID string) (*PlanRecord, 
 		planID,
 		userID,
 	)
-	plan, err := scanPlan(row)
+	plan, err := scanTaskRecord(row)
 	if err != nil {
 		return nil, err
 	}
-	attached, err := s.attachPlanRelations([]*PlanRecord{plan})
+	attached, err := s.attachTaskRecordRelations([]*TaskRecord{plan})
 	if err != nil {
 		return nil, err
 	}
 	return attached[0], nil
 }
 
-func (s *SQLiteStore) listRunsByPlan(planID string) ([]*TaskRunRecord, error) {
+func (s *SQLiteStore) listRunsByTaskRecord(planID string) ([]*TaskRunRecord, error) {
 	rows, err := s.db.Query(
 		`SELECT id, plan_id, user_id, status, trigger_mode, output_path, artifact_path, artifact_name, artifact_status,
 		        total, current, success_count, failure_count, error_message, started_at, finished_at, created_at, updated_at
@@ -1116,7 +1116,7 @@ func (s *SQLiteStore) listRunsByPlan(planID string) ([]*TaskRunRecord, error) {
 	return runs, rows.Err()
 }
 
-func (s *SQLiteStore) getPlanByID(planID string) (*PlanRecord, error) {
+func (s *SQLiteStore) getTaskRecordByID(planID string) (*TaskRecord, error) {
 	row := s.db.QueryRow(
 		`SELECT id, user_id, parent_id, kind, name, source_name, url, format, schema, workers, save_pipe, time_delay,
 		        schedule_mode, run_at, status, levels_json, last_run_id, created_at, updated_at
@@ -1124,17 +1124,17 @@ func (s *SQLiteStore) getPlanByID(planID string) (*PlanRecord, error) {
 		  WHERE id = ?`,
 		planID,
 	)
-	return scanPlan(row)
+	return scanTaskRecord(row)
 }
 
-func (s *SQLiteStore) listDuePlans(now time.Time) ([]*PlanRecord, error) {
+func (s *SQLiteStore) listDueTaskRecords(now time.Time) ([]*TaskRecord, error) {
 	rows, err := s.db.Query(
 		`SELECT id, user_id, parent_id, kind, name, source_name, url, format, schema, workers, save_pipe, time_delay,
 		        schedule_mode, run_at, status, levels_json, last_run_id, created_at, updated_at
 		   FROM plans
 		  WHERE status = ? AND run_at <= ? AND parent_id = ''
 		  ORDER BY run_at ASC`,
-		string(PlanScheduled),
+		string(TaskRecordScheduled),
 		now.Unix(),
 	)
 	if err != nil {
@@ -1142,9 +1142,9 @@ func (s *SQLiteStore) listDuePlans(now time.Time) ([]*PlanRecord, error) {
 	}
 	defer rows.Close()
 
-	var plans []*PlanRecord
+	var plans []*TaskRecord
 	for rows.Next() {
-		plan, err := scanPlan(rows)
+		plan, err := scanTaskRecord(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -1153,13 +1153,13 @@ func (s *SQLiteStore) listDuePlans(now time.Time) ([]*PlanRecord, error) {
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	return s.attachPlanRelations(plans)
+	return s.attachTaskRecordRelations(plans)
 }
 
-func (s *SQLiteStore) markPlanRunning(planID, runID string) error {
+func (s *SQLiteStore) markTaskRecordRunning(planID, runID string) error {
 	_, err := s.db.Exec(
 		`UPDATE plans SET status = ?, last_run_id = ?, updated_at = ? WHERE id = ?`,
-		string(PlanRunning),
+		string(TaskRecordRunning),
 		runID,
 		time.Now().Unix(),
 		planID,
@@ -1167,10 +1167,10 @@ func (s *SQLiteStore) markPlanRunning(planID, runID string) error {
 	if err != nil {
 		return err
 	}
-	return s.syncTaskStatus(planID, PlanRunning)
+	return s.syncTaskStatus(planID, TaskRecordRunning)
 }
 
-func (s *SQLiteStore) updatePlanStatus(planID string, status PlanStatus) error {
+func (s *SQLiteStore) updateTaskRecordStatus(planID string, status TaskRecordStatus) error {
 	_, err := s.db.Exec(
 		`UPDATE plans SET status = ?, updated_at = ? WHERE id = ?`,
 		string(status),
@@ -1193,7 +1193,7 @@ func (s *SQLiteStore) createRun(run *TaskRunRecord) error {
 			total, current, success_count, failure_count, error_message, started_at, finished_at, created_at, updated_at
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		run.ID,
-		run.PlanID,
+		run.TaskRecordID,
 		run.UserID,
 		string(run.Status),
 		run.TriggerMode,
@@ -1214,7 +1214,7 @@ func (s *SQLiteStore) createRun(run *TaskRunRecord) error {
 	if err != nil {
 		return err
 	}
-	return s.syncRunTaskID(run.ID, run.PlanID)
+	return s.syncRunTaskID(run.ID, run.TaskRecordID)
 }
 
 func (s *SQLiteStore) updateRunProgress(run *TaskRunRecord) error {
@@ -1277,7 +1277,7 @@ func (s *SQLiteStore) getRun(runID string) (*TaskRunRecord, error) {
 	return scanRun(row)
 }
 
-func (s *SQLiteStore) purgePlan(planID string) error {
+func (s *SQLiteStore) purgeTaskRecord(planID string) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
@@ -1355,7 +1355,7 @@ func scanUser(row scanner) (*UserRecord, error) {
 	return user, nil
 }
 
-func scanPlan(row scanner) (*PlanRecord, error) {
+func scanTaskRecord(row scanner) (*TaskRecord, error) {
 	var runAtUnix, createdAtUnix, updatedAtUnix int64
 	var parentID string
 	var kind string
@@ -1364,7 +1364,7 @@ func scanPlan(row scanner) (*PlanRecord, error) {
 	var sourceName string
 	var levelsJSON string
 
-	plan := &PlanRecord{}
+	plan := &TaskRecord{}
 	err := row.Scan(
 		&plan.ID,
 		&plan.UserID,
@@ -1395,12 +1395,12 @@ func scanPlan(row scanner) (*PlanRecord, error) {
 
 	plan.ParentID = parentID
 	if kind == "" {
-		kind = string(PlanKindSingle)
+		kind = string(TaskRecordKindSingle)
 	}
-	plan.Kind = PlanKind(kind)
+	plan.Kind = TaskRecordKind(kind)
 	plan.SourceName = sourceName
 	plan.ScheduleMode = ScheduleMode(scheduleMode)
-	plan.Status = PlanStatus(status)
+	plan.Status = TaskRecordStatus(status)
 	plan.RunAt = time.Unix(runAtUnix, 0)
 	plan.CreatedAt = time.Unix(createdAtUnix, 0)
 	plan.UpdatedAt = time.Unix(updatedAtUnix, 0)
@@ -1410,7 +1410,7 @@ func scanPlan(row scanner) (*PlanRecord, error) {
 	return plan, nil
 }
 
-func (s *SQLiteStore) listChildrenByParent(parentID string) ([]*PlanRecord, error) {
+func (s *SQLiteStore) listTaskChildrenByParent(parentID string) ([]*TaskRecord, error) {
 	rows, err := s.db.Query(
 		`SELECT id, user_id, parent_id, kind, name, source_name, url, format, schema, workers, save_pipe, time_delay,
 		        schedule_mode, run_at, status, levels_json, last_run_id, created_at, updated_at
@@ -1424,9 +1424,9 @@ func (s *SQLiteStore) listChildrenByParent(parentID string) ([]*PlanRecord, erro
 	}
 	defer rows.Close()
 
-	var plans []*PlanRecord
+	var plans []*TaskRecord
 	for rows.Next() {
-		plan, err := scanPlan(rows)
+		plan, err := scanTaskRecord(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -1435,10 +1435,10 @@ func (s *SQLiteStore) listChildrenByParent(parentID string) ([]*PlanRecord, erro
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	return s.attachPlanRelations(plans)
+	return s.attachTaskRecordRelations(plans)
 }
 
-func (s *SQLiteStore) attachPlanRelations(plans []*PlanRecord) ([]*PlanRecord, error) {
+func (s *SQLiteStore) attachTaskRecordRelations(plans []*TaskRecord) ([]*TaskRecord, error) {
 	for _, plan := range plans {
 		if plan.LastRunID != "" {
 			run, err := s.getRun(plan.LastRunID)
@@ -1446,8 +1446,8 @@ func (s *SQLiteStore) attachPlanRelations(plans []*PlanRecord) ([]*PlanRecord, e
 				plan.LastRun = run
 			}
 		}
-		if plan.Kind == PlanKindGroup {
-			children, err := s.listChildrenByParent(plan.ID)
+		if plan.Kind == TaskRecordKindGroup {
+			children, err := s.listTaskChildrenByParent(plan.ID)
 			if err != nil {
 				return nil, err
 			}
@@ -1464,7 +1464,7 @@ func scanRun(row scanner) (*TaskRunRecord, error) {
 	run := &TaskRunRecord{}
 	err := row.Scan(
 		&run.ID,
-		&run.PlanID,
+		&run.TaskRecordID,
 		&run.UserID,
 		&status,
 		&run.TriggerMode,

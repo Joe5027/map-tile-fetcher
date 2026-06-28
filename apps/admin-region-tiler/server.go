@@ -388,39 +388,39 @@ func createTask(c *gin.Context) {
 		return
 	}
 
-	plan, children, err := buildPlansFromRequest(user.ID, req)
+	plan, children, err := buildTaskRecordsFromRequest(user.ID, req)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	if err := store.createPlan(plan); err != nil {
+	if err := store.createTaskRecord(plan); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to store task"})
 		return
 	}
 	for _, child := range children {
-		if err := store.createPlan(child); err != nil {
+		if err := store.createTaskRecord(child); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to store child task"})
 			return
 		}
 	}
 
 	if plan.RunAt.Before(time.Now().Add(2 * time.Second)) {
-		_ = runtimeManager.StartPlan(plan)
+		_ = runtimeManager.StartTaskRecord(plan)
 	}
 
-	refreshed, err := store.getPlanForUser(user.ID, plan.ID)
+	refreshed, err := store.getTaskRecordForUser(user.ID, plan.ID)
 	if err != nil {
-		c.JSON(http.StatusCreated, planResponseFromPlan(plan))
+		c.JSON(http.StatusCreated, taskResponseFromRecord(plan))
 		return
 	}
-	c.JSON(http.StatusCreated, planResponseFromPlan(refreshed))
+	c.JSON(http.StatusCreated, taskResponseFromRecord(refreshed))
 }
 
 func listTasks(c *gin.Context) {
 	user := currentUser(c)
 
-	plans, err := store.listPlansByUser(user.ID)
+	plans, err := store.listTaskRecordsByUser(user.ID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load tasks"})
 		return
@@ -428,7 +428,7 @@ func listTasks(c *gin.Context) {
 
 	response := make([]TaskResponse, 0, len(plans))
 	for _, plan := range plans {
-		response = append(response, planResponseFromPlan(plan))
+		response = append(response, taskResponseFromRecord(plan))
 	}
 	c.JSON(http.StatusOK, response)
 }
@@ -439,7 +439,7 @@ func getTask(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "task not found"})
 		return
 	}
-	c.JSON(http.StatusOK, planResponseFromPlan(plan))
+	c.JSON(http.StatusOK, taskResponseFromRecord(plan))
 }
 
 func pauseTask(c *gin.Context) {
@@ -452,8 +452,8 @@ func pauseTask(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		return
 	}
-	refreshed, _ := store.getPlanForUser(plan.UserID, plan.ID)
-	c.JSON(http.StatusOK, planResponseFromPlan(refreshed))
+	refreshed, _ := store.getTaskRecordForUser(plan.UserID, plan.ID)
+	c.JSON(http.StatusOK, taskResponseFromRecord(refreshed))
 }
 
 func resumeTask(c *gin.Context) {
@@ -466,8 +466,8 @@ func resumeTask(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		return
 	}
-	refreshed, _ := store.getPlanForUser(plan.UserID, plan.ID)
-	c.JSON(http.StatusOK, planResponseFromPlan(refreshed))
+	refreshed, _ := store.getTaskRecordForUser(plan.UserID, plan.ID)
+	c.JSON(http.StatusOK, taskResponseFromRecord(refreshed))
 }
 
 func cancelTask(c *gin.Context) {
@@ -480,8 +480,8 @@ func cancelTask(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		return
 	}
-	refreshed, _ := store.getPlanForUser(plan.UserID, plan.ID)
-	c.JSON(http.StatusOK, planResponseFromPlan(refreshed))
+	refreshed, _ := store.getTaskRecordForUser(plan.UserID, plan.ID)
+	c.JSON(http.StatusOK, taskResponseFromRecord(refreshed))
 }
 
 func purgeTask(c *gin.Context) {
@@ -492,7 +492,7 @@ func purgeTask(c *gin.Context) {
 	}
 
 	switch plan.Status {
-	case PlanRunning, PlanPaused:
+	case TaskRecordRunning, TaskRecordPaused:
 		c.JSON(http.StatusConflict, gin.H{"error": "running task cannot be deleted"})
 		return
 	}
@@ -587,25 +587,25 @@ func retryTaskFailures(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	refreshed, _ := store.getPlanForUser(plan.UserID, plan.ID)
-	c.JSON(http.StatusAccepted, planResponseFromPlan(refreshed))
+	refreshed, _ := store.getTaskRecordForUser(plan.UserID, plan.ID)
+	c.JSON(http.StatusAccepted, taskResponseFromRecord(refreshed))
 }
 
-func canRetryFailureStatus(status PlanStatus) bool {
+func canRetryFailureStatus(status TaskRecordStatus) bool {
 	switch status {
-	case PlanFailed, PlanPartialFailed, PlanCompleted:
+	case TaskRecordFailed, TaskRecordPartialFailed, TaskRecordCompleted:
 		return true
 	default:
 		return false
 	}
 }
 
-func loadPlanForCurrentUser(c *gin.Context, id string) (*PlanRecord, error) {
+func loadPlanForCurrentUser(c *gin.Context, id string) (*TaskRecord, error) {
 	user := currentUser(c)
-	return store.getPlanForUser(user.ID, id)
+	return store.getTaskRecordForUser(user.ID, id)
 }
 
-func buildPlansFromRequest(userID int64, req CreateTaskRequest) (*PlanRecord, []*PlanRecord, error) {
+func buildTaskRecordsFromRequest(userID int64, req CreateTaskRequest) (*TaskRecord, []*TaskRecord, error) {
 	req.Name = strings.TrimSpace(req.Name)
 
 	if req.Name == "" {
@@ -660,10 +660,10 @@ func buildPlansFromRequest(userID int64, req CreateTaskRequest) (*PlanRecord, []
 	}
 
 	groupID, _ := shortid.Generate()
-	parent := &PlanRecord{
+	parent := &TaskRecord{
 		ID:           groupID,
 		UserID:       userID,
-		Kind:         PlanKindGroup,
+		Kind:         TaskRecordKindGroup,
 		Name:         req.Name,
 		URL:          sources[0].URL,
 		Format:       sources[0].Format,
@@ -673,18 +673,18 @@ func buildPlansFromRequest(userID int64, req CreateTaskRequest) (*PlanRecord, []
 		TimeDelay:    maxInt(req.TimeDelay, 0),
 		ScheduleMode: mode,
 		RunAt:        runAt,
-		Status:       PlanScheduled,
+		Status:       TaskRecordScheduled,
 		Levels:       levels,
 	}
 
-	children := make([]*PlanRecord, 0, len(sources))
+	children := make([]*TaskRecord, 0, len(sources))
 	for _, source := range sources {
 		id, _ := shortid.Generate()
-		children = append(children, &PlanRecord{
+		children = append(children, &TaskRecord{
 			ID:           id,
 			UserID:       userID,
 			ParentID:     groupID,
-			Kind:         PlanKindChild,
+			Kind:         TaskRecordKindChild,
 			Name:         req.Name,
 			SourceName:   source.Name,
 			URL:          source.URL,
@@ -695,7 +695,7 @@ func buildPlansFromRequest(userID int64, req CreateTaskRequest) (*PlanRecord, []
 			TimeDelay:    parent.TimeDelay,
 			ScheduleMode: mode,
 			RunAt:        runAt,
-			Status:       PlanScheduled,
+			Status:       TaskRecordScheduled,
 			Levels:       levels,
 		})
 	}
@@ -1005,7 +1005,7 @@ func normalizeOutputFormat(format string) (string, error) {
 	return "", errors.New("unsupported output format")
 }
 
-func planResponseFromPlan(plan *PlanRecord) TaskResponse {
+func taskResponseFromRecord(plan *TaskRecord) TaskResponse {
 	response := TaskResponse{
 		ID:             plan.ID,
 		ParentID:       plan.ParentID,
@@ -1014,7 +1014,7 @@ func planResponseFromPlan(plan *PlanRecord) TaskResponse {
 		Name:           plan.Name,
 		SourceName:     plan.SourceName,
 		Area:           taskAreaFromLevels(plan.Levels),
-		Sources:        taskSourcesFromPlan(plan),
+		Sources:        taskSourcesFromRecord(plan),
 		Status:         string(plan.Status),
 		ScheduleMode:   plan.ScheduleMode,
 		RunAt:          plan.RunAt.Format(time.RFC3339),
@@ -1041,7 +1041,7 @@ func planResponseFromPlan(plan *PlanRecord) TaskResponse {
 		response.Zoom = &ZoomRangeRequest{Min: response.MinZoom, Max: response.MaxZoom}
 	}
 
-	if plan.Kind == PlanKindGroup {
+	if plan.Kind == TaskRecordKindGroup {
 		applyGroupSummary(plan, &response)
 		applyFailureSummary(plan.ID, &response)
 		applyProgressAndArtifact(&response)
@@ -1053,7 +1053,7 @@ func planResponseFromPlan(plan *PlanRecord) TaskResponse {
 		response.File = run.OutputPath
 		response.Total = run.Total
 		response.Current = run.Current
-		response.Status = string(effectiveTaskStatusForResponse(plan, run))
+		response.Status = string(effectiveTaskRecordStatusForResponse(plan, run))
 		response.SuccessCount = run.SuccessCount
 		response.FailureCount = run.FailureCount
 		response.ErrorMessage = run.ErrorMessage
@@ -1088,7 +1088,7 @@ func applyFailureSummary(planID string, response *TaskResponse) {
 		response.FailureCount = summary.Total
 	}
 	response.RetryableFailureCount = summary.Retryable
-	response.CanRetryFailures = summary.Retryable > 0 && canRetryFailureStatus(PlanStatus(response.Status))
+	response.CanRetryFailures = summary.Retryable > 0 && canRetryFailureStatus(TaskRecordStatus(response.Status))
 	response.FailureSummary = TaskFailureSummaryResponse{
 		FailureCount:          response.FailureCount,
 		RetryableFailureCount: response.RetryableFailureCount,
@@ -1145,21 +1145,21 @@ func taskAreaFromLevels(levels []LevelConfig) TaskAreaResponse {
 	return result
 }
 
-func taskSourcesFromPlan(plan *PlanRecord) []TaskSourceResponse {
-	if plan.Kind == PlanKindGroup && len(plan.Children) > 0 {
+func taskSourcesFromRecord(plan *TaskRecord) []TaskSourceResponse {
+	if plan.Kind == TaskRecordKindGroup && len(plan.Children) > 0 {
 		sources := make([]TaskSourceResponse, 0, len(plan.Children))
 		for _, child := range plan.Children {
-			sources = append(sources, taskSourceFromPlan(child))
+			sources = append(sources, taskSourceFromRecord(child))
 		}
 		return sources
 	}
 	if strings.TrimSpace(plan.URL) == "" {
 		return nil
 	}
-	return []TaskSourceResponse{taskSourceFromPlan(plan)}
+	return []TaskSourceResponse{taskSourceFromRecord(plan)}
 }
 
-func taskSourceFromPlan(plan *PlanRecord) TaskSourceResponse {
+func taskSourceFromRecord(plan *TaskRecord) TaskSourceResponse {
 	name := strings.TrimSpace(plan.SourceName)
 	if name == "" {
 		name = strings.TrimSpace(plan.Name)
@@ -1174,16 +1174,16 @@ func taskSourceFromPlan(plan *PlanRecord) TaskSourceResponse {
 	}
 }
 
-func effectiveTaskStatusForResponse(plan *PlanRecord, run *TaskRunRecord) TaskStatus {
+func effectiveTaskRecordStatusForResponse(plan *TaskRecord, run *TaskRunRecord) TaskStatus {
 	if run == nil {
 		switch plan.Status {
-		case PlanPaused:
+		case TaskRecordPaused:
 			return TaskPaused
-		case PlanCancelled:
+		case TaskRecordCancelled:
 			return TaskCancelled
-		case PlanFailed:
+		case TaskRecordFailed:
 			return TaskFailed
-		case PlanCompleted:
+		case TaskRecordCompleted:
 			return TaskCompleted
 		default:
 			return TaskStatus(plan.Status)
@@ -1191,15 +1191,15 @@ func effectiveTaskStatusForResponse(plan *PlanRecord, run *TaskRunRecord) TaskSt
 	}
 
 	switch plan.Status {
-	case PlanPaused:
+	case TaskRecordPaused:
 		if run.Status == TaskRunning || run.Status == TaskPending {
 			return TaskPaused
 		}
-	case PlanCancelled:
+	case TaskRecordCancelled:
 		if run.Status == TaskRunning || run.Status == TaskPending || run.Status == TaskPaused {
 			return TaskCancelled
 		}
-	case PlanFailed:
+	case TaskRecordFailed:
 		if run.Status == TaskRunning || run.Status == TaskPending || run.Status == TaskPaused {
 			return TaskFailed
 		}
@@ -1208,7 +1208,7 @@ func effectiveTaskStatusForResponse(plan *PlanRecord, run *TaskRunRecord) TaskSt
 	return run.Status
 }
 
-func applyGroupSummary(plan *PlanRecord, response *TaskResponse) {
+func applyGroupSummary(plan *TaskRecord, response *TaskResponse) {
 	response.TotalChildren = len(plan.Children)
 	response.Children = make([]TaskResponse, 0, len(plan.Children))
 
@@ -1220,7 +1220,7 @@ func applyGroupSummary(plan *PlanRecord, response *TaskResponse) {
 	var currentTiles int64
 
 	for _, child := range plan.Children {
-		childResponse := planResponseFromPlan(child)
+		childResponse := taskResponseFromRecord(child)
 		response.Children = append(response.Children, childResponse)
 		totalTiles += childResponse.Total
 		currentTiles += childResponse.Current
@@ -1244,17 +1244,17 @@ func applyGroupSummary(plan *PlanRecord, response *TaskResponse) {
 
 	switch {
 	case response.CompletedChildren == response.TotalChildren:
-		response.Status = string(PlanCompleted)
+		response.Status = string(TaskRecordCompleted)
 	case response.CancelledChildren == response.TotalChildren:
-		response.Status = string(PlanCancelled)
+		response.Status = string(TaskRecordCancelled)
 	case response.FailedChildren == response.TotalChildren:
-		response.Status = string(PlanFailed)
+		response.Status = string(TaskRecordFailed)
 	case response.RunningChildren > 0:
-		response.Status = string(PlanRunning)
+		response.Status = string(TaskRecordRunning)
 	case response.PausedChildren > 0 && response.RunningChildren == 0:
-		response.Status = string(PlanPaused)
+		response.Status = string(TaskRecordPaused)
 	case response.CompletedChildren+response.FailedChildren+response.CancelledChildren == response.TotalChildren && response.FailedChildren > 0:
-		response.Status = string(PlanPartialFailed)
+		response.Status = string(TaskRecordPartialFailed)
 	default:
 		response.Status = string(plan.Status)
 	}

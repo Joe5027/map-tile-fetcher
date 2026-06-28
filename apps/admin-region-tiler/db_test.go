@@ -23,28 +23,28 @@ func TestCreatePlanMirrorsUnifiedTaskAndSources(t *testing.T) {
 	store := newSQLiteTestStore(t)
 	runAt := time.Unix(2000, 0)
 
-	parent := &PlanRecord{
+	parent := &TaskRecord{
 		ID:           "task-1",
 		UserID:       7,
-		Kind:         PlanKindGroup,
+		Kind:         TaskRecordKindGroup,
 		Name:         "range task",
 		URL:          "https://example.test/img/{z}/{x}/{y}.png",
 		Format:       PNG,
 		Schema:       "xyz",
 		ScheduleMode: ScheduleImmediate,
 		RunAt:        runAt,
-		Status:       PlanScheduled,
+		Status:       TaskRecordScheduled,
 		Levels: []LevelConfig{{
 			MinZoom: 1,
 			MaxZoom: 3,
 			Geojson: "data/generated-areas/bbox-test.geojson",
 		}},
 	}
-	child := &PlanRecord{
+	child := &TaskRecord{
 		ID:           "source-1",
 		UserID:       7,
 		ParentID:     parent.ID,
-		Kind:         PlanKindChild,
+		Kind:         TaskRecordKindChild,
 		Name:         parent.Name,
 		SourceName:   "天地图 img 卫星图",
 		URL:          "https://example.test/img/{z}/{x}/{y}.png",
@@ -52,14 +52,14 @@ func TestCreatePlanMirrorsUnifiedTaskAndSources(t *testing.T) {
 		Schema:       "xyz",
 		ScheduleMode: ScheduleImmediate,
 		RunAt:        runAt,
-		Status:       PlanScheduled,
+		Status:       TaskRecordScheduled,
 		Levels:       parent.Levels,
 	}
 
-	if err := store.createPlan(parent); err != nil {
+	if err := store.createTaskRecord(parent); err != nil {
 		t.Fatalf("create parent plan failed: %v", err)
 	}
-	if err := store.createPlan(child); err != nil {
+	if err := store.createTaskRecord(child); err != nil {
 		t.Fatalf("create child plan failed: %v", err)
 	}
 
@@ -86,24 +86,24 @@ func TestCreatePlanMirrorsUnifiedTaskAndSources(t *testing.T) {
 func TestCreateRunAndFinalizeRunMirrorTaskIDAndArtifact(t *testing.T) {
 	store := newSQLiteTestStore(t)
 	runAt := time.Unix(2000, 0)
-	parent := &PlanRecord{
+	parent := &TaskRecord{
 		ID:           "task-2",
 		UserID:       7,
-		Kind:         PlanKindGroup,
+		Kind:         TaskRecordKindGroup,
 		Name:         "region task",
 		URL:          "https://example.test/vec/{z}/{x}/{y}.png",
 		Format:       PNG,
 		Schema:       "xyz",
 		ScheduleMode: ScheduleImmediate,
 		RunAt:        runAt,
-		Status:       PlanScheduled,
+		Status:       TaskRecordScheduled,
 		Levels:       []LevelConfig{{MinZoom: 4, MaxZoom: 5, Geojson: "geojson/china.geojson"}},
 	}
-	child := &PlanRecord{
+	child := &TaskRecord{
 		ID:           "source-2",
 		UserID:       7,
 		ParentID:     parent.ID,
-		Kind:         PlanKindChild,
+		Kind:         TaskRecordKindChild,
 		Name:         parent.Name,
 		SourceName:   "天地图 vec 电子图",
 		URL:          parent.URL,
@@ -111,13 +111,13 @@ func TestCreateRunAndFinalizeRunMirrorTaskIDAndArtifact(t *testing.T) {
 		Schema:       "xyz",
 		ScheduleMode: ScheduleImmediate,
 		RunAt:        runAt,
-		Status:       PlanScheduled,
+		Status:       TaskRecordScheduled,
 		Levels:       parent.Levels,
 	}
-	if err := store.createPlan(parent); err != nil {
+	if err := store.createTaskRecord(parent); err != nil {
 		t.Fatalf("create parent plan failed: %v", err)
 	}
-	if err := store.createPlan(child); err != nil {
+	if err := store.createTaskRecord(child); err != nil {
 		t.Fatalf("create child plan failed: %v", err)
 	}
 
@@ -125,7 +125,7 @@ func TestCreateRunAndFinalizeRunMirrorTaskIDAndArtifact(t *testing.T) {
 	finished := time.Unix(2200, 0)
 	run := &TaskRunRecord{
 		ID:             "run-1",
-		PlanID:         child.ID,
+		TaskRecordID:   child.ID,
 		UserID:         7,
 		Status:         TaskRunning,
 		TriggerMode:    string(ScheduleImmediate),
@@ -166,10 +166,10 @@ func TestCreateRunAndFinalizeRunMirrorTaskIDAndArtifact(t *testing.T) {
 func TestReplaceFailureRecordsPersistsRetryableTiles(t *testing.T) {
 	store := newSQLiteTestStore(t)
 	runAt := time.Unix(2000, 0)
-	plan := &PlanRecord{
+	plan := &TaskRecord{
 		ID:           "task-3",
 		UserID:       7,
-		Kind:         PlanKindSingle,
+		Kind:         TaskRecordKindSingle,
 		Name:         "failure task",
 		SourceName:   "天地图 img 卫星图",
 		URL:          "https://example.test/img/{z}/{x}/{y}.png",
@@ -177,15 +177,15 @@ func TestReplaceFailureRecordsPersistsRetryableTiles(t *testing.T) {
 		Schema:       "xyz",
 		ScheduleMode: ScheduleImmediate,
 		RunAt:        runAt,
-		Status:       PlanScheduled,
+		Status:       TaskRecordScheduled,
 		Levels:       []LevelConfig{{MinZoom: 1, MaxZoom: 1, Geojson: "data/generated-areas/bbox-test.geojson"}},
 	}
-	if err := store.createPlan(plan); err != nil {
+	if err := store.createTaskRecord(plan); err != nil {
 		t.Fatalf("create plan failed: %v", err)
 	}
 	run := &TaskRunRecord{
 		ID:             "run-2",
-		PlanID:         plan.ID,
+		TaskRecordID:   plan.ID,
 		UserID:         7,
 		Status:         TaskRunning,
 		TriggerMode:    string(ScheduleImmediate),
@@ -234,24 +234,24 @@ func TestReplaceFailureRecordsPersistsRetryableTiles(t *testing.T) {
 func TestFailureRecordsAreScopedByChildSource(t *testing.T) {
 	store := newSQLiteTestStore(t)
 	runAt := time.Unix(2000, 0)
-	parent := &PlanRecord{
+	parent := &TaskRecord{
 		ID:           "task-4",
 		UserID:       7,
-		Kind:         PlanKindGroup,
+		Kind:         TaskRecordKindGroup,
 		Name:         "multi-source task",
 		URL:          "https://example.test/img/{z}/{x}/{y}.png",
 		Format:       PNG,
 		Schema:       "xyz",
 		ScheduleMode: ScheduleImmediate,
 		RunAt:        runAt,
-		Status:       PlanScheduled,
+		Status:       TaskRecordScheduled,
 		Levels:       []LevelConfig{{MinZoom: 1, MaxZoom: 1, Geojson: "data/generated-areas/bbox-test.geojson"}},
 	}
-	childA := &PlanRecord{
+	childA := &TaskRecord{
 		ID:           "source-a",
 		UserID:       7,
 		ParentID:     parent.ID,
-		Kind:         PlanKindChild,
+		Kind:         TaskRecordKindChild,
 		Name:         parent.Name,
 		SourceName:   "img",
 		URL:          parent.URL,
@@ -259,7 +259,7 @@ func TestFailureRecordsAreScopedByChildSource(t *testing.T) {
 		Schema:       "xyz",
 		ScheduleMode: ScheduleImmediate,
 		RunAt:        runAt,
-		Status:       PlanScheduled,
+		Status:       TaskRecordScheduled,
 		Levels:       parent.Levels,
 	}
 	childB := *childA
@@ -267,14 +267,14 @@ func TestFailureRecordsAreScopedByChildSource(t *testing.T) {
 	childB.SourceName = "cia"
 	childB.URL = "https://example.test/cia/{z}/{x}/{y}.png"
 
-	for _, plan := range []*PlanRecord{parent, childA, &childB} {
-		if err := store.createPlan(plan); err != nil {
+	for _, plan := range []*TaskRecord{parent, childA, &childB} {
+		if err := store.createTaskRecord(plan); err != nil {
 			t.Fatalf("create plan %s failed: %v", plan.ID, err)
 		}
 	}
 
-	runA := &TaskRunRecord{ID: "run-a", PlanID: childA.ID, UserID: 7, Status: TaskRunning, TriggerMode: string(ScheduleImmediate)}
-	runB := &TaskRunRecord{ID: "run-b", PlanID: childB.ID, UserID: 7, Status: TaskRunning, TriggerMode: string(ScheduleImmediate)}
+	runA := &TaskRunRecord{ID: "run-a", TaskRecordID: childA.ID, UserID: 7, Status: TaskRunning, TriggerMode: string(ScheduleImmediate)}
+	runB := &TaskRunRecord{ID: "run-b", TaskRecordID: childB.ID, UserID: 7, Status: TaskRunning, TriggerMode: string(ScheduleImmediate)}
 	if err := store.createRun(runA); err != nil {
 		t.Fatalf("create run A failed: %v", err)
 	}

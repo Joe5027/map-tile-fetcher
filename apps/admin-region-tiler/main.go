@@ -16,16 +16,17 @@ import (
 
 // flag
 var (
-	hf           bool
-	cf           string
-	workerPlanID string
-	workerRunID  string
+	hf                 bool
+	cf                 string
+	workerTaskRecordID string
+	workerRunID        string
 )
 
 func init() {
 	flag.BoolVar(&hf, "h", false, "this help")
 	flag.StringVar(&cf, "c", "conf.toml", "set config `file`")
-	flag.StringVar(&workerPlanID, "worker-plan-id", "", "run a child task plan in worker mode")
+	flag.StringVar(&workerTaskRecordID, "worker-task-record-id", "", "run a child task record in worker mode")
+	flag.StringVar(&workerTaskRecordID, "worker-plan-id", "", "legacy alias for -worker-task-record-id")
 	flag.StringVar(&workerRunID, "worker-run-id", "", "run a task run in worker mode")
 	// 改变默认的 Usage，flag包中的Usage 其实是一个函数类型。这里是覆盖默认函数实现，具体见后面Usage部分的分析
 	flag.Usage = usage
@@ -103,7 +104,7 @@ func main() {
 	initDB()
 
 	if shouldRunWorkerMode() {
-		if err := runWorkerProcess(workerPlanID, workerRunID); err != nil {
+		if err := runWorkerProcess(workerTaskRecordID, workerRunID); err != nil {
 			log.Fatalf("worker process failed: %v", err)
 		}
 		return
@@ -124,5 +125,5 @@ func ensureStaticDir() {
 }
 
 func shouldRunWorkerMode() bool {
-	return strings.TrimSpace(workerPlanID) != "" && strings.TrimSpace(workerRunID) != ""
+	return strings.TrimSpace(workerTaskRecordID) != "" && strings.TrimSpace(workerRunID) != ""
 }

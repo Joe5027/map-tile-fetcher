@@ -16,7 +16,7 @@ import (
 )
 
 type ActiveRun struct {
-	Plan *PlanRecord
+	Plan *TaskRecord
 	Run  *TaskRunRecord
 	Cmd  *exec.Cmd
 }
@@ -57,28 +57,28 @@ func (s *Scheduler) Start() {
 		for {
 			select {
 			case <-s.ticker.C:
-				s.dispatchDuePlans()
+				s.dispatchDueTaskRecords()
 			case <-s.stop:
 				s.ticker.Stop()
 				return
 			}
 		}
 	}()
-	s.dispatchDuePlans()
+	s.dispatchDueTaskRecords()
 }
 
 func (s *Scheduler) Stop() {
 	close(s.stop)
 }
 
-func (s *Scheduler) dispatchDuePlans() {
-	plans, err := store.listDuePlans(time.Now())
+func (s *Scheduler) dispatchDueTaskRecords() {
+	plans, err := store.listDueTaskRecords(time.Now())
 	if err != nil {
 		log.Errorf("failed to list due plans: %v", err)
 		return
 	}
 	for _, plan := range plans {
-		if err := s.manager.StartPlan(plan); err != nil && !errors.Is(err, errTaskAlreadyActive) {
+		if err := s.manager.StartTaskRecord(plan); err != nil && !errors.Is(err, errTaskAlreadyActive) {
 			log.Errorf("failed to start plan %s: %v", plan.ID, err)
 		}
 	}
@@ -86,24 +86,24 @@ func (s *Scheduler) dispatchDuePlans() {
 
 var errTaskAlreadyActive = errors.New("task already active")
 
-func (m *RuntimeManager) StartPlan(plan *PlanRecord) error {
-	return m.startPlanWithTrigger(plan, string(plan.ScheduleMode))
+func (m *RuntimeManager) StartTaskRecord(plan *TaskRecord) error {
+	return m.startTaskRecordWithTrigger(plan, string(plan.ScheduleMode))
 }
 
-func (m *RuntimeManager) RetryFailures(plan *PlanRecord) error {
-	return m.startPlanWithTrigger(plan, triggerRetryFailures)
+func (m *RuntimeManager) RetryFailures(plan *TaskRecord) error {
+	return m.startTaskRecordWithTrigger(plan, triggerRetryFailures)
 }
 
-func (m *RuntimeManager) startPlanWithTrigger(plan *PlanRecord, triggerMode string) error {
-	if plan.Kind == PlanKindGroup {
-		children, err := store.listChildrenByParent(plan.ID)
+func (m *RuntimeManager) startTaskRecordWithTrigger(plan *TaskRecord, triggerMode string) error {
+	if plan.Kind == TaskRecordKindGroup {
+		children, err := store.listTaskChildrenByParent(plan.ID)
 		if err != nil {
 			return err
 		}
 		if triggerMode == triggerRetryFailures {
-			eligible := make([]*PlanRecord, 0, len(children))
+			eligible := make([]*TaskRecord, 0, len(children))
 			for _, child := range children {
-				if child.Status == PlanCancelled {
+				if child.Status == TaskRecordCancelled {
 					continue
 				}
 				summary, err := store.failureSummary(child.ID)
@@ -119,15 +119,15 @@ func (m *RuntimeManager) startPlanWithTrigger(plan *PlanRecord, triggerMode stri
 			}
 			children = eligible
 		}
-		if err := store.updatePlanStatus(plan.ID, PlanRunning); err != nil {
+		if err := store.updateTaskRecordStatus(plan.ID, TaskRecordRunning); err != nil {
 			return err
 		}
 		var started bool
 		for _, child := range children {
-			if child.Status == PlanCancelled {
+			if child.Status == TaskRecordCancelled {
 				continue
 			}
-			if err := m.startPlanWithTrigger(child, triggerMode); err == nil {
+			if err := m.startTaskRecordWithTrigger(child, triggerMode); err == nil {
 				started = true
 				continue
 			} else if !errors.Is(err, errTaskAlreadyActive) {
@@ -160,9 +160,9 @@ func (m *RuntimeManager) startPlanWithTrigger(plan *PlanRecord, triggerMode stri
 	}
 	m.mu.Unlock()
 
-	task, err := buildTaskFromPlan(plan)
+	task, err := buildTaskFromRecord(plan)
 	if err != nil {
-		_ = store.updatePlanStatus(plan.ID, PlanFailed)
+		_ = store.updateTaskRecordStatus(plan.ID, TaskRecordFailed)
 		return err
 	}
 
@@ -170,7 +170,7 @@ func (m *RuntimeManager) startPlanWithTrigger(plan *PlanRecord, triggerMode stri
 	now := time.Now()
 	run := &TaskRunRecord{
 		ID:             runID,
-		PlanID:         plan.ID,
+		TaskRecordID:   plan.ID,
 		UserID:         plan.UserID,
 		Status:         TaskRunning,
 		TriggerMode:    triggerMode,
@@ -182,7 +182,7 @@ func (m *RuntimeManager) startPlanWithTrigger(plan *PlanRecord, triggerMode stri
 	if err := store.createRun(run); err != nil {
 		return err
 	}
-	if err := store.markPlanRunning(plan.ID, runID); err != nil {
+	if err := store.markTaskRecordRunning(plan.ID, runID); err != nil {
 		return err
 	}
 
@@ -221,9 +221,9 @@ func (m *RuntimeManager) monitorWorker(active *ActiveRun) {
 }
 
 func (m *RuntimeManager) Pause(planID string) error {
-	plan, err := store.getPlanByID(planID)
-	if err == nil && plan.Kind == PlanKindGroup {
-		children, listErr := store.listChildrenByParent(planID)
+	plan, err := store.getTaskRecordByID(planID)
+	if err == nil && plan.Kind == TaskRecordKindGroup {
+		children, listErr := store.listTaskChildrenByParent(planID)
 		if listErr != nil {
 			return listErr
 		}
@@ -246,13 +246,13 @@ func (m *RuntimeManager) Pause(planID string) error {
 	if active.Cmd == nil || active.Cmd.Process == nil {
 		return errTaskNotFound
 	}
-	return store.updatePlanStatus(planID, PlanPaused)
+	return store.updateTaskRecordStatus(planID, TaskRecordPaused)
 }
 
 func (m *RuntimeManager) Resume(planID string) error {
-	plan, err := store.getPlanByID(planID)
-	if err == nil && plan.Kind == PlanKindGroup {
-		children, listErr := store.listChildrenByParent(planID)
+	plan, err := store.getTaskRecordByID(planID)
+	if err == nil && plan.Kind == TaskRecordKindGroup {
+		children, listErr := store.listTaskChildrenByParent(planID)
 		if listErr != nil {
 			return listErr
 		}
@@ -275,12 +275,12 @@ func (m *RuntimeManager) Resume(planID string) error {
 	if active.Cmd == nil || active.Cmd.Process == nil {
 		return errTaskNotFound
 	}
-	return store.updatePlanStatus(planID, PlanRunning)
+	return store.updateTaskRecordStatus(planID, TaskRecordRunning)
 }
 
-func (m *RuntimeManager) Cancel(plan *PlanRecord) error {
-	if plan.Kind == PlanKindGroup {
-		children, err := store.listChildrenByParent(plan.ID)
+func (m *RuntimeManager) Cancel(plan *TaskRecord) error {
+	if plan.Kind == TaskRecordKindGroup {
+		children, err := store.listTaskChildrenByParent(plan.ID)
 		if err != nil {
 			return err
 		}
@@ -291,7 +291,7 @@ func (m *RuntimeManager) Cancel(plan *PlanRecord) error {
 			}
 		}
 		if !cancelled {
-			return store.updatePlanStatus(plan.ID, PlanCancelled)
+			return store.updateTaskRecordStatus(plan.ID, TaskRecordCancelled)
 		}
 		return m.refreshParentStatus(plan.ID)
 	}
@@ -301,11 +301,11 @@ func (m *RuntimeManager) Cancel(plan *PlanRecord) error {
 		if active.Cmd == nil || active.Cmd.Process == nil {
 			return errTaskNotFound
 		}
-		return store.updatePlanStatus(plan.ID, PlanCancelled)
+		return store.updateTaskRecordStatus(plan.ID, TaskRecordCancelled)
 	}
 
-	if plan.Status == PlanScheduled {
-		return store.updatePlanStatus(plan.ID, PlanCancelled)
+	if plan.Status == TaskRecordScheduled {
+		return store.updateTaskRecordStatus(plan.ID, TaskRecordCancelled)
 	}
 
 	if plan.LastRun != nil {
@@ -318,21 +318,21 @@ func (m *RuntimeManager) Cancel(plan *PlanRecord) error {
 			if err := store.finalizeRun(&run); err != nil {
 				return err
 			}
-			return store.updatePlanStatus(plan.ID, PlanCancelled)
+			return store.updateTaskRecordStatus(plan.ID, TaskRecordCancelled)
 		}
 	}
 
 	switch plan.Status {
-	case PlanRunning, PlanPaused:
-		return store.updatePlanStatus(plan.ID, PlanCancelled)
+	case TaskRecordRunning, TaskRecordPaused:
+		return store.updateTaskRecordStatus(plan.ID, TaskRecordCancelled)
 	}
 
 	return err
 }
 
-func (m *RuntimeManager) Purge(plan *PlanRecord) error {
-	if plan.Kind == PlanKindGroup {
-		children, err := store.listChildrenByParent(plan.ID)
+func (m *RuntimeManager) Purge(plan *TaskRecord) error {
+	if plan.Kind == TaskRecordKindGroup {
+		children, err := store.listTaskChildrenByParent(plan.ID)
 		if err != nil {
 			return err
 		}
@@ -347,7 +347,7 @@ func (m *RuntimeManager) Purge(plan *PlanRecord) error {
 		return errors.New("cannot delete a running task")
 	}
 
-	runs, err := store.listRunsByPlan(plan.ID)
+	runs, err := store.listRunsByTaskRecord(plan.ID)
 	if err != nil {
 		return err
 	}
@@ -359,7 +359,7 @@ func (m *RuntimeManager) Purge(plan *PlanRecord) error {
 		}
 	}
 
-	return store.purgePlan(plan.ID)
+	return store.purgeTaskRecord(plan.ID)
 }
 
 func (m *RuntimeManager) getActive(planID string) (*ActiveRun, error) {
@@ -413,7 +413,7 @@ func removeTaskPath(path string) error {
 	return os.RemoveAll(clean)
 }
 
-func buildTaskFromPlan(plan *PlanRecord) (*Task, error) {
+func buildTaskFromRecord(plan *TaskRecord) (*Task, error) {
 	request := CreateTaskRequest{
 		Name:         plan.Name,
 		SourceName:   plan.SourceName,
@@ -473,36 +473,36 @@ func zipDirectory(sourceDir, zipPath string) error {
 	})
 }
 
-func statusToPlanStatus(status TaskStatus) PlanStatus {
+func statusToTaskRecordStatus(status TaskStatus) TaskRecordStatus {
 	switch status {
 	case TaskCompleted:
-		return PlanCompleted
+		return TaskRecordCompleted
 	case TaskPaused:
-		return PlanPaused
+		return TaskRecordPaused
 	case TaskCancelled:
-		return PlanCancelled
+		return TaskRecordCancelled
 	case TaskFailed:
-		return PlanFailed
+		return TaskRecordFailed
 	default:
-		return PlanRunning
+		return TaskRecordRunning
 	}
 }
 
 func (m *RuntimeManager) refreshParentStatus(parentID string) error {
-	parent, err := store.getPlanByID(parentID)
+	parent, err := store.getTaskRecordByID(parentID)
 	if err != nil {
 		return err
 	}
-	children, err := store.listChildrenByParent(parentID)
+	children, err := store.listTaskChildrenByParent(parentID)
 	if err != nil {
 		return err
 	}
 	parent.Children = children
 	status := aggregateGroupStatus(parent)
-	return store.updatePlanStatus(parent.ID, status)
+	return store.updateTaskRecordStatus(parent.ID, status)
 }
 
-func aggregateGroupStatus(plan *PlanRecord) PlanStatus {
+func aggregateGroupStatus(plan *TaskRecord) TaskRecordStatus {
 	if len(plan.Children) == 0 {
 		return plan.Status
 	}
@@ -511,18 +511,18 @@ func aggregateGroupStatus(plan *PlanRecord) PlanStatus {
 	for _, child := range plan.Children {
 		status := child.Status
 		if child.LastRun != nil {
-			status = statusToPlanStatus(child.LastRun.Status)
+			status = statusToTaskRecordStatus(child.LastRun.Status)
 		}
 		switch status {
-		case PlanCompleted:
+		case TaskRecordCompleted:
 			completed++
-		case PlanRunning:
+		case TaskRecordRunning:
 			running++
-		case PlanPaused:
+		case TaskRecordPaused:
 			paused++
-		case PlanFailed:
+		case TaskRecordFailed:
 			failed++
-		case PlanCancelled:
+		case TaskRecordCancelled:
 			cancelled++
 		default:
 			scheduled++
@@ -532,20 +532,20 @@ func aggregateGroupStatus(plan *PlanRecord) PlanStatus {
 	total := len(plan.Children)
 	switch {
 	case completed == total:
-		return PlanCompleted
+		return TaskRecordCompleted
 	case cancelled == total:
-		return PlanCancelled
+		return TaskRecordCancelled
 	case failed == total:
-		return PlanFailed
+		return TaskRecordFailed
 	case running > 0:
-		return PlanRunning
+		return TaskRecordRunning
 	case paused > 0 && running == 0:
-		return PlanPaused
+		return TaskRecordPaused
 	case completed+failed+cancelled == total && failed > 0:
-		return PlanPartialFailed
+		return TaskRecordPartialFailed
 	case scheduled == total:
-		return PlanScheduled
+		return TaskRecordScheduled
 	default:
-		return PlanRunning
+		return TaskRecordRunning
 	}
 }
