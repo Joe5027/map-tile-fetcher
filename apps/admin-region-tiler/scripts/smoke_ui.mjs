@@ -390,6 +390,7 @@ async function smokeRegionFlow(page, createdPayloads) {
 
   const beforeCount = createdPayloads.length;
   await page.locator("input[name='name']").fill(`smoke region ${Date.now()}`);
+  await page.locator("input[name='tiandituToken']").fill("smoke-test-token");
   await page.locator("#taskForm button[type='submit']").click();
   await waitForPayloadCount(createdPayloads, beforeCount + 1);
 
@@ -399,6 +400,8 @@ async function smokeRegionFlow(page, createdPayloads) {
   assert(!payload.mode, "region payload should use the legacy-compatible region request shape");
   assert(payload.scheduleMode === "immediate", "region payload should create an immediate task");
   assert(payload.output?.format === "zip", "region payload should default to zip output");
+  assert(payload.sources.every((source) => !String(source.url || "").includes("YOUR_TIANDITU_TOKEN")), "region payload should replace Tianditu token placeholders");
+  assert(payload.sources.some((source) => String(source.url || "").includes("smoke-test-token")), "region payload should include the supplied Tianditu token");
 }
 
 async function smokeRangeFlow(page, createdPayloads) {
@@ -413,7 +416,7 @@ async function smokeRangeFlow(page, createdPayloads) {
   await rangeMap.click({ position: { x: 420, y: 380 }, force: true });
 
   await page.locator("input[name='name']").fill(`smoke bbox ${Date.now()}`);
-  await page.locator("input[name='tdtToken']").fill("smoke-test-token");
+  await page.locator("input[name='tiandituToken']").fill("smoke-test-token");
   await page.locator("input[name='rangeMinLon']").fill("116.300000");
   await page.locator("input[name='rangeMaxLon']").fill("116.460000");
   await page.locator("input[name='rangeMinLat']").fill("39.860000");

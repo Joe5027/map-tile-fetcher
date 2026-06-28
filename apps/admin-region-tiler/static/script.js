@@ -69,11 +69,11 @@ function bindEvents() {
         element.addEventListener("change", syncScheduleControls);
     });
 
-    document.querySelectorAll("[name^='range'], [name='tdtToken']").forEach((element) => {
+    document.querySelectorAll("[name^='range'], [name='tiandituToken'], [name='mapboxToken'], [name='mapboxSku']").forEach((element) => {
         element.addEventListener("input", () => {
             updateRangeEstimate();
             updateRangeOverlay();
-            if (element.name === "tdtToken") {
+            if (element.name === "tiandituToken") {
                 updateRangeBaseLayer();
             }
         });
@@ -349,6 +349,49 @@ function readOutputRequest(formData) {
     };
 }
 
+function readCredentialRequest(formData) {
+    return {
+        tiandituToken: String(formData.get("tiandituToken") || "").trim(),
+        mapboxToken: String(formData.get("mapboxToken") || "").trim(),
+        mapboxSku: String(formData.get("mapboxSku") || "").trim()
+    };
+}
+
+function hasUsableCredential(value, placeholder) {
+    const trimmed = String(value || "").trim();
+    return Boolean(trimmed && trimmed !== placeholder);
+}
+
+function applySourceCredentials(rawURL, credentials) {
+    let url = String(rawURL || "");
+    if (hasUsableCredential(credentials.tiandituToken, "YOUR_TIANDITU_TOKEN")) {
+        url = url.replaceAll("YOUR_TIANDITU_TOKEN", encodeURIComponent(credentials.tiandituToken));
+    }
+    if (hasUsableCredential(credentials.mapboxToken, "YOUR_MAPBOX_TOKEN")) {
+        url = url.replaceAll("YOUR_MAPBOX_TOKEN", encodeURIComponent(credentials.mapboxToken));
+    }
+    if (url.includes("YOUR_MAPBOX_SKU")) {
+        if (hasUsableCredential(credentials.mapboxSku, "YOUR_MAPBOX_SKU")) {
+            url = url.replaceAll("YOUR_MAPBOX_SKU", encodeURIComponent(credentials.mapboxSku));
+        } else {
+            url = url
+                .replace(/([?&])sku=YOUR_MAPBOX_SKU&/g, "$1")
+                .replace(/[?&]sku=YOUR_MAPBOX_SKU/g, "");
+        }
+    }
+    return url;
+}
+
+function validateSourceCredentials(sources, credentials) {
+    if (sources.some((source) => String(source.url || "").includes("YOUR_TIANDITU_TOKEN")) && !hasUsableCredential(credentials.tiandituToken, "YOUR_TIANDITU_TOKEN")) {
+        return "所选天地图源需要填写天地图 Token。";
+    }
+    if (sources.some((source) => String(source.url || "").includes("YOUR_MAPBOX_TOKEN")) && !hasUsableCredential(credentials.mapboxToken, "YOUR_MAPBOX_TOKEN")) {
+        return "所选 Mapbox 源需要填写 Mapbox Token。";
+    }
+    return "";
+}
+
 function initRangeMap() {
     if (rangeMap || !window.L) {
         return;
@@ -376,19 +419,19 @@ function updateRangeBaseLayer() {
         return;
     }
     const source = document.getElementById("rangePreviewSource")?.value || "osm";
-    const token = String(document.querySelector("input[name='tdtToken']")?.value || "").trim();
-    const hasToken = token && token !== "YOUR_TIANDITU_TOKEN";
+    const credentials = readCredentialRequest(new FormData(document.getElementById("taskForm")));
+    const hasToken = hasUsableCredential(credentials.tiandituToken, "YOUR_TIANDITU_TOKEN");
     const hint = document.getElementById("rangePreviewHint");
 
     let url = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
     let maxZoom = 19;
     let hintText = "OSM 预览底图";
     if (source === "tdt-img" && hasToken) {
-        url = `https://t0.tianditu.gov.cn/DataServer?T=img_w&x={x}&y={y}&l={z}&tk=${encodeURIComponent(token)}`;
+        url = `https://t0.tianditu.gov.cn/DataServer?T=img_w&x={x}&y={y}&l={z}&tk=${encodeURIComponent(credentials.tiandituToken)}`;
         maxZoom = 18;
         hintText = "天地图影像预览";
     } else if (source === "tdt-vec" && hasToken) {
-        url = `https://t0.tianditu.gov.cn/DataServer?T=vec_w&x={x}&y={y}&l={z}&tk=${encodeURIComponent(token)}`;
+        url = `https://t0.tianditu.gov.cn/DataServer?T=vec_w&x={x}&y={y}&l={z}&tk=${encodeURIComponent(credentials.tiandituToken)}`;
         maxZoom = 18;
         hintText = "天地图矢量预览";
     } else if (source.startsWith("tdt-")) {
@@ -1191,7 +1234,7 @@ async function createRangeTask(event, formData) {
     const output = readOutputRequest(formData);
 
     const tileCount = calculateRangeTileCount(request.bbox, request.zoom);
-    const sources = request.layers.map((layer, index) => buildTianDiTuSource(layer, request.token, index));
+    const sources = request.layers.map((layer, index) => buildTianDiTuSource(layer, request.credentials.tiandituToken, index));
     const areaSummary = request.selectionMode === "polygon"
         ? `多边形：${request.polygon.length} 个顶点`
         : `矩形：${request.bbox.minLon},${request.bbox.minLat} - ${request.bbox.maxLon},${request.bbox.maxLat}`;
@@ -1256,7 +1299,7 @@ function readRangeRequest(formData) {
     };
     return {
         name: String(formData.get("name") || "").trim() || "天地图范围下载任务",
-        token: String(formData.get("tdtToken") || "").trim(),
+        credentials: readCredentialRequest(formData),
         layers: getSelectedRangeLayers(),
         selectionMode: rangeDrawMode,
         bbox,
@@ -1280,7 +1323,7 @@ function getRangePolygonRequest() {
 }
 
 function validateRangeRequest(request) {
-    if (!request.token || request.token === "YOUR_TIANDITU_TOKEN") {
+    if (!hasUsableCredential(request.credentials.tiandituToken, "YOUR_TIANDITU_TOKEN")) {
         return "请输入真实的天地图 Token。";
     }
     if (request.layers.length === 0) {
@@ -1467,11 +1510,17 @@ async function createTask(event) {
         return;
     }
     const output = readOutputRequest(formData);
+    const credentials = readCredentialRequest(formData);
+    const credentialError = validateSourceCredentials(selectedTilemaps, credentials);
+    if (credentialError) {
+        showMessage("taskError", credentialError);
+        return;
+    }
 
     const sources = selectedTilemaps.map((tilemap, index) => ({
         id: toNumericSourceId(tilemap.id, index),
         name: tilemap.name,
-        url: tilemap.url,
+        url: applySourceCredentials(tilemap.url, credentials),
         format: getTaskTilemapFormat(tilemap),
         schema: tilemap.schema
     }));

@@ -88,6 +88,27 @@
                             </button>
                         </div>
 
+                        <section id="credentialSection" class="section-card credential-panel">
+                            <div class="section-card__header">
+                                <h3>服务凭证</h3>
+                                <p>统一用于行政区划和范围框选任务；仅随本次创建任务提交</p>
+                            </div>
+                            <div class="credential-grid">
+                                <label class="field">
+                                    <span class="field-label">天地图 Token</span>
+                                    <input type="text" name="tiandituToken" autocomplete="off" spellcheck="false" placeholder="YOUR_TIANDITU_TOKEN">
+                                </label>
+                                <label class="field">
+                                    <span class="field-label">Mapbox Token</span>
+                                    <input type="text" name="mapboxToken" autocomplete="off" spellcheck="false" placeholder="YOUR_MAPBOX_TOKEN">
+                                </label>
+                                <label class="field">
+                                    <span class="field-label">Mapbox SKU</span>
+                                    <input type="text" name="mapboxSku" autocomplete="off" spellcheck="false" placeholder="可选">
+                                </label>
+                            </div>
+                        </section>
+
                         <section id="sourceSection" class="section-card">
                             <div class="section-card__header">
                                 <h3>地图源选择</h3>
@@ -163,11 +184,6 @@
                                 <h3>范围框选配置</h3>
                                 <p>使用矩形或多边形选择下载范围，按 Tianditu img / cia / vec 创建子任务</p>
                             </div>
-
-                            <label class="field">
-                                <span class="field-label">天地图 Token</span>
-                                <input type="text" name="tdtToken" autocomplete="off" spellcheck="false" placeholder="YOUR_TIANDITU_TOKEN">
-                            </label>
 
                             <div class="range-layer-grid" aria-label="天地图图层">
                                 <label class="range-layer">
