@@ -11,6 +11,8 @@ GeoJSON 下载地图瓦片。
 - `apps/admin-region-tiler` - Go 1.25+ Web 应用，支持范围下载、行政区划下载、
   多地图源、子任务、计划任务、SQLite 控制状态、失败记录、Docker 部署和产物下载。
 - `docs/merge-plan.md` - 当前合并后的清理和架构方向。
+- `docs/user-manual.md` - 英文用户使用手册。
+- `docs/user-manual-zh.md` - 中文用户使用手册。
 - `README.md` - 与本文对应的英文 README。
 
 仓库不包含旧还原源码目录、UI 设计包、临时目录、截图、运行数据库、下载瓦片或历史发布包。
@@ -66,6 +68,11 @@ node .\scripts\release_preflight.mjs
 - 登录默认启用。可信本地开发可设置 `AUTH_ENABLED=false` 免登录；部署环境应保持登录启用并覆盖默认用户名和密码。
 - `.env`、`data/`、`output/`、`tiles/`、`bin/`、`obj/`、`publish*/` 和发布包不得进入 Git。
 - `YOUR_TIANDITU_TOKEN`、`YOUR_MAPBOX_TOKEN` 等占位符可以保留在示例中。
+
+## 用户使用手册
+
+- 英文：[`docs/user-manual.md`](docs/user-manual.md)
+- 中文：[`docs/user-manual-zh.md`](docs/user-manual-zh.md)
 
 ## 提交规则
 

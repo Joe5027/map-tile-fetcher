@@ -14,6 +14,9 @@ ported into the Go app. Historical migration notes are in
   runs, SQLite control state, retry/failure records, Docker deployment, and
   artifact downloads.
 - `docs/merge-plan.md` - current post-merge cleanup and architecture direction.
+- `docs/user-manual.md` - English user manual for running the app and creating
+  downloads.
+- `docs/user-manual-zh.md` - Chinese user manual.
 - `README_ZH.md` - Chinese README matching this document.
 
 The repository does not include old restored source folders, UI design
@@ -82,6 +85,11 @@ Runtime secrets and generated data must stay local:
   release archives out of Git.
 - Placeholder values such as `YOUR_TIANDITU_TOKEN` and `YOUR_MAPBOX_TOKEN` are
   safe to keep in examples.
+
+## User Manual
+
+- English: [`docs/user-manual.md`](docs/user-manual.md)
+- Chinese: [`docs/user-manual-zh.md`](docs/user-manual-zh.md)
 
 ## Contribution Rule
 
