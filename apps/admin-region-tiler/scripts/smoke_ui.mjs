@@ -369,7 +369,7 @@ async function login(page) {
   const appVisible = await page.locator("#appView").evaluate((element) => !element.classList.contains("is-hidden"));
   if (appVisible) {
     await page.locator("#taskForm").waitFor({ state: "visible", timeout: options.timeoutMs });
-    await page.locator("#taskList").waitFor({ state: "visible", timeout: options.timeoutMs });
+    await page.locator("#taskHistoryTab").waitFor({ state: "visible", timeout: options.timeoutMs });
     return;
   }
 
@@ -378,10 +378,11 @@ async function login(page) {
   await page.locator("#loginForm button[type='submit']").click();
   await page.locator("#appView").waitFor({ state: "visible", timeout: options.timeoutMs });
   await page.locator("#taskForm").waitFor({ state: "visible", timeout: options.timeoutMs });
-  await page.locator("#taskList").waitFor({ state: "visible", timeout: options.timeoutMs });
+  await page.locator("#taskHistoryTab").waitFor({ state: "visible", timeout: options.timeoutMs });
 }
 
 async function smokeRegionFlow(page, createdPayloads) {
+  await showCreateTab(page);
   await page.locator("[data-task-mode='region']").click();
   await page.locator("#regionModePanel").waitFor({ state: "visible", timeout: options.timeoutMs });
   await page.locator("#rangeModePanel").waitFor({ state: "hidden", timeout: options.timeoutMs });
@@ -405,6 +406,7 @@ async function smokeRegionFlow(page, createdPayloads) {
 }
 
 async function smokeRangeFlow(page, createdPayloads) {
+  await showCreateTab(page);
   await page.locator("[data-task-mode='bbox']").click();
   await page.locator("#rangeModePanel").waitFor({ state: "visible", timeout: options.timeoutMs });
   await page.locator("#regionModePanel").waitFor({ state: "hidden", timeout: options.timeoutMs });
@@ -447,6 +449,11 @@ async function smokeRangeFlow(page, createdPayloads) {
   assert(Array.isArray(payload.sources) && payload.sources.length === 1, "range payload should include the selected layer source");
   assert(String(payload.sources[0].name || "").includes("img"), "range payload should include the img layer source");
   assert(String(payload.sources[0].url || "").includes("smoke-test-token"), "range source URL should include the supplied token");
+}
+
+async function showCreateTab(page) {
+  await page.locator("#createTaskTab").click();
+  await page.locator("#taskForm").waitFor({ state: "visible", timeout: options.timeoutMs });
 }
 
 function formatDateTimeLocal(date) {

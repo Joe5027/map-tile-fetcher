@@ -17,6 +17,7 @@ let rangeDrawMode = "rectangle";
 let rangeMapExpanded = false;
 let rangeMapOriginalParent = null;
 let rangeMapOriginalNextSibling = null;
+let activeWorkspaceTab = "create";
 let currentTaskFilter = "all";
 let cachedTasks = [];
 const expandedProviders = new Set();
@@ -60,6 +61,10 @@ function bindEvents() {
     document.getElementById("taskForm").addEventListener("submit", createTask);
     document.getElementById("refreshBtn").addEventListener("click", loadTasks);
     document.getElementById("addLevelBtn").addEventListener("click", addLevelConfig);
+
+    document.querySelectorAll("[data-workspace-tab]").forEach((button) => {
+        button.addEventListener("click", () => setWorkspaceTab(button.dataset.workspaceTab));
+    });
 
     document.querySelectorAll("[data-task-mode]").forEach((button) => {
         button.addEventListener("click", () => setTaskMode(button.dataset.taskMode));
@@ -268,6 +273,25 @@ function showApp(user) {
     document.getElementById("appView").classList.remove("is-hidden");
 }
 
+function setWorkspaceTab(tab) {
+    activeWorkspaceTab = tab === "tasks" ? "tasks" : "create";
+
+    document.querySelectorAll("[data-workspace-tab]").forEach((button) => {
+        const active = button.dataset.workspaceTab === activeWorkspaceTab;
+        button.classList.toggle("is-active", active);
+        button.setAttribute("aria-selected", active ? "true" : "false");
+        button.tabIndex = active ? 0 : -1;
+    });
+
+    document.querySelectorAll("[data-workspace-view]").forEach((view) => {
+        view.classList.toggle("is-hidden", view.dataset.workspaceView !== activeWorkspaceTab);
+    });
+
+    if (activeWorkspaceTab === "create" && taskMode === "bbox" && rangeMap) {
+        window.setTimeout(() => rangeMap.invalidateSize(), 40);
+    }
+}
+
 function setTaskMode(mode) {
     taskMode = mode === "bbox" ? "bbox" : "region";
 
@@ -281,8 +305,7 @@ function setTaskMode(mode) {
     document.getElementById("regionModePanel").classList.toggle("is-hidden", taskMode !== "region");
     document.getElementById("rangeModePanel").classList.toggle("is-hidden", taskMode !== "bbox");
     document.getElementById("addLevelBtn").classList.toggle("is-hidden", taskMode !== "region");
-    document.getElementById("dashboard").classList.toggle("dashboard--range-mode", taskMode === "bbox");
-
+    document.getElementById("taskForm").classList.toggle("task-form--range", taskMode === "bbox");
     if (taskMode === "bbox") {
         initRangeMap();
         updateRangeDrawControls();
@@ -1288,6 +1311,7 @@ async function createRangeTask(event, formData) {
     updateRangeEstimate();
     updateRangeOverlay(true);
     await loadTasks();
+    setWorkspaceTab("tasks");
 }
 
 function readRangeRequest(formData) {
@@ -1574,6 +1598,7 @@ async function createTask(event) {
     renderTilemapSelector();
     renderLevelConfigs();
     await loadTasks();
+    setWorkspaceTab("tasks");
 }
 
 async function loadTasks() {
@@ -1587,9 +1612,18 @@ async function loadTasks() {
 
     cachedTasks = Array.isArray(response.data) ? response.data : [];
     cleanupSelections(cachedTasks);
+    updateWorkspaceTaskCount(cachedTasks);
     renderTaskStats(cachedTasks);
     renderTaskList(cachedTasks);
     renderSelectionMeta();
+}
+
+function updateWorkspaceTaskCount(tasks) {
+    const element = document.getElementById("workspaceTaskCount");
+    if (!element) {
+        return;
+    }
+    element.textContent = String(Array.isArray(tasks) ? tasks.length : 0);
 }
 
 function renderTaskStats(tasks) {

@@ -28,7 +28,7 @@
 html,
 body {
     margin: 0;
-    min-width: 1280px;
+    min-width: 1080px;
     min-height: 100%;
     font-family: var(--font-family);
     color: var(--text);
@@ -217,9 +217,106 @@ img {
 
 .dashboard {
     display: grid;
-    grid-template-columns: minmax(390px, 30%) minmax(0, 1fr);
-    gap: 22px;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 18px;
     align-items: start;
+}
+
+.workspace-tabs {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    padding: 8px;
+    border: 1px solid rgba(229, 231, 235, 0.86);
+    border-radius: 20px;
+    background: rgba(255, 255, 255, 0.64);
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(12px);
+}
+
+.workspace-tab {
+    min-height: 76px;
+    display: grid;
+    grid-template-columns: 42px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    border: 1px solid transparent;
+    border-radius: 16px;
+    background: transparent;
+    color: var(--muted);
+    text-align: left;
+    transition: background-color 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease, color 0.18s ease;
+}
+
+.workspace-tab:hover {
+    background: rgba(255, 255, 255, 0.74);
+    color: var(--text);
+}
+
+.workspace-tab.is-active {
+    color: var(--text);
+    border-color: rgba(37, 99, 235, 0.24);
+    background: #fff;
+    box-shadow: 0 12px 30px rgba(37, 99, 235, 0.10);
+}
+
+.workspace-tab__icon {
+    width: 42px;
+    height: 42px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 14px;
+    background: rgba(241, 245, 249, 0.96);
+}
+
+.workspace-tab.is-active .workspace-tab__icon {
+    background: var(--primary-soft);
+}
+
+.workspace-tab__icon img {
+    width: 18px;
+    height: 18px;
+    opacity: 0.72;
+}
+
+.workspace-tab span:not(.workspace-tab__icon) {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+}
+
+.workspace-tab strong {
+    color: inherit;
+    font-size: 15px;
+    font-weight: 800;
+}
+
+.workspace-tab small {
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.workspace-tab b {
+    min-width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    background: rgba(148, 163, 184, 0.13);
+    color: var(--muted);
+    font-size: 13px;
+}
+
+.workspace-tab.is-active b {
+    background: var(--primary);
+    color: #fff;
+}
+
+.workspace-view {
+    animation: workspaceFade 0.18s ease-out;
 }
 
 .panel {
@@ -229,6 +326,22 @@ img {
     box-shadow: var(--shadow);
     backdrop-filter: blur(10px);
     padding: 18px 18px 20px;
+}
+
+.panel--form,
+.panel--tasks {
+    width: 100%;
+    max-width: 1420px;
+    margin: 0 auto;
+}
+
+.panel--form {
+    padding: 22px;
+}
+
+.panel--tasks {
+    min-height: 560px;
+    padding: 22px;
 }
 
 .panel-heading {
@@ -262,7 +375,47 @@ img {
 
 .task-form {
     display: grid;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
     gap: 18px;
+    align-items: start;
+}
+
+.task-form > .field:first-child {
+    grid-column: 1 / span 5;
+}
+
+.task-form > .mode-switch {
+    grid-column: 6 / -1;
+    align-self: end;
+}
+
+.task-form > .credential-panel,
+.task-form > #regionModePanel,
+.task-form > #rangeModePanel,
+.task-form > .risk-tip,
+.task-form > .message,
+.task-form > .primary-button.wide {
+    grid-column: 1 / -1;
+}
+
+.task-form > #sourceSection {
+    grid-column: 1 / span 5;
+    grid-row: span 2;
+}
+
+.task-form > .task-side-stack {
+    grid-column: 6 / -1;
+}
+
+.task-form.task-form--range > .task-side-stack {
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.task-side-stack {
+    display: grid;
+    gap: 18px;
+    align-items: start;
 }
 
 .mode-switch {
@@ -368,8 +521,8 @@ input::placeholder {
 
 .credential-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: 12px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 14px;
 }
 
 .source-list {
@@ -682,7 +835,7 @@ input::placeholder {
 
 .parameter-grid {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 12px;
 }
 
@@ -821,7 +974,8 @@ input::placeholder {
 }
 
 .range-map-title {
-    min-width: 100%;
+    min-width: 300px;
+    flex: 1;
 }
 
 .range-map-toolbar strong {
@@ -910,7 +1064,7 @@ input::placeholder {
 }
 
 .range-map {
-    height: 320px;
+    height: 420px;
     background: #e2e8f0;
 }
 
@@ -943,7 +1097,7 @@ input::placeholder {
 
 .range-coordinate-grid {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(6, minmax(0, 1fr));
     gap: 12px;
 }
 
@@ -1112,7 +1266,7 @@ input::placeholder {
 
 .region-row__grid {
     display: grid;
-    grid-template-columns: 1fr 1fr 1.4fr;
+    grid-template-columns: 1fr 1fr 1.6fr;
     gap: 12px;
 }
 
@@ -1233,7 +1387,11 @@ input::placeholder {
     align-items: center;
     gap: 12px;
     flex-wrap: wrap;
-    margin-bottom: 16px;
+    margin-bottom: 18px;
+    padding: 8px;
+    border: 1px solid rgba(229, 231, 235, 0.72);
+    border-radius: 18px;
+    background: rgba(248, 250, 252, 0.72);
 }
 
 .stat-chip {
@@ -1323,7 +1481,7 @@ input::placeholder {
 
 .task-list {
     display: grid;
-    gap: 16px;
+    gap: 18px;
 }
 
 .task-skeleton {
@@ -1700,7 +1858,8 @@ input::placeholder {
     display: grid;
     place-items: center;
     gap: 10px;
-    padding: 48px 20px 36px;
+    min-height: 320px;
+    padding: 56px 20px 44px;
     text-align: center;
 }
 
@@ -1728,5 +1887,17 @@ input::placeholder {
 
     to {
         background-position: -200% 0;
+    }
+}
+
+@keyframes workspaceFade {
+    from {
+        opacity: 0;
+        transform: translateY(6px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
     }
 }

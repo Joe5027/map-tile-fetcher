@@ -7,7 +7,7 @@
     <meta name="description" content="创建任务并批量下载地图图片。">
     <link rel="icon" type="image/svg+xml" href="/static/assets/favicon/favicon.svg?v=1">
     <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css?v=1">
-    <link rel="stylesheet" href="/static/styles.css?v=19">
+    <link rel="stylesheet" href="/static/styles.css?v=20">
 </head>
 <body>
     <div class="page-shell">
@@ -62,11 +62,29 @@
             </header>
 
             <main id="dashboard" class="dashboard">
-                <section class="panel panel--form">
+                <nav class="workspace-tabs" role="tablist" aria-label="任务工作区">
+                    <button id="createTaskTab" type="button" class="workspace-tab is-active" role="tab" aria-selected="true" aria-controls="createTaskView" data-workspace-tab="create">
+                        <span class="workspace-tab__icon"><img src="/static/assets/icons/plus.svg" alt=""></span>
+                        <span>
+                            <strong>新建计划</strong>
+                            <small>配置范围、地图源和执行方式</small>
+                        </span>
+                    </button>
+                    <button id="taskHistoryTab" type="button" class="workspace-tab" role="tab" aria-selected="false" aria-controls="taskHistoryView" data-workspace-tab="tasks">
+                        <span class="workspace-tab__icon"><img src="/static/assets/icons/task.svg" alt=""></span>
+                        <span>
+                            <strong>我的任务</strong>
+                            <small>查看历史、进度和下载产物</small>
+                        </span>
+                        <b id="workspaceTaskCount">0</b>
+                    </button>
+                </nav>
+
+                <section id="createTaskView" class="panel panel--form workspace-view" role="tabpanel" aria-labelledby="createTaskTab" data-workspace-view="create">
                     <div class="panel-heading">
                         <div>
                             <h2>新建计划任务</h2>
-                            <p>设置下载任务，创建后立即开始执行</p>
+                            <p>设置下载范围、地图源、线程和产物格式</p>
                         </div>
                         <img src="/static/assets/icons/success.svg" class="panel-heading__spark" alt="">
                     </div>
@@ -117,67 +135,69 @@
                             <div id="tilemapSelector" class="source-list"></div>
                         </section>
 
-                        <section class="parameter-grid">
-                            <label class="field">
-                                <span class="field-label">下载线程</span>
-                                <select name="workers">
-                                    <option value="1">1</option>
-                                    <option value="2">2</option>
-                                    <option value="3" selected>3</option>
-                                    <option value="4">4</option>
-                                    <option value="5">5</option>
-                                </select>
-                            </label>
-                            <label class="field">
-                                <span class="field-label">保存线程</span>
-                                <select name="savePipe">
-                                    <option value="1" selected>1</option>
-                                    <option value="2">2</option>
-                                    <option value="3">3</option>
-                                    <option value="4">4</option>
-                                </select>
-                            </label>
-                            <label class="field">
-                                <span class="field-label">请求间隔(ms)</span>
-                                <input type="number" name="timeDelay" min="50" max="5000" value="80">
-                            </label>
-                            <label class="field">
-                                <span class="field-label">产物格式</span>
-                                <select name="outputFormat">
-                                    <option value="zip" selected>ZIP 文件树</option>
-                                    <option value="mbtiles">MBTiles</option>
-                                </select>
-                            </label>
-                        </section>
+                        <div class="task-side-stack">
+                            <section class="parameter-grid">
+                                <label class="field">
+                                    <span class="field-label">下载线程</span>
+                                    <select name="workers">
+                                        <option value="1">1</option>
+                                        <option value="2">2</option>
+                                        <option value="3" selected>3</option>
+                                        <option value="4">4</option>
+                                        <option value="5">5</option>
+                                    </select>
+                                </label>
+                                <label class="field">
+                                    <span class="field-label">保存线程</span>
+                                    <select name="savePipe">
+                                        <option value="1" selected>1</option>
+                                        <option value="2">2</option>
+                                        <option value="3">3</option>
+                                        <option value="4">4</option>
+                                    </select>
+                                </label>
+                                <label class="field">
+                                    <span class="field-label">请求间隔(ms)</span>
+                                    <input type="number" name="timeDelay" min="50" max="5000" value="80">
+                                </label>
+                                <label class="field">
+                                    <span class="field-label">产物格式</span>
+                                    <select name="outputFormat">
+                                        <option value="zip" selected>ZIP 文件树</option>
+                                        <option value="mbtiles">MBTiles</option>
+                                    </select>
+                                </label>
+                            </section>
 
-                        <section class="section-card schedule-panel">
-                            <div class="section-card__header">
-                                <h3>执行时间</h3>
-                                <p>选择立即开始，或创建后等待指定时间自动执行</p>
-                            </div>
-                            <div class="schedule-mode" role="radiogroup" aria-label="执行时间">
-                                <label class="mode-card">
-                                    <input type="radio" name="scheduleMode" value="immediate" checked>
-                                    <span class="mode-card__icon"><img src="/static/assets/icons/task.svg" alt=""></span>
-                                    <span class="mode-card__body">
-                                        <strong>立即执行</strong>
-                                        <small>创建后马上进入队列</small>
-                                    </span>
+                            <section class="section-card schedule-panel">
+                                <div class="section-card__header">
+                                    <h3>执行时间</h3>
+                                    <p>选择立即开始，或创建后等待指定时间自动执行</p>
+                                </div>
+                                <div class="schedule-mode" role="radiogroup" aria-label="执行时间">
+                                    <label class="mode-card">
+                                        <input type="radio" name="scheduleMode" value="immediate" checked>
+                                        <span class="mode-card__icon"><img src="/static/assets/icons/task.svg" alt=""></span>
+                                        <span class="mode-card__body">
+                                            <strong>立即执行</strong>
+                                            <small>创建后马上进入队列</small>
+                                        </span>
+                                    </label>
+                                    <label class="mode-card">
+                                        <input type="radio" name="scheduleMode" value="once">
+                                        <span class="mode-card__icon"><img src="/static/assets/icons/success.svg" alt=""></span>
+                                        <span class="mode-card__body">
+                                            <strong>单次定时</strong>
+                                            <small>到达指定时间后启动</small>
+                                        </span>
+                                    </label>
+                                </div>
+                                <label id="runAtField" class="field schedule-run-at is-hidden">
+                                    <span class="field-label">计划执行时间</span>
+                                    <input type="datetime-local" name="runAt">
                                 </label>
-                                <label class="mode-card">
-                                    <input type="radio" name="scheduleMode" value="once">
-                                    <span class="mode-card__icon"><img src="/static/assets/icons/success.svg" alt=""></span>
-                                    <span class="mode-card__body">
-                                        <strong>单次定时</strong>
-                                        <small>到达指定时间后启动</small>
-                                    </span>
-                                </label>
-                            </div>
-                            <label id="runAtField" class="field schedule-run-at is-hidden">
-                                <span class="field-label">计划执行时间</span>
-                                <input type="datetime-local" name="runAt">
-                            </label>
-                        </section>
+                            </section>
+                        </div>
 
                         <section id="rangeModePanel" class="section-card range-panel is-hidden">
                             <div class="section-card__header">
@@ -294,11 +314,11 @@
                     </form>
                 </section>
 
-                <section class="panel panel--tasks">
+                <section id="taskHistoryView" class="panel panel--tasks workspace-view is-hidden" role="tabpanel" aria-labelledby="taskHistoryTab" data-workspace-view="tasks">
                     <div class="panel-heading panel-heading--tasks">
                         <div>
                             <h2>我的任务</h2>
-                            <p>管理运行状态、开始结束时间和任务进度</p>
+                            <p>独立查看历史任务、运行状态、失败记录和下载产物</p>
                         </div>
                         <button id="refreshBtn" type="button" class="ghost-button">
                             <img src="/static/assets/icons/refresh.svg" alt="">
@@ -342,6 +362,6 @@
     </div>
 
     <script src="/static/vendor/leaflet/leaflet.js?v=1"></script>
-    <script src="/static/script.js?v=19"></script>
+    <script src="/static/script.js?v=20"></script>
 </body>
 </html>
