@@ -1,84 +1,110 @@
 # Map Tile Fetcher
 
-Map Tile Fetcher 是一个基于 Go 的 Web 应用，用于按地图框选范围或行政区划
-GeoJSON 下载地图瓦片。
+一个自托管的 Go Web 地图瓦片下载工具，支持按地图框选范围或
+GeoJSON/行政区划创建下载任务，并导出 ZIP 文件树或 MBTiles。
 
-旧 .NET 范围下载器的核心流程已经迁移到 Go 应用中，旧运行代码已退休。历史迁移说明见
-[`docs/range-migration.md`](docs/range-migration.md)。
+> 请只用于你有权访问和下载的地图瓦片服务。项目提供限速、重试和本地
+> token 配置能力，但不会授权绕过任何第三方服务条款、配额或访问限制。
 
-## 仓库结构
+![Map Tile Fetcher 主界面](docs/assets/dashboard-overview.png)
 
-- `apps/admin-region-tiler` - Go 1.25+ Web 应用，支持范围下载、行政区划下载、
-  多地图源、子任务、计划任务、SQLite 控制状态、失败记录、Docker 部署和产物下载。
-- `docs/merge-plan.md` - 当前合并后的清理和架构方向。
-- `docs/user-manual.md` - 英文用户使用手册。
-- `docs/user-manual-zh.md` - 中文用户使用手册。
-- `README.md` - 与本文对应的英文 README。
+## 适合谁
 
-仓库不包含旧还原源码目录、UI 设计包、临时目录、截图、运行数据库、下载瓦片或历史发布包。
+- 需要在内网或自己的服务器上运行地图瓦片下载工具的 GIS/地图开发者。
+- 需要按矩形 bbox、行政区划或 GeoJSON 范围批量生成离线瓦片的人。
+- 需要把授权地图源导出为 ZIP 文件树或 MBTiles 的项目维护者。
+- 想要一个 Go + SQLite + 静态 Web UI 的轻量自托管方案的团队。
 
-## 产品方向
+## 核心能力
 
-- 后端：只保留 Go。
-- 数据库：SQLite 作为轻量控制数据库，用于任务、运行记录、任务源、状态、可选登录会话、
-  失败记录、产物索引和计划任务。
-- 存储：下载瓦片、MBTiles、ZIP 产物、日志和运行数据放在文件系统中，不进入 Git。
-- 前端：一个静态 Web 界面，提供两个模式：
-  - 范围框选下载
-  - 行政区划下载
+- **范围框选下载**：在 Leaflet 地图上框选 bbox，自动估算瓦片数量和体积。
+- **行政区划/GeoJSON 下载**：按内置区域目录或 GeoJSON 层级创建任务。
+- **多地图源配置**：支持天地图、Mapbox、OSM、Google 样例和自定义瓦片 URL。
+- **任务和产物管理**：查看进度、失败记录、重试失败瓦片，并下载 ZIP/MBTiles。
 
-## 快速验证
-
-验证 Go 后端：
+## 三分钟启动
 
 ```powershell
-cd apps/admin-region-tiler
-go test ./...
+git clone https://github.com/Joe5027/map-tile-fetcher.git
+cd map-tile-fetcher\apps\admin-region-tiler
+go run .
 ```
 
-前端脚本变更后验证：
+打开 `http://127.0.0.1:8081/`。
+
+开发默认账号：
+
+- 用户名：`admin`
+- 密码：`adminmap`
+
+生产部署时请复制 `.env.example` 为 `.env`，并修改默认账号和密码。
+
+## Docker 启动
 
 ```powershell
-cd apps/admin-region-tiler
-node --check .\static\script.js
+cd apps\admin-region-tiler
+Copy-Item .env.example .env
+docker compose up --build
 ```
 
-运行浏览器 UI 冒烟测试，覆盖登录、行政区划和范围框选任务创建 payload：
+默认端口是 `8081`。可以在 `.env` 中调整 `HOST_PORT`、`APP_PORT`、
+`APP_DATABASE`、`AUTH_DEFAULT_USERNAME` 和 `AUTH_DEFAULT_PASSWORD`。
+
+## 使用流程
+
+### 1. 范围框选下载
+
+![范围框选创建任务](docs/assets/bbox-task-creation.png)
+
+1. 登录后选择“范围框选下载”。
+2. 输入授权服务的 token，或选择不需要 token 的自定义地图源。
+3. 在地图上框选范围，设置最小/最大 zoom。
+4. 选择 ZIP 文件树或 MBTiles，创建任务。
+
+### 2. 任务和产物下载
+
+![产物下载](docs/assets/artifact-download.png)
+
+任务完成后可以在任务列表中查看成功数、失败数、产物状态，并下载生成的
+ZIP 或 MBTiles。失败记录会持久化，便于调整并发、请求间隔或代理后重试。
+
+## 配置地图源
+
+示例配置在 `apps/admin-region-tiler/conf.toml`。
+
+安全占位符：
+
+- `YOUR_TIANDITU_TOKEN`
+- `YOUR_MAPBOX_TOKEN`
+- `YOUR_MAPBOX_SKU`
+
+真实 token 只应保存在本地 `.env`、本地配置或部署平台的密钥管理中，不要提交到 Git。
+
+## 发布和安装
+
+- 发布说明：[`docs/releases/v0.1.0.md`](docs/releases/v0.1.0.md)
+- 中文用户手册：[`docs/user-manual-zh.md`](docs/user-manual-zh.md)
+- English manual: [`docs/user-manual.md`](docs/user-manual.md)
+
+当前仓库可通过源码或 Docker 直接运行。GitHub Release 创建后，`v0.1.0`
+会提供 Windows 和 Linux 二进制资产。
+
+## 开发者验证
 
 ```powershell
-cd apps/admin-region-tiler
-node .\scripts\smoke_ui.mjs
-```
-
-该脚本需要本地或全局可用的 Playwright 包。如缺失，可执行
-`npm install -g playwright` 和 `npx playwright install chromium`。
-
-运行完整发布预检：
-
-```powershell
-cd apps/admin-region-tiler
+cd apps\admin-region-tiler
 node .\scripts\release_preflight.mjs
 ```
 
-发布预检会运行 Go 测试、JavaScript 检查、浏览器 UI 冒烟、敏感值扫描和 tracked 生成物扫描。
+发布预检会运行 Go 测试、JavaScript 检查、浏览器 UI 冒烟、敏感值扫描和
+tracked 生成物扫描。
 
-## 本地运行注意事项
+## 项目历史
 
-- 真实天地图或 Mapbox token 只能放在本地配置中。
-- 登录默认启用。可信本地开发可设置 `AUTH_ENABLED=false` 免登录；部署环境应保持登录启用并覆盖默认用户名和密码。
-- `.env`、`data/`、`output/`、`tiles/`、`bin/`、`obj/`、`publish*/` 和发布包不得进入 Git。
-- `YOUR_TIANDITU_TOKEN`、`YOUR_MAPBOX_TOKEN` 等占位符可以保留在示例中。
-
-## 用户使用手册
-
-- 英文：[`docs/user-manual.md`](docs/user-manual.md)
-- 中文：[`docs/user-manual-zh.md`](docs/user-manual-zh.md)
-
-## 提交规则
-
-每个验证完成的变更批次必须立即提交。每次提交信息必须包含详细英文和中文说明，并列出
-实际运行的验证命令。详见 [`docs/commit-policy.md`](docs/commit-policy.md)。
+旧 .NET 范围下载器运行代码已退休。bbox 框选流程已经迁移到
+`apps/admin-region-tiler` 的 Go Web 应用中；历史说明见
+[`docs/range-migration.md`](docs/range-migration.md)。
 
 ## 许可证
 
-本仓库使用 Apache License 2.0。详见 [`LICENSE`](LICENSE)。
+Apache License 2.0。详见 [`LICENSE`](LICENSE)。

@@ -1,102 +1,132 @@
 # Map Tile Fetcher
 
-Map Tile Fetcher is a Go-based Web application for downloading map tiles by
-either a drawn bounding box or administrative GeoJSON regions.
+一个自托管的 Go Web 地图瓦片下载工具，支持按地图框选范围或
+GeoJSON/行政区划创建下载任务，并导出 ZIP 文件树或 MBTiles。
 
-The former .NET range downloader has been retired after its range workflow was
-ported into the Go app. Historical migration notes are in
-[`docs/range-migration.md`](docs/range-migration.md).
+> 请只用于你有权访问和下载的地图瓦片服务。项目提供限速、重试和本地
+> token 配置能力，但不会授权绕过任何第三方服务条款、配额或访问限制。
 
-## Repository Layout
+![Map Tile Fetcher dashboard](docs/assets/dashboard-overview.png)
 
-- `apps/admin-region-tiler` - Go 1.25+ Web app with range download,
-  administrative-region download, multiple map sources, child tasks, scheduled
-  runs, SQLite control state, retry/failure records, Docker deployment, and
-  artifact downloads.
-- `docs/merge-plan.md` - current post-merge cleanup and architecture direction.
-- `docs/user-manual.md` - English user manual for running the app and creating
-  downloads.
-- `docs/user-manual-zh.md` - Chinese user manual.
-- `README_ZH.md` - Chinese README matching this document.
+## 适合谁
 
-The repository does not include old restored source folders, UI design
-packages, temporary directories, screenshots, runtime databases, downloaded
-tiles, or historical release archives.
+- 需要在内网或自己的服务器上运行地图瓦片下载工具的 GIS/地图开发者。
+- 需要按矩形 bbox、行政区划或 GeoJSON 范围批量生成离线瓦片的人。
+- 需要把授权地图源导出为 ZIP 文件树或 MBTiles 的项目维护者。
+- 想要一个 Go + SQLite + 静态 Web UI 的轻量自托管方案的团队。
 
-## Product Direction
+## 核心能力
 
-- Backend: Go only.
-- Database: SQLite as a lightweight control database for tasks, task runs,
-  task sources, statuses, optional auth/session records, failures, artifacts,
-  and scheduling.
-- Storage: downloaded tiles, MBTiles files, ZIP archives, logs, and runtime data
-  stay on the filesystem and out of Git.
-- Web UI: one static frontend with two modes:
-  - Range Download
-  - Administrative Region Download
+- **范围框选下载**：在 Leaflet 地图上框选 bbox，自动估算瓦片数量和体积。
+- **行政区划/GeoJSON 下载**：按内置区域目录或 GeoJSON 层级创建任务。
+- **多地图源配置**：支持天地图、Mapbox、OSM、Google 样例和自定义瓦片 URL。
+- **任务和产物管理**：查看进度、失败记录、重试失败瓦片，并下载 ZIP/MBTiles。
 
-## Quick Validation
-
-Validate the Go backend:
+## 三分钟启动
 
 ```powershell
-cd apps/admin-region-tiler
+git clone https://github.com/Joe5027/map-tile-fetcher.git
+cd map-tile-fetcher\apps\admin-region-tiler
+go run .
+```
+
+打开 `http://127.0.0.1:8081/`。
+
+开发默认账号：
+
+- 用户名：`admin`
+- 密码：`adminmap`
+
+生产部署时请复制 `.env.example` 为 `.env`，并修改默认账号和密码。
+
+## Docker 启动
+
+```powershell
+cd apps\admin-region-tiler
+Copy-Item .env.example .env
+docker compose up --build
+```
+
+默认端口是 `8081`。可以在 `.env` 中调整 `HOST_PORT`、`APP_PORT`、
+`APP_DATABASE`、`AUTH_DEFAULT_USERNAME` 和 `AUTH_DEFAULT_PASSWORD`。
+
+## 使用流程
+
+### 1. 范围框选下载
+
+![bbox task creation](docs/assets/bbox-task-creation.png)
+
+1. 登录后选择“范围框选下载”。
+2. 输入授权服务的 token，或选择不需要 token 的自定义地图源。
+3. 在地图上框选范围，设置最小/最大 zoom。
+4. 选择 ZIP 文件树或 MBTiles，创建任务。
+
+### 2. 任务和产物下载
+
+![artifact download](docs/assets/artifact-download.png)
+
+任务完成后可以在任务列表中查看成功数、失败数、产物状态，并下载生成的
+ZIP 或 MBTiles。失败记录会持久化，便于调整并发、请求间隔或代理后重试。
+
+## 配置地图源
+
+示例配置在 `apps/admin-region-tiler/conf.toml`。
+
+安全占位符：
+
+- `YOUR_TIANDITU_TOKEN`
+- `YOUR_MAPBOX_TOKEN`
+- `YOUR_MAPBOX_SKU`
+
+真实 token 只应保存在本地 `.env`、本地配置或部署平台的密钥管理中，不要提交到 Git。
+
+## 发布和安装
+
+- 发布说明：[`docs/releases/v0.1.0.md`](docs/releases/v0.1.0.md)
+- 用户手册：[`docs/user-manual-zh.md`](docs/user-manual-zh.md)
+- English manual: [`docs/user-manual.md`](docs/user-manual.md)
+
+当前仓库可通过源码或 Docker 直接运行。GitHub Release 创建后，`v0.1.0`
+会提供 Windows 和 Linux 二进制资产。
+
+## 开发者验证
+
+后端测试：
+
+```powershell
+cd apps\admin-region-tiler
 go test ./...
 ```
 
-Validate frontend scripts when changed:
+前端脚本语法检查：
 
 ```powershell
-cd apps/admin-region-tiler
+cd apps\admin-region-tiler
 node --check .\static\script.js
 ```
 
-Run the browser UI smoke test for login plus region and bbox task creation
-payloads:
+完整发布预检：
 
 ```powershell
-cd apps/admin-region-tiler
-node .\scripts\smoke_ui.mjs
-```
-
-The smoke script requires the Playwright package to be available locally or
-globally. If needed, install it with `npm install -g playwright` and
-`npx playwright install chromium`.
-
-Run the full release preflight:
-
-```powershell
-cd apps/admin-region-tiler
+cd apps\admin-region-tiler
 node .\scripts\release_preflight.mjs
 ```
 
-The release preflight runs Go tests, JavaScript checks, browser UI smoke,
-sensitive-value scanning, and tracked generated-file scanning.
+发布预检会运行 Go 测试、JavaScript 检查、浏览器 UI 冒烟、敏感值扫描和
+tracked 生成物扫描。
 
-## Local Runtime Notes
+## Repository Notes
 
-Runtime secrets and generated data must stay local:
-
-- Put real Tianditu or Mapbox tokens in local configuration only.
-- Login is enabled by default. For trusted local development, set
-  `AUTH_ENABLED=false`; for deployed use, keep login enabled and override the
-  default username/password.
-- Keep `.env`, `data/`, `output/`, `tiles/`, `bin/`, `obj/`, `publish*/`, and
-  release archives out of Git.
-- Placeholder values such as `YOUR_TIANDITU_TOKEN` and `YOUR_MAPBOX_TOKEN` are
-  safe to keep in examples.
-
-## User Manual
-
-- English: [`docs/user-manual.md`](docs/user-manual.md)
-- Chinese: [`docs/user-manual-zh.md`](docs/user-manual-zh.md)
-
-## Contribution Rule
-
-Every validated change batch must be committed immediately. Each commit message
-must include detailed English and Chinese sections plus the exact validation
-commands that were run. See [`docs/commit-policy.md`](docs/commit-policy.md).
+The old .NET range downloader runtime has been retired. Its bbox workflow has
+been ported into the Go app under `apps/admin-region-tiler`; historical notes
+are kept in [`docs/range-migration.md`](docs/range-migration.md).
 
 ## License
 
-This repository is released under the Apache License 2.0. See [`LICENSE`](LICENSE).
+Apache License 2.0. See [`LICENSE`](LICENSE).
+
+## English Summary
+
+Map Tile Fetcher is a self-hosted Go Web app for downloading authorized map
+tiles by bounding box or GeoJSON/admin regions. It provides task progress,
+failure records, retry workflows, and ZIP/MBTiles artifacts.
