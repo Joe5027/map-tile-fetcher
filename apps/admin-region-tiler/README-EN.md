@@ -1,19 +1,79 @@
-# Tiler - map tiles downloader
-A well-polished tile downloader
+# Map Tile Fetcher
 
-Tiler is a fast map downloading framework that supports Google, Baidu, Gaode, Tiantu, Mapbox, OSM, Siwei, Yitutong, etc.
-- Support multi-task and multi-thread configuration, can be set arbitrarily
-- Support different download ranges at different levels to speed up downloads
-- Support precise download of contours and contour cutting
-- Support vector tile data download
-- Support file and MBTILES two storage methods
-- Support custom tile address
+Self-hosted Go Web app for downloading authorized map tiles by bounding box or
+GeoJSON/admin regions. It provides a tabbed UI for task creation and task
+history, plus ZIP/MBTiles artifacts, retries, and Docker deployment assets.
 
-## How to use
+> Use this tool only with map tile services that you are authorized to access
+> and download. The project does not grant permission to bypass third-party
+> terms, quotas, or access controls.
 
-1. Download the source code and compile it yourself on the corresponding platform
-2. Directly release the release page, download the pre-compiled program for the corresponding platform
+## Features
 
-Refer to the example url in the configuration file and change it to the address of the map you want to download, then start the download task~
+- Bounding-box task creation with a Leaflet map.
+- GeoJSON/admin-region task creation.
+- Configurable map sources, including Tianditu, Mapbox, OSM, Google examples,
+  and custom tile URLs.
+- Immediate or one-time scheduled tasks.
+- ZIP file-tree and MBTiles outputs.
+- Task history, progress, failure records, retries, pause/resume/cancel, and
+  artifact downloads.
 
-> For example: url = "http://mt0.google.com/vt/lyrs=s&x={x}&y={y}&z={z}", the xyz of the tile in the address uses {x}{y} {z} instead, the others remain unchanged.
+## Run From Source
+
+```powershell
+go run .
+```
+
+Open `http://127.0.0.1:8081/`.
+
+Development login:
+
+- Username: `admin`
+- Password: `adminmap`
+
+Override the default credentials before production deployment.
+
+## Docker
+
+This directory already includes the Docker assets needed to build the image:
+
+- `Dockerfile`
+- `docker-compose.yml`
+- `.dockerignore`
+
+Recommended Docker Compose workflow:
+
+```powershell
+Copy-Item .env.example .env
+docker compose up --build -d
+```
+
+Manual image build:
+
+```powershell
+docker build -t map-tile-fetcher:latest .
+```
+
+Manual run:
+
+```powershell
+docker run --rm --name map-tile-fetcher `
+  -p 8081:8081 `
+  --env-file .env `
+  -v "${PWD}\data:/app/data" `
+  -v "${PWD}\output:/app/output" `
+  -v "${PWD}\geojson:/app/geojson" `
+  -v "${PWD}\conf.toml:/app/conf.toml:ro" `
+  map-tile-fetcher:latest
+```
+
+Use `.env.example` for port, database, timezone, and default auth settings.
+
+## Validation
+
+```powershell
+go test ./...
+node --check .\static\script.js
+node .\scripts\release_preflight.mjs
+```

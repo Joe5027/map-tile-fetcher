@@ -1,23 +1,21 @@
-# 多阶段构建
 FROM golang:1.25-alpine AS builder
 
-# 设置工作目录
 WORKDIR /app
 
-# 复制go.mod和go.sum文件
 COPY go.mod go.sum ./
 
+RUN apk add --no-cache build-base
 RUN go mod download
 
-# 复制所有代码文件
 COPY . .
 
-RUN go build -o tiler .
+RUN CGO_ENABLED=1 go build -o tiler .
 
 FROM alpine:latest
 
-# 设置工作目录
 WORKDIR /app
+
+RUN apk add --no-cache ca-certificates tzdata
 
 COPY --from=builder /app/tiler .
 COPY --from=builder /app/static ./static
