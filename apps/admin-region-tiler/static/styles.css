@@ -1741,6 +1741,11 @@ input::placeholder {
     transform: translateX(16px);
 }
 
+.switch:has(input:disabled) {
+    opacity: 0.48;
+    cursor: not-allowed;
+}
+
 .danger-icon-button,
 .icon-button,
 .icon-mini-button {
@@ -1799,7 +1804,7 @@ input::placeholder {
 }
 
 .task-left-column .region-row {
-    grid-template-columns: minmax(62px, 0.44fr) minmax(0, 2.08fr) 26px;
+    grid-template-columns: minmax(72px, 0.5fr) minmax(0, 2fr) minmax(64px, auto);
     align-items: center;
     gap: 6px;
     padding: 8px 10px;
@@ -1841,7 +1846,7 @@ input::placeholder {
 
 .task-left-column .region-row__actions {
     justify-content: end;
-    gap: 6px;
+    gap: 5px;
 }
 
 .task-left-column .switch__track {

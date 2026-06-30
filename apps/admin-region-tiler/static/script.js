@@ -626,6 +626,11 @@ function applyAdminRegionSelection(config, regionID) {
 
     activeLevelCount = Math.max(activeLevelCount, config.id);
     clearLevelConfigsFrom(config.id + 1);
+    levelConfigs.forEach((item) => {
+        if (item.id <= activeLevelCount) {
+            item.enabled = false;
+        }
+    });
     config.enabled = true;
     config.selectedRegionId = regionID;
     syncRegionConfigs();
@@ -676,6 +681,18 @@ function handleAdminRegionMapBlankClick() {
     activeLevelCount = Math.max(2, currentConfig.id - 1);
     adminRegionLevel = previousAdminRegionLevel(adminRegionLevel) || "province";
     syncRegionConfigs();
+    if (activeLevelCount <= 2) {
+        levelConfigs.slice(0, 2).forEach((config) => {
+            if (config.options.length > 0) {
+                config.enabled = true;
+            }
+        });
+    } else {
+        const fallbackConfig = getAdminRegionLevelConfig(adminRegionLevel);
+        if (fallbackConfig && fallbackConfig.id <= activeLevelCount && fallbackConfig.options.length > 0) {
+            fallbackConfig.enabled = true;
+        }
+    }
     renderLevelConfigs();
     void renderAdminRegionMap();
 }
@@ -1314,6 +1331,7 @@ function renderLevelConfigs() {
 
     levelConfigs.slice(0, activeLevelCount).forEach((config) => {
         const row = document.createElement("div");
+        const toggleDisabled = config.options.length === 0;
         const selectDisabled = config.locked || config.options.length === 0;
         const canRemove = config.id > 2 && config.id === activeLevelCount;
 
@@ -1321,7 +1339,10 @@ function renderLevelConfigs() {
         row.innerHTML = `
             <div class="region-row__title">
                 ${icon("layers")}
-                <strong>${config.label}</strong>
+                <span>
+                    <strong>${config.label}</strong>
+                    <span>${getRegionHelperText(config)}</span>
+                </span>
             </div>
             <div class="region-row__grid">
                 <label class="field">
@@ -1340,10 +1361,27 @@ function renderLevelConfigs() {
                 </label>
             </div>
             <div class="region-row__actions">
+                <label class="switch" aria-label="包含${config.label}">
+                    <input class="level-toggle" type="checkbox" data-id="${config.id}" ${config.enabled ? "checked" : ""} ${toggleDisabled ? "disabled" : ""}>
+                    <span class="switch__track"></span>
+                </label>
                 ${canRemove ? `<button type="button" class="danger-icon-button remove-level" data-id="${config.id}" aria-label="删除区域">${icon("delete")}</button>` : `<span class="region-row__action-spacer" aria-hidden="true"></span>`}
             </div>
         `;
         container.appendChild(row);
+    });
+
+    container.querySelectorAll(".level-toggle").forEach((element) => {
+        element.addEventListener("change", (event) => {
+            const config = findLevelConfig(event.target.dataset.id);
+            if (!config) {
+                return;
+            }
+            config.enabled = event.target.checked;
+            syncRegionConfigs();
+            renderLevelConfigs();
+            void renderAdminRegionMap();
+        });
     });
 
     container.querySelectorAll(".level-min").forEach((element) => {
@@ -1392,7 +1430,6 @@ function syncRegionConfigs() {
 
         if (config.fixedRegionId) {
             config.selectedRegionId = config.fixedRegionId;
-            config.enabled = true;
         } else if (!isActive) {
             config.selectedRegionId = "";
             config.enabled = false;
@@ -1403,10 +1440,10 @@ function syncRegionConfigs() {
         const selectedRegion = getRegionByID(config.selectedRegionId);
         config.geojson = selectedRegion ? selectedRegion.geojson : "";
 
-        if (!config.fixedRegionId && config.options.length === 0) {
+        if (config.options.length === 0) {
             config.enabled = false;
-        } else if (!config.fixedRegionId) {
-            config.enabled = isActive;
+        } else if (!isActive) {
+            config.enabled = false;
         }
     });
 }

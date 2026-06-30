@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-contrib/cors"
@@ -218,6 +219,35 @@ type RegionCatalogResponse struct {
 	Available []RegionCatalogItem `json:"available"`
 	Missing   []RegionCatalogItem `json:"missing"`
 }
+
+type cachedRegionGeoJSON struct {
+	Path    string
+	ModTime time.Time
+	Size    int64
+	Content []byte
+}
+
+type regionCatalogCacheState struct {
+	sync.RWMutex
+	Loaded    bool
+	CheckedAt time.Time
+	ModTime   time.Time
+	Size      int64
+	Response  RegionCatalogResponse
+	ByID      map[string]RegionCatalogItem
+	GeoJSON   map[string]cachedRegionGeoJSON
+}
+
+const regionCatalogCacheTTL = 10 * time.Second
+
+var (
+	errRegionNotFound       = errors.New("region not found")
+	errRegionGeoJSONMissing = errors.New("region geojson not found")
+	regionCatalogCache      = regionCatalogCacheState{
+		ByID:    make(map[string]RegionCatalogItem),
+		GeoJSON: make(map[string]cachedRegionGeoJSON),
+	}
+)
 
 func initServer() {
 	runtimeManager = NewRuntimeManager()
@@ -1323,37 +1353,12 @@ func getGeoJSONFiles(c *gin.Context) {
 }
 
 func getRegionCatalog(c *gin.Context) {
-	data, err := os.ReadFile("./geojson/regions.json")
+	response, _, err := cachedRegionCatalog()
 	if err != nil {
-		log.Errorf("Failed to read region catalog: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load region catalog"})
 		return
 	}
-
-	var items []RegionCatalogItem
-	if err := json.Unmarshal(data, &items); err != nil {
-		log.Errorf("Failed to parse region catalog: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to parse region catalog"})
-		return
-	}
-
-	availableItems := make([]RegionCatalogItem, 0, len(items))
-	missingItems := make([]RegionCatalogItem, 0, len(items))
-	for index := range items {
-		resolvedPath, err := resolveGeoJSONPath(items[index].GeoJSON)
-		if err != nil {
-			log.Warnf("region catalog entry %s points to missing geojson %s: %v", items[index].ID, items[index].GeoJSON, err)
-			missingItems = append(missingItems, items[index])
-			continue
-		}
-		items[index].GeoJSON = resolvedPath
-		availableItems = append(availableItems, items[index])
-	}
-
-	c.JSON(http.StatusOK, RegionCatalogResponse{
-		Available: availableItems,
-		Missing:   missingItems,
-	})
+	c.JSON(http.StatusOK, response)
 }
 
 func getRegionCatalogGeoJSON(c *gin.Context) {
@@ -1363,39 +1368,139 @@ func getRegionCatalogGeoJSON(c *gin.Context) {
 		return
 	}
 
+	content, err := cachedRegionGeoJSONContent(regionID)
+	if err != nil {
+		if errors.Is(err, errRegionNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "region not found"})
+			return
+		}
+		if errors.Is(err, errRegionGeoJSONMissing) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "region geojson not found"})
+			return
+		}
+		log.Errorf("Failed to read region geojson %s: %v", regionID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read region geojson"})
+		return
+	}
+
+	c.Data(http.StatusOK, "application/geo+json; charset=utf-8", content)
+}
+
+func cachedRegionCatalog() (RegionCatalogResponse, map[string]RegionCatalogItem, error) {
+	info, err := os.Stat("./geojson/regions.json")
+	if err != nil {
+		log.Errorf("Failed to stat region catalog: %v", err)
+		return RegionCatalogResponse{}, nil, err
+	}
+
+	regionCatalogCache.RLock()
+	if regionCatalogCache.Loaded &&
+		regionCatalogCache.ModTime.Equal(info.ModTime()) &&
+		regionCatalogCache.Size == info.Size() &&
+		time.Since(regionCatalogCache.CheckedAt) < regionCatalogCacheTTL {
+		response := regionCatalogCache.Response
+		byID := regionCatalogCache.ByID
+		regionCatalogCache.RUnlock()
+		return response, byID, nil
+	}
+	regionCatalogCache.RUnlock()
+
+	regionCatalogCache.Lock()
+	defer regionCatalogCache.Unlock()
+	if regionCatalogCache.Loaded &&
+		regionCatalogCache.ModTime.Equal(info.ModTime()) &&
+		regionCatalogCache.Size == info.Size() &&
+		time.Since(regionCatalogCache.CheckedAt) < regionCatalogCacheTTL {
+		return regionCatalogCache.Response, regionCatalogCache.ByID, nil
+	}
+
 	data, err := os.ReadFile("./geojson/regions.json")
 	if err != nil {
 		log.Errorf("Failed to read region catalog: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load region catalog"})
-		return
+		return RegionCatalogResponse{}, nil, err
 	}
 
 	var items []RegionCatalogItem
 	if err := json.Unmarshal(data, &items); err != nil {
 		log.Errorf("Failed to parse region catalog: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to parse region catalog"})
-		return
+		return RegionCatalogResponse{}, nil, err
 	}
 
-	for _, item := range items {
-		if item.ID != regionID {
-			continue
-		}
+	availableItems := make([]RegionCatalogItem, 0, len(items))
+	missingItems := make([]RegionCatalogItem, 0, len(items))
+	byID := make(map[string]RegionCatalogItem, len(items))
+	for index := range items {
+		item := items[index]
 		resolvedPath, err := resolveGeoJSONPath(item.GeoJSON)
 		if err != nil {
-			c.JSON(http.StatusNotFound, gin.H{"error": "region geojson not found"})
-			return
+			log.Warnf("region catalog entry %s points to missing geojson %s: %v", item.ID, item.GeoJSON, err)
+			missingItems = append(missingItems, item)
+			byID[item.ID] = item
+			continue
 		}
-		content, err := os.ReadFile(resolvedPath)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read region geojson"})
-			return
-		}
-		c.Data(http.StatusOK, "application/geo+json; charset=utf-8", content)
-		return
+		item.GeoJSON = resolvedPath
+		availableItems = append(availableItems, item)
+		byID[item.ID] = item
 	}
 
-	c.JSON(http.StatusNotFound, gin.H{"error": "region not found"})
+	response := RegionCatalogResponse{
+		Available: availableItems,
+		Missing:   missingItems,
+	}
+	regionCatalogCache.Loaded = true
+	regionCatalogCache.CheckedAt = time.Now()
+	regionCatalogCache.ModTime = info.ModTime()
+	regionCatalogCache.Size = info.Size()
+	regionCatalogCache.Response = response
+	regionCatalogCache.ByID = byID
+	regionCatalogCache.GeoJSON = make(map[string]cachedRegionGeoJSON)
+	return response, byID, nil
+}
+
+func cachedRegionGeoJSONContent(regionID string) ([]byte, error) {
+	_, byID, err := cachedRegionCatalog()
+	if err != nil {
+		return nil, err
+	}
+
+	item, exists := byID[regionID]
+	if !exists {
+		return nil, errRegionNotFound
+	}
+	resolvedPath, err := resolveGeoJSONPath(item.GeoJSON)
+	if err != nil {
+		return nil, errRegionGeoJSONMissing
+	}
+	info, err := os.Stat(resolvedPath)
+	if err != nil || info.IsDir() {
+		return nil, errRegionGeoJSONMissing
+	}
+
+	regionCatalogCache.RLock()
+	if cached, exists := regionCatalogCache.GeoJSON[regionID]; exists &&
+		cached.Path == resolvedPath &&
+		cached.ModTime.Equal(info.ModTime()) &&
+		cached.Size == info.Size() {
+		content := cached.Content
+		regionCatalogCache.RUnlock()
+		return content, nil
+	}
+	regionCatalogCache.RUnlock()
+
+	content, err := os.ReadFile(resolvedPath)
+	if err != nil {
+		return nil, err
+	}
+
+	regionCatalogCache.Lock()
+	regionCatalogCache.GeoJSON[regionID] = cachedRegionGeoJSON{
+		Path:    resolvedPath,
+		ModTime: info.ModTime(),
+		Size:    info.Size(),
+		Content: content,
+	}
+	regionCatalogCache.Unlock()
+	return content, nil
 }
 
 func getConfiguredRegions(c *gin.Context) {

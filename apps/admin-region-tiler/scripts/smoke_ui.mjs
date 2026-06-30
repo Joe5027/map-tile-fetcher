@@ -388,6 +388,13 @@ async function smokeRegionFlow(page, createdPayloads) {
   await page.locator("#rangeModePanel").waitFor({ state: "hidden", timeout: options.timeoutMs });
   await page.locator("#regionList .region-row").first().waitFor({ state: "visible", timeout: options.timeoutMs });
   await page.locator("#tilemapSelector .source-card").first().waitFor({ state: "visible", timeout: options.timeoutMs });
+  await page.waitForFunction(() => document.querySelectorAll("#adminRegionMap path[data-admin-region-id]").length > 0, null, { timeout: options.timeoutMs });
+  await page.locator("#adminRegionMap path[data-admin-region-id]").first().click({ force: true });
+  await page.waitForFunction(() => {
+    const cityTab = document.querySelector("[data-admin-region-level='city']");
+    const checkedLevels = document.querySelectorAll(".level-toggle:checked").length;
+    return Boolean(cityTab?.classList.contains("is-active") && checkedLevels === 1);
+  }, null, { timeout: options.timeoutMs });
 
   const beforeCount = createdPayloads.length;
   await page.locator("input[name='name']").fill(`smoke region ${Date.now()}`);
@@ -397,6 +404,7 @@ async function smokeRegionFlow(page, createdPayloads) {
 
   const payload = createdPayloads.at(-1);
   assert(Array.isArray(payload.levels) && payload.levels.length > 0, "region payload should include levels");
+  assert(payload.levels.length === 1, "focused region map selection should submit only the selected level by default");
   assert(Array.isArray(payload.sources) && payload.sources.length > 0, "region payload should include sources");
   assert(!payload.mode, "region payload should use the legacy-compatible region request shape");
   assert(payload.scheduleMode === "immediate", "region payload should create an immediate task");
