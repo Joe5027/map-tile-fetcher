@@ -125,3 +125,16 @@ git commit
 
 The commit message must follow `.gitmessage` and include English, Chinese, and
 Validation sections.
+
+This repository also ships a versioned local hook and CI check for that rule:
+
+```powershell
+git config core.hooksPath .githooks
+node .\scripts\validate_commit_message.mjs --commit HEAD
+```
+
+The local `commit-msg` hook rejects non-bilingual or incomplete commit messages
+before the commit is created. GitHub Actions validates pushed and pull-request
+commits with the same script; make the `Commit Message` check required in
+branch protection if the remote must block merges instead of only reporting a
+failed check.

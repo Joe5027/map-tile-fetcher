@@ -10,8 +10,40 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  commit-message:
+    name: Commit Message
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Validate commit messages
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            range="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+            node scripts/validate_commit_message.mjs --range "$range"
+          elif [[ "${{ github.event_name }}" == "push" && "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]]; then
+            range="${{ github.event.before }}..${{ github.sha }}"
+            node scripts/validate_commit_message.mjs --range "$range"
+          else
+            node scripts/validate_commit_message.mjs --commit "${{ github.sha }}"
+          fi
+
   admin-region-tiler:
     name: Admin Region Tiler
+    needs: commit-message
     runs-on: ubuntu-latest
     timeout-minutes: 20
     defaults:
