@@ -7,7 +7,7 @@
     <meta name="description" content="创建任务并批量下载地图图片。">
     <link rel="icon" type="image/svg+xml" href="/static/assets/favicon/favicon.svg?v=1">
     <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css?v=1">
-    <link rel="stylesheet" href="/static/styles.css?v=20">
+    <link rel="stylesheet" href="/static/styles.css?v=48">
 </head>
 <body>
     <div class="page-shell">
@@ -48,20 +48,6 @@
                         <p>创建任务，批量下载地图图片</p>
                     </div>
                 </div>
-                <div class="topbar__actions">
-                    <div class="user-chip">
-                        <span class="user-avatar">A</span>
-                        <span id="currentUsername">admin</span>
-                        <img src="/static/assets/icons/chevron-down.svg" alt="">
-                    </div>
-                    <button id="logoutBtn" type="button" class="ghost-button">
-                        <img src="/static/assets/icons/user.svg" alt="">
-                        <span>退出登录</span>
-                    </button>
-                </div>
-            </header>
-
-            <main id="dashboard" class="dashboard">
                 <nav class="workspace-tabs" role="tablist" aria-label="任务工作区">
                     <button id="createTaskTab" type="button" class="workspace-tab is-active" role="tab" aria-selected="true" aria-controls="createTaskView" data-workspace-tab="create">
                         <span class="workspace-tab__icon"><img src="/static/assets/icons/plus.svg" alt=""></span>
@@ -79,23 +65,27 @@
                         <b id="workspaceTaskCount">0</b>
                     </button>
                 </nav>
+                <div class="topbar__actions">
+                    <div class="user-chip">
+                        <span class="user-avatar">A</span>
+                        <span id="currentUsername">admin</span>
+                        <img src="/static/assets/icons/chevron-down.svg" alt="">
+                    </div>
+                    <button id="logoutBtn" type="button" class="ghost-button">
+                        <img src="/static/assets/icons/user.svg" alt="">
+                        <span>退出登录</span>
+                    </button>
+                </div>
+            </header>
 
+            <main id="dashboard" class="dashboard">
                 <section id="createTaskView" class="panel panel--form workspace-view" role="tabpanel" aria-labelledby="createTaskTab" data-workspace-view="create">
                     <div class="panel-heading">
                         <div>
                             <h2>新建计划任务</h2>
                             <p>设置下载范围、地图源、线程和产物格式</p>
                         </div>
-                        <img src="/static/assets/icons/success.svg" class="panel-heading__spark" alt="">
-                    </div>
-
-                    <form id="taskForm" class="task-form">
-                        <label class="field">
-                            <span class="field-label">任务名称</span>
-                            <input type="text" name="name" required placeholder="例如：南京影像下载">
-                        </label>
-
-                        <div class="mode-switch" role="tablist" aria-label="下载模式">
+                        <div class="mode-switch mode-switch--heading" role="tablist" aria-label="下载模式">
                             <button type="button" class="mode-toggle is-active" data-task-mode="region" aria-pressed="true">
                                 <img src="/static/assets/icons/layers.svg" alt="">
                                 <span>行政区划下载</span>
@@ -105,101 +95,111 @@
                                 <span>范围框选下载</span>
                             </button>
                         </div>
+                        <img src="/static/assets/icons/success.svg" class="panel-heading__spark" alt="">
+                    </div>
 
-                        <section id="credentialSection" class="section-card credential-panel">
-                            <div class="section-card__header">
-                                <h3>服务凭证</h3>
-                                <p>统一用于行政区划和范围框选任务；仅随本次创建任务提交</p>
-                            </div>
-                            <div class="credential-grid">
+                    <form id="taskForm" class="task-form">
+                        <div class="task-layout">
+                            <div class="task-left-column">
                                 <label class="field">
-                                    <span class="field-label">天地图 Token</span>
-                                    <input type="text" name="tiandituToken" autocomplete="off" spellcheck="false" placeholder="YOUR_TIANDITU_TOKEN">
+                                    <span class="field-label">任务名称</span>
+                                    <input type="text" name="name" required placeholder="例如：南京影像下载">
                                 </label>
-                                <label class="field">
-                                    <span class="field-label">Mapbox Token</span>
-                                    <input type="text" name="mapboxToken" autocomplete="off" spellcheck="false" placeholder="YOUR_MAPBOX_TOKEN">
-                                </label>
-                                <label class="field">
-                                    <span class="field-label">Mapbox SKU</span>
-                                    <input type="text" name="mapboxSku" autocomplete="off" spellcheck="false" placeholder="可选">
-                                </label>
-                            </div>
-                        </section>
 
-                        <section id="sourceSection" class="section-card">
-                            <div class="section-card__header">
-                                <h3>地图源选择</h3>
-                                <p>选择地图服务作为数据源，它们会作为一个任务下的子任务创建</p>
-                            </div>
-                            <div id="tilemapSelector" class="source-list"></div>
-                        </section>
+                                <section id="credentialSection" class="section-card credential-panel">
+                                    <div class="section-card__header">
+                                        <h3>服务凭证</h3>
+                                        <p>统一用于行政区划和范围框选任务；仅随本次创建任务提交</p>
+                                    </div>
+                                    <div class="credential-grid">
+                                        <label class="field">
+                                            <span class="field-label">天地图 Token</span>
+                                            <input type="text" name="tiandituToken" autocomplete="off" spellcheck="false" placeholder="YOUR_TIANDITU_TOKEN">
+                                        </label>
+                                        <label class="field">
+                                            <span class="field-label">Mapbox Token</span>
+                                            <input type="text" name="mapboxToken" autocomplete="off" spellcheck="false" placeholder="YOUR_MAPBOX_TOKEN">
+                                        </label>
+                                        <label class="field">
+                                            <span class="field-label">Mapbox SKU</span>
+                                            <input type="text" name="mapboxSku" autocomplete="off" spellcheck="false" placeholder="可选">
+                                        </label>
+                                    </div>
+                                </section>
 
-                        <div class="task-side-stack">
-                            <section class="parameter-grid">
-                                <label class="field">
-                                    <span class="field-label">下载线程</span>
-                                    <select name="workers">
-                                        <option value="1">1</option>
-                                        <option value="2">2</option>
-                                        <option value="3" selected>3</option>
-                                        <option value="4">4</option>
-                                        <option value="5">5</option>
-                                    </select>
-                                </label>
-                                <label class="field">
-                                    <span class="field-label">保存线程</span>
-                                    <select name="savePipe">
-                                        <option value="1" selected>1</option>
-                                        <option value="2">2</option>
-                                        <option value="3">3</option>
-                                        <option value="4">4</option>
-                                    </select>
-                                </label>
-                                <label class="field">
-                                    <span class="field-label">请求间隔(ms)</span>
-                                    <input type="number" name="timeDelay" min="50" max="5000" value="80">
-                                </label>
-                                <label class="field">
-                                    <span class="field-label">产物格式</span>
-                                    <select name="outputFormat">
-                                        <option value="zip" selected>ZIP 文件树</option>
-                                        <option value="mbtiles">MBTiles</option>
-                                    </select>
-                                </label>
-                            </section>
+                                <section id="sourceSection" class="section-card">
+                                    <div class="section-card__header">
+                                        <h3>地图源选择</h3>
+                                        <p>选择地图服务作为数据源，它们会作为一个任务下的子任务创建</p>
+                                    </div>
+                                    <div id="tilemapSelector" class="source-list"></div>
+                                </section>
 
-                            <section class="section-card schedule-panel">
-                                <div class="section-card__header">
-                                    <h3>执行时间</h3>
-                                    <p>选择立即开始，或创建后等待指定时间自动执行</p>
+                                <div class="task-side-stack">
+                                    <section class="parameter-grid">
+                                        <label class="field">
+                                            <span class="field-label">下载线程</span>
+                                            <select name="workers">
+                                                <option value="1">1</option>
+                                                <option value="2">2</option>
+                                                <option value="3" selected>3</option>
+                                                <option value="4">4</option>
+                                                <option value="5">5</option>
+                                            </select>
+                                        </label>
+                                        <label class="field">
+                                            <span class="field-label">保存线程</span>
+                                            <select name="savePipe">
+                                                <option value="1" selected>1</option>
+                                                <option value="2">2</option>
+                                                <option value="3">3</option>
+                                                <option value="4">4</option>
+                                            </select>
+                                        </label>
+                                        <label class="field">
+                                            <span class="field-label">请求间隔(ms)</span>
+                                            <input type="number" name="timeDelay" min="50" max="5000" value="80">
+                                        </label>
+                                        <label class="field">
+                                            <span class="field-label">产物格式</span>
+                                            <select name="outputFormat">
+                                                <option value="zip" selected>ZIP 文件树</option>
+                                                <option value="mbtiles">MBTiles</option>
+                                            </select>
+                                        </label>
+                                    </section>
+
+                                    <section class="section-card schedule-panel">
+                                        <div class="section-card__header">
+                                            <h3>执行时间</h3>
+                                            <p>选择立即开始，或创建后等待指定时间自动执行</p>
+                                        </div>
+                                        <div class="schedule-mode" role="radiogroup" aria-label="执行时间">
+                                            <label class="mode-card">
+                                                <input type="radio" name="scheduleMode" value="immediate" checked>
+                                                <span class="mode-card__icon"><img src="/static/assets/icons/task.svg" alt=""></span>
+                                                <span class="mode-card__body">
+                                                    <strong>立即执行</strong>
+                                                    <small>创建后马上进入队列</small>
+                                                </span>
+                                            </label>
+                                            <label class="mode-card">
+                                                <input type="radio" name="scheduleMode" value="once">
+                                                <span class="mode-card__icon"><img src="/static/assets/icons/success.svg" alt=""></span>
+                                                <span class="mode-card__body">
+                                                    <strong>单次定时</strong>
+                                                    <small>到达指定时间后启动</small>
+                                                </span>
+                                            </label>
+                                        </div>
+                                        <label id="runAtField" class="field schedule-run-at is-hidden">
+                                            <span class="field-label">计划执行时间</span>
+                                            <input type="datetime-local" name="runAt">
+                                        </label>
+                                    </section>
                                 </div>
-                                <div class="schedule-mode" role="radiogroup" aria-label="执行时间">
-                                    <label class="mode-card">
-                                        <input type="radio" name="scheduleMode" value="immediate" checked>
-                                        <span class="mode-card__icon"><img src="/static/assets/icons/task.svg" alt=""></span>
-                                        <span class="mode-card__body">
-                                            <strong>立即执行</strong>
-                                            <small>创建后马上进入队列</small>
-                                        </span>
-                                    </label>
-                                    <label class="mode-card">
-                                        <input type="radio" name="scheduleMode" value="once">
-                                        <span class="mode-card__icon"><img src="/static/assets/icons/success.svg" alt=""></span>
-                                        <span class="mode-card__body">
-                                            <strong>单次定时</strong>
-                                            <small>到达指定时间后启动</small>
-                                        </span>
-                                    </label>
-                                </div>
-                                <label id="runAtField" class="field schedule-run-at is-hidden">
-                                    <span class="field-label">计划执行时间</span>
-                                    <input type="datetime-local" name="runAt">
-                                </label>
-                            </section>
-                        </div>
 
-                        <section id="rangeModePanel" class="section-card range-panel is-hidden">
+                                <section id="rangeModePanel" class="section-card range-panel is-hidden">
                             <div class="section-card__header">
                                 <h3>范围框选配置</h3>
                                 <p>使用矩形或多边形选择下载范围，按 Tianditu img / cia / vec 创建子任务</p>
@@ -218,39 +218,6 @@
                                     <input class="range-layer-option" type="checkbox" name="rangeLayers" value="vec" checked>
                                     <span>vec 电子图</span>
                                 </label>
-                            </div>
-
-                            <div id="rangeMapCard" class="range-map-card">
-                                <div class="range-map-toolbar">
-                                    <div class="range-map-title">
-                                        <strong>范围预览</strong>
-                                        <span>WGS84 / Web Mercator ｜ 移动：<b id="rangeHoverCoord">-</b> ｜ 点击：<b id="rangeClickCoord">-</b></span>
-                                    </div>
-                                    <div class="range-draw-mode" aria-label="范围选择方式">
-                                        <button type="button" class="range-draw-mode__button is-active" data-range-draw-mode="rectangle">矩形</button>
-                                        <button type="button" class="range-draw-mode__button" data-range-draw-mode="polygon">多边形</button>
-                                    </div>
-                                    <div class="range-map-actions">
-                                        <label class="range-preview-source">
-                                            <span>底图</span>
-                                            <select id="rangePreviewSource" name="rangePreviewSource">
-                                                <option value="osm" selected>OSM</option>
-                                                <option value="tdt-img">天地图影像</option>
-                                                <option value="tdt-vec">天地图矢量</option>
-                                            </select>
-                                        </label>
-                                        <button id="undoRangePointBtn" type="button" class="ghost-button ghost-button--compact">撤销点</button>
-                                        <button id="clearRangeBtn" type="button" class="ghost-button ghost-button--compact">清除</button>
-                                        <button id="fitRangeBtn" type="button" class="ghost-button ghost-button--compact">适配</button>
-                                        <button id="expandRangeMapBtn" type="button" class="ghost-button ghost-button--compact">放大选择</button>
-                                        <button id="finishRangeMapBtn" type="button" class="primary-button primary-button--compact is-hidden">完成选择</button>
-                                    </div>
-                                </div>
-                                <div class="range-preview-hint">
-                                    <span id="rangePreviewHint">OSM 预览底图</span>
-                                    <span id="rangeDrawHint">矩形：点击两个角点生成范围</span>
-                                </div>
-                                <div id="rangeMap" class="range-map"></div>
                             </div>
 
                             <div class="range-coordinate-grid">
@@ -285,32 +252,97 @@
                                 <span>总瓦片估算：<strong id="rangeTotalTileCount">-</strong></span>
                                 <span>估算体积：<strong id="rangeSizeEstimate">-</strong></span>
                             </div>
-                        </section>
+                                </section>
 
-                        <section id="regionModePanel" class="section-card">
-                            <div class="section-card__header section-card__header--split">
-                                <div>
-                                    <h3>下载区域配置</h3>
-                                    <p>支持 GeoJSON 格式导入，最多可设置 4 级区域</p>
+                                <section id="regionConfigPanel" class="section-card region-config-panel">
+                                    <div class="section-card__header section-card__header--split">
+                                        <div>
+                                            <h3>下载区域配置</h3>
+                                            <p>支持地图点选和下拉选择，最多可设置 5 级区域</p>
+                                        </div>
+                                        <button id="addLevelBtn" type="button" class="inline-action">
+                                            <img src="/static/assets/icons/plus.svg" alt="">
+                                            <span>添加区域</span>
+                                        </button>
+                                    </div>
+                                    <div id="regionList" class="region-list"></div>
+                                </section>
+
+                                <div class="task-submit-panel">
+                                    <p class="risk-tip">
+                                        <img src="/static/assets/icons/warning.svg" alt="">
+                                        <span>请求间隔过小可能导致地图服务限制访问，建议设置为 100-500ms。</span>
+                                    </p>
+
+                                    <p id="taskError" class="message error is-hidden"></p>
+                                    <button type="submit" class="primary-button wide">
+                                        <img src="/static/assets/icons/task.svg" alt="">
+                                        <span>创建并启动计划任务</span>
+                                    </button>
                                 </div>
-                                <button id="addLevelBtn" type="button" class="inline-action">
-                                    <img src="/static/assets/icons/plus.svg" alt="">
-                                    <span>添加区域</span>
-                                </button>
                             </div>
-                            <div id="regionList" class="region-list"></div>
-                        </section>
 
-                        <p class="risk-tip">
-                            <img src="/static/assets/icons/warning.svg" alt="">
-                            <span>请求间隔过小可能导致地图服务限制访问，建议设置为 100-500ms。</span>
-                        </p>
+                            <div class="task-right-column">
+                                <section id="rangePreviewPanel" class="range-preview-panel is-hidden">
+                                    <div id="rangeMapCard" class="range-map-card">
+                                        <div class="range-map-toolbar">
+                                            <div class="range-map-title">
+                                                <strong>范围预览</strong>
+                                                <span>WGS84 / Web Mercator ｜ 移动：<b id="rangeHoverCoord">-</b> ｜ 点击：<b id="rangeClickCoord">-</b></span>
+                                            </div>
+                                            <div class="range-draw-mode" aria-label="范围选择方式">
+                                                <button type="button" class="range-draw-mode__button is-active" data-range-draw-mode="rectangle">矩形</button>
+                                                <button type="button" class="range-draw-mode__button" data-range-draw-mode="polygon">多边形</button>
+                                            </div>
+                                            <div class="range-map-actions">
+                                                <label class="range-preview-source">
+                                                    <span>底图</span>
+                                                    <select id="rangePreviewSource" name="rangePreviewSource">
+                                                        <option value="osm" selected>OSM</option>
+                                                        <option value="tdt-img">天地图影像</option>
+                                                        <option value="tdt-vec">天地图矢量</option>
+                                                    </select>
+                                                </label>
+                                                <button id="undoRangePointBtn" type="button" class="ghost-button ghost-button--compact">撤销点</button>
+                                                <button id="clearRangeBtn" type="button" class="ghost-button ghost-button--compact">清除</button>
+                                                <button id="fitRangeBtn" type="button" class="ghost-button ghost-button--compact">适配</button>
+                                                <button id="expandRangeMapBtn" type="button" class="ghost-button ghost-button--compact">放大选择</button>
+                                                <button id="finishRangeMapBtn" type="button" class="primary-button primary-button--compact is-hidden">完成选择</button>
+                                            </div>
+                                        </div>
+                                        <div class="range-preview-hint">
+                                            <span id="rangePreviewHint">OSM 预览底图</span>
+                                            <span id="rangeDrawHint">矩形：点击两个角点生成范围</span>
+                                        </div>
+                                        <div id="rangeMap" class="range-map"></div>
+                                    </div>
+                                </section>
 
-                        <p id="taskError" class="message error is-hidden"></p>
-                        <button type="submit" class="primary-button wide">
-                            <img src="/static/assets/icons/task.svg" alt="">
-                            <span>创建并启动计划任务</span>
-                        </button>
+                                <section id="regionModePanel" class="region-map-panel">
+                                    <div id="adminRegionMapCard" class="admin-region-map-card">
+                                <div class="admin-region-map-toolbar">
+                                    <div class="admin-region-map-title">
+                                        <strong>行政区划地图</strong>
+                                        <span id="adminRegionMapCurrent">当前：中国</span>
+                                    </div>
+                                    <div class="admin-region-level-tabs" role="group" aria-label="行政区划层级">
+                                        <button type="button" class="admin-region-level-tab is-active" data-admin-region-level="province">省级</button>
+                                        <button type="button" class="admin-region-level-tab" data-admin-region-level="city">市级</button>
+                                        <button type="button" class="admin-region-level-tab" data-admin-region-level="district">区县</button>
+                                    </div>
+                                </div>
+                                <div id="adminRegionMap" class="admin-region-map"></div>
+                                <div class="admin-region-map-status">
+                                    <span id="adminRegionMapHint">加载省级边界中</span>
+                                    <button id="fitAdminRegionMapBtn" type="button" class="ghost-button ghost-button--compact">
+                                        <img src="/static/assets/icons/map.svg" alt="">
+                                        <span>适配</span>
+                                    </button>
+                                </div>
+                            </div>
+                                </section>
+                            </div>
+                        </div>
                     </form>
                 </section>
 
@@ -362,6 +394,6 @@
     </div>
 
     <script src="/static/vendor/leaflet/leaflet.js?v=1"></script>
-    <script src="/static/script.js?v=20"></script>
+    <script src="/static/script.js?v=48"></script>
 </body>
 </html>

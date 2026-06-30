@@ -2,7 +2,7 @@ let tilemaps = [];
 let regionCatalog = [];
 let missingRegionCatalog = [];
 let levelConfigs = [];
-let activeLevelCount = 4;
+let activeLevelCount = 2;
 let selectedProvider = "";
 let selectedSourceIds = new Set();
 let taskMode = "region";
@@ -17,6 +17,14 @@ let rangeDrawMode = "rectangle";
 let rangeMapExpanded = false;
 let rangeMapOriginalParent = null;
 let rangeMapOriginalNextSibling = null;
+let adminRegionMap = null;
+let adminRegionBaseLayer = null;
+let adminRegionLayerGroup = null;
+let adminRegionSelectedLayer = null;
+let adminRegionLevel = "province";
+let adminRegionRenderToken = 0;
+let adminRegionMapInitRetries = 0;
+let rangeMapInitRetries = 0;
 let activeWorkspaceTab = "create";
 let currentTaskFilter = "all";
 let cachedTasks = [];
@@ -24,6 +32,15 @@ const expandedProviders = new Set();
 const expandedGroupTasks = new Set();
 const expandedChildTasks = new Set();
 const selectedTaskIds = new Set();
+const adminRegionGeoJSONCache = new Map();
+const WEB_MERCATOR_MAX_LAT = 85.05112878;
+const HORIZONTAL_DRAG_LIMIT_LNG = 360000;
+const MAP_LATITUDE_BOUNDS = [
+    [-WEB_MERCATOR_MAX_LAT, -HORIZONTAL_DRAG_LIMIT_LNG],
+    [WEB_MERCATOR_MAX_LAT, HORIZONTAL_DRAG_LIMIT_LNG]
+];
+const MAP_MIN_ZOOM = 2;
+const MAP_INIT_RETRY_LIMIT = 30;
 
 const REGION_LEVEL_RULES = [
     { id: 1, label: "第1级", regionLevel: "world", fixedRegionId: "world", minZoom: 0, maxZoom: 5 },
@@ -50,6 +67,28 @@ const RANGE_LAYER_NAMES = {
     vec: "天地图 vec 电子图"
 };
 
+const ADMIN_REGION_LEVEL_CONFIG_IDS = {
+    province: 3,
+    city: 4,
+    district: 5
+};
+
+const ADMIN_REGION_LEVEL_LABELS = {
+    province: "省级",
+    city: "市级",
+    district: "区县"
+};
+
+const ADMIN_REGION_NEXT_LEVELS = {
+    province: "city",
+    city: "district"
+};
+
+const ADMIN_REGION_PREVIOUS_LEVELS = {
+    city: "province",
+    district: "city"
+};
+
 document.addEventListener("DOMContentLoaded", async () => {
     bindEvents();
     await bootstrap();
@@ -61,6 +100,7 @@ function bindEvents() {
     document.getElementById("taskForm").addEventListener("submit", createTask);
     document.getElementById("refreshBtn").addEventListener("click", loadTasks);
     document.getElementById("addLevelBtn").addEventListener("click", addLevelConfig);
+    document.getElementById("fitAdminRegionMapBtn").addEventListener("click", fitAdminRegionMapToSelection);
 
     document.querySelectorAll("[data-workspace-tab]").forEach((button) => {
         button.addEventListener("click", () => setWorkspaceTab(button.dataset.workspaceTab));
@@ -68,6 +108,10 @@ function bindEvents() {
 
     document.querySelectorAll("[data-task-mode]").forEach((button) => {
         button.addEventListener("click", () => setTaskMode(button.dataset.taskMode));
+    });
+
+    document.querySelectorAll("[data-admin-region-level]").forEach((button) => {
+        button.addEventListener("click", () => setAdminRegionLevel(button.dataset.adminRegionLevel));
     });
 
     document.querySelectorAll("input[name='scheduleMode']").forEach((element) => {
@@ -256,6 +300,7 @@ async function bootstrap() {
     initDefaultLevelConfigs();
     renderLevelConfigs();
     setTaskMode(taskMode);
+    initAdminRegionMap();
     syncScheduleControls();
     updateRangeEstimate();
     await loadTasks();
@@ -290,6 +335,9 @@ function setWorkspaceTab(tab) {
     if (activeWorkspaceTab === "create" && taskMode === "bbox" && rangeMap) {
         window.setTimeout(() => rangeMap.invalidateSize(), 40);
     }
+    if (activeWorkspaceTab === "create" && taskMode === "region" && adminRegionMap) {
+        window.setTimeout(() => adminRegionMap.invalidateSize(), 40);
+    }
 }
 
 function setTaskMode(mode) {
@@ -302,8 +350,10 @@ function setTaskMode(mode) {
     });
 
     document.getElementById("sourceSection").classList.toggle("is-hidden", taskMode !== "region");
+    document.getElementById("regionConfigPanel").classList.toggle("is-hidden", taskMode !== "region");
     document.getElementById("regionModePanel").classList.toggle("is-hidden", taskMode !== "region");
     document.getElementById("rangeModePanel").classList.toggle("is-hidden", taskMode !== "bbox");
+    document.getElementById("rangePreviewPanel").classList.toggle("is-hidden", taskMode !== "bbox");
     document.getElementById("addLevelBtn").classList.toggle("is-hidden", taskMode !== "region");
     document.getElementById("taskForm").classList.toggle("task-form--range", taskMode === "bbox");
     if (taskMode === "bbox") {
@@ -314,6 +364,14 @@ function setTaskMode(mode) {
         window.setTimeout(() => {
             if (rangeMap) {
                 rangeMap.invalidateSize();
+            }
+        }, 40);
+    } else {
+        initAdminRegionMap();
+        window.setTimeout(() => {
+            if (adminRegionMap) {
+                adminRegionMap.invalidateSize();
+                fitAdminRegionMapToSelection();
             }
         }, 40);
     }
@@ -415,14 +473,363 @@ function validateSourceCredentials(sources, credentials) {
     return "";
 }
 
-function initRangeMap() {
-    if (rangeMap || !window.L) {
+function initAdminRegionMap() {
+    if (adminRegionMap || taskMode !== "region") {
+        return;
+    }
+    if (!window.L) {
+        if (adminRegionMapInitRetries < MAP_INIT_RETRY_LIMIT) {
+            adminRegionMapInitRetries += 1;
+            window.setTimeout(initAdminRegionMap, 100);
+        }
+        return;
+    }
+    adminRegionMapInitRetries = 0;
+
+    adminRegionMap = L.map("adminRegionMap", {
+        zoomControl: true,
+        attributionControl: false,
+        minZoom: MAP_MIN_ZOOM,
+        maxBounds: MAP_LATITUDE_BOUNDS,
+        maxBoundsViscosity: 1,
+        worldCopyJump: false
+    }).setView([35.8617, 104.1954], 4);
+
+    adminRegionBaseLayer = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        minZoom: MAP_MIN_ZOOM,
+        maxZoom: 10
+    }).addTo(adminRegionMap);
+    adminRegionLayerGroup = L.layerGroup().addTo(adminRegionMap);
+    adminRegionMap.on("click", handleAdminRegionMapClick);
+
+    void renderAdminRegionMap();
+}
+
+function setAdminRegionLevel(level) {
+    if (!Object.prototype.hasOwnProperty.call(ADMIN_REGION_LEVEL_CONFIG_IDS, level)) {
+        return;
+    }
+    adminRegionLevel = resolveAdminRegionLevel(level);
+    updateAdminRegionLevelTabs();
+    void renderAdminRegionMap();
+}
+
+function updateAdminRegionLevelTabs() {
+    document.querySelectorAll("[data-admin-region-level]").forEach((button) => {
+        const level = button.dataset.adminRegionLevel;
+        const active = level === adminRegionLevel;
+        const disabled = !canUseAdminRegionLevel(level);
+        button.classList.toggle("is-active", active);
+        button.setAttribute("aria-pressed", active ? "true" : "false");
+        button.disabled = disabled;
+    });
+}
+
+async function renderAdminRegionMap() {
+    if (!adminRegionMap || !adminRegionLayerGroup) {
         return;
     }
 
+    const token = ++adminRegionRenderToken;
+    updateAdminRegionLevelTabs();
+    updateAdminRegionMapStatus("loading");
+    adminRegionLayerGroup.clearLayers();
+    adminRegionSelectedLayer = null;
+
+    const config = getAdminRegionLevelConfig(adminRegionLevel);
+    if (!config) {
+        updateAdminRegionMapStatus("empty");
+        return;
+    }
+
+    const regions = config.options.filter((item) => item.maintained !== false && item.geojson);
+    if (regions.length === 0) {
+        updateAdminRegionMapStatus("empty");
+        return;
+    }
+
+    const selectedID = config.selectedRegionId;
+    let layerCount = 0;
+    await Promise.all(regions.map(async (region) => {
+        try {
+            const geojson = await fetchRegionGeoJSON(region.id);
+            if (token !== adminRegionRenderToken) {
+                return;
+            }
+            const selected = region.id === selectedID;
+            const layer = L.geoJSON(geojson, {
+                style: () => adminRegionFeatureStyle(selected),
+                onEachFeature: (_feature, featureLayer) => {
+                    featureLayer.bindTooltip(region.name, {
+                        direction: "center",
+                        className: "admin-region-tooltip",
+                        sticky: true
+                    });
+                    featureLayer.on("mouseover", () => {
+                        if (featureLayer !== adminRegionSelectedLayer) {
+                            featureLayer.setStyle(adminRegionHoverStyle());
+                        }
+                    });
+                    featureLayer.on("mouseout", () => {
+                        featureLayer.setStyle(adminRegionFeatureStyle(featureLayer === adminRegionSelectedLayer));
+                    });
+                }
+            });
+            layer.addTo(adminRegionLayerGroup);
+            bindAdminRegionLayerElements(layer, region);
+            layerCount += 1;
+            if (selected) {
+                adminRegionSelectedLayer = layer;
+                layer.setStyle(adminRegionFeatureStyle(true));
+            }
+        } catch (error) {
+            console.warn("failed to load region geojson", region.id, error);
+        }
+    }));
+
+    if (token !== adminRegionRenderToken) {
+        return;
+    }
+    if (layerCount === 0) {
+        updateAdminRegionMapStatus("empty");
+        return;
+    }
+    fitAdminRegionMapToSelection();
+    updateAdminRegionMapStatus("ready");
+}
+
+async function fetchRegionGeoJSON(regionID) {
+    if (adminRegionGeoJSONCache.has(regionID)) {
+        return adminRegionGeoJSONCache.get(regionID);
+    }
+    const response = await fetchJSON(`/api/config/region-catalog/${encodeURIComponent(regionID)}/geojson`);
+    if (!response.ok) {
+        throw new Error(response.data.error || "failed to load region geojson");
+    }
+    adminRegionGeoJSONCache.set(regionID, response.data);
+    return response.data;
+}
+
+function selectAdminRegionFromMap(region) {
+    const config = levelConfigs.find((item) => item.regionLevel === region.level);
+    if (!config) {
+        return;
+    }
+
+    applyAdminRegionSelection(config, region.id);
+}
+
+function applyAdminRegionSelection(config, regionID) {
+    if (!config || config.locked || !regionID) {
+        return;
+    }
+
+    activeLevelCount = Math.max(activeLevelCount, config.id);
+    clearLevelConfigsFrom(config.id + 1);
+    config.enabled = true;
+    config.selectedRegionId = regionID;
+    syncRegionConfigs();
+    renderLevelConfigs();
+
+    const nextLevel = nextAdminRegionLevel(config.regionLevel);
+    if (nextLevel && hasRenderableAdminRegionOptions(nextLevel)) {
+        adminRegionLevel = nextLevel;
+    } else if (Object.prototype.hasOwnProperty.call(ADMIN_REGION_LEVEL_CONFIG_IDS, config.regionLevel)) {
+        adminRegionLevel = config.regionLevel;
+    }
+    void renderAdminRegionMap();
+}
+
+function nextAdminRegionLevel(level) {
+    return ADMIN_REGION_NEXT_LEVELS[level] || "";
+}
+
+function previousAdminRegionLevel(level) {
+    return ADMIN_REGION_PREVIOUS_LEVELS[level] || "";
+}
+
+function handleAdminRegionMapClick(event) {
+    const target = event.originalEvent && event.originalEvent.target;
+    const regionElement = target && target.closest ? target.closest("[data-admin-region-id]") : null;
+    const region = regionElement ? getRegionByID(regionElement.dataset.adminRegionId) : null;
+    if (region) {
+        selectAdminRegionFromMap(region);
+        return;
+    }
+
+    handleAdminRegionMapBlankClick();
+}
+
+function handleAdminRegionMapBlankClick() {
+    const currentConfig = getAdminRegionLevelConfig(adminRegionLevel);
+    if (!currentConfig) {
+        adminRegionLevel = "province";
+        activeLevelCount = 2;
+        clearLevelConfigsFrom(3);
+        syncRegionConfigs();
+        renderLevelConfigs();
+        void renderAdminRegionMap();
+        return;
+    }
+
+    clearLevelConfigsFrom(currentConfig.id);
+    activeLevelCount = Math.max(2, currentConfig.id - 1);
+    adminRegionLevel = previousAdminRegionLevel(adminRegionLevel) || "province";
+    syncRegionConfigs();
+    renderLevelConfigs();
+    void renderAdminRegionMap();
+}
+
+function bindAdminRegionLayerElements(layer, region) {
+    if (!layer || !region || typeof layer.eachLayer !== "function") {
+        return;
+    }
+    layer.eachLayer((featureLayer) => {
+        const element = typeof featureLayer.getElement === "function" ? featureLayer.getElement() : null;
+        if (element) {
+            element.dataset.adminRegionId = region.id;
+        }
+    });
+}
+
+function getAdminRegionLevelConfig(level) {
+    const configID = ADMIN_REGION_LEVEL_CONFIG_IDS[level];
+    if (!configID) {
+        return null;
+    }
+    return findLevelConfig(configID);
+}
+
+function getAdminRegionLevelOptions(level) {
+    const config = getAdminRegionLevelConfig(level);
+    return config ? config.options : [];
+}
+
+function hasRenderableAdminRegionOptions(level) {
+    return getAdminRegionLevelOptions(level).some((item) => item.maintained !== false && item.geojson);
+}
+
+function canUseAdminRegionLevel(level) {
+    if (level === "province") {
+        return true;
+    }
+    if (level === "city") {
+        const provinceConfig = getAdminRegionLevelConfig("province");
+        return Boolean(provinceConfig && provinceConfig.selectedRegionId);
+    }
+    if (level === "district") {
+        const cityConfig = getAdminRegionLevelConfig("city");
+        return Boolean(cityConfig && cityConfig.selectedRegionId);
+    }
+    return false;
+}
+
+function resolveAdminRegionLevel(level) {
+    if (level === "district" && !canUseAdminRegionLevel("district")) {
+        return canUseAdminRegionLevel("city") ? "city" : "province";
+    }
+    if (level === "city" && !canUseAdminRegionLevel("city")) {
+        return "province";
+    }
+    return level;
+}
+
+function fitAdminRegionMapToSelection() {
+    if (!adminRegionMap || !adminRegionLayerGroup) {
+        return;
+    }
+    if (!adminRegionLayerGroup.getBounds) {
+        return;
+    }
+    const bounds = adminRegionLayerGroup.getBounds();
+    if (!bounds || !bounds.isValid()) {
+        return;
+    }
+    adminRegionMap.fitBounds(bounds, { padding: [18, 18], maxZoom: adminRegionLevel === "district" ? 10 : 7 });
+}
+
+function adminRegionFeatureStyle(selected) {
+    return {
+        color: selected ? "#111827" : "#2563eb",
+        weight: selected ? 3 : 1,
+        opacity: selected ? 0.95 : 0.72,
+        fillColor: selected ? "#3b82f6" : "#93c5fd",
+        fillOpacity: selected ? 0.26 : 0.12
+    };
+}
+
+function adminRegionHoverStyle() {
+    return {
+        color: "#0f172a",
+        weight: 2,
+        opacity: 0.9,
+        fillColor: "#60a5fa",
+        fillOpacity: 0.22
+    };
+}
+
+function updateAdminRegionMapStatus(state) {
+    const current = document.getElementById("adminRegionMapCurrent");
+    const hint = document.getElementById("adminRegionMapHint");
+    const config = getAdminRegionLevelConfig(adminRegionLevel);
+    const selectedRegion = getAdminRegionContextRegion();
+    const label = ADMIN_REGION_LEVEL_LABELS[adminRegionLevel] || "区域";
+
+    if (current) {
+        current.textContent = selectedRegion ? `当前：${selectedRegion.name}` : "当前：中国";
+    }
+    if (!hint) {
+        return;
+    }
+    if (state === "loading") {
+        hint.textContent = `${label}边界加载中`;
+    } else if (state === "empty") {
+        hint.textContent = `${label}暂无可用边界`;
+    } else {
+        const count = config ? config.options.filter((item) => item.maintained !== false && item.geojson).length : 0;
+        hint.textContent = `${label}边界 ${count} 个`;
+    }
+}
+
+function getAdminRegionContextRegion() {
+    const config = getAdminRegionLevelConfig(adminRegionLevel);
+    const selectedRegion = config ? getRegionByID(config.selectedRegionId) : null;
+    if (selectedRegion) {
+        return selectedRegion;
+    }
+
+    const parentLevel = previousAdminRegionLevel(adminRegionLevel);
+    if (parentLevel) {
+        const parentConfig = getAdminRegionLevelConfig(parentLevel);
+        const parentRegion = parentConfig ? getRegionByID(parentConfig.selectedRegionId) : null;
+        if (parentRegion) {
+            return parentRegion;
+        }
+    }
+
+    return getRegionByID("china") || { name: "中国" };
+}
+
+function initRangeMap() {
+    if (rangeMap) {
+        return;
+    }
+    if (!window.L) {
+        if (rangeMapInitRetries < MAP_INIT_RETRY_LIMIT) {
+            rangeMapInitRetries += 1;
+            window.setTimeout(initRangeMap, 100);
+        }
+        return;
+    }
+    rangeMapInitRetries = 0;
+
     rangeMap = L.map("rangeMap", {
         zoomControl: true,
-        attributionControl: false
+        attributionControl: false,
+        minZoom: MAP_MIN_ZOOM,
+        maxBounds: MAP_LATITUDE_BOUNDS,
+        maxBoundsViscosity: 1,
+        worldCopyJump: false
     }).setView([35.8617, 104.1954], 4);
 
     updateRangeBaseLayer();
@@ -465,7 +872,7 @@ function updateRangeBaseLayer() {
         rangeMap.removeLayer(rangeBaseLayer);
     }
     rangeBaseLayer = L.tileLayer(url, {
-        minZoom: 1,
+        minZoom: MAP_MIN_ZOOM,
         maxZoom
     }).addTo(rangeMap);
     if (hint) {
@@ -841,7 +1248,7 @@ async function loadRegionCatalog() {
 }
 
 function initDefaultLevelConfigs() {
-    activeLevelCount = 4;
+    activeLevelCount = 2;
     levelConfigs = REGION_LEVEL_RULES.map((rule) => ({
         id: rule.id,
         label: rule.label,
@@ -849,7 +1256,7 @@ function initDefaultLevelConfigs() {
         parentConfigId: rule.parentConfigId || null,
         minZoom: rule.minZoom,
         maxZoom: rule.maxZoom,
-        enabled: rule.id <= 4,
+        enabled: rule.id <= 2,
         fixedRegionId: rule.fixedRegionId || "",
         selectedRegionId: "",
         geojson: "",
@@ -871,21 +1278,34 @@ function addLevelConfig() {
     }
     syncRegionConfigs();
     renderLevelConfigs();
+    void renderAdminRegionMap();
 }
 
 function removeLevelConfig(id) {
     if (id <= 2 || id !== activeLevelCount) {
         return;
     }
-    const config = findLevelConfig(id);
-    if (config) {
-        config.enabled = false;
-        config.selectedRegionId = "";
-        config.geojson = "";
-    }
+    clearLevelConfigsFrom(id);
     activeLevelCount -= 1;
+    adminRegionLevel = resolveAdminRegionLevel(previousAdminRegionLevel(getRegionLevelByConfigId(id)) || "province");
     syncRegionConfigs();
     renderLevelConfigs();
+    void renderAdminRegionMap();
+}
+
+function clearLevelConfigsFrom(id) {
+    levelConfigs.forEach((config) => {
+        if (config.id >= id && !config.fixedRegionId) {
+            config.enabled = false;
+            config.selectedRegionId = "";
+            config.geojson = "";
+        }
+    });
+}
+
+function getRegionLevelByConfigId(id) {
+    const config = findLevelConfig(id);
+    return config ? config.regionLevel : "";
 }
 
 function renderLevelConfigs() {
@@ -894,27 +1314,14 @@ function renderLevelConfigs() {
 
     levelConfigs.slice(0, activeLevelCount).forEach((config) => {
         const row = document.createElement("div");
-        const toggleDisabled = config.locked || config.options.length === 0;
         const selectDisabled = config.locked || config.options.length === 0;
         const canRemove = config.id > 2 && config.id === activeLevelCount;
 
         row.className = "region-row";
         row.innerHTML = `
-            <div class="region-row__header">
-                <div class="region-row__title">
-                    ${icon("layers")}
-                    <div>
-                        <strong>${config.label}</strong>
-                        <span>${getRegionHelperText(config)}</span>
-                    </div>
-                </div>
-                <div class="region-row__actions">
-                    <label class="switch">
-                        <input class="level-toggle" type="checkbox" data-id="${config.id}" ${config.enabled ? "checked" : ""} ${toggleDisabled ? "disabled" : ""}>
-                        <span class="switch__track"></span>
-                    </label>
-                    ${canRemove ? `<button type="button" class="danger-icon-button remove-level" data-id="${config.id}" aria-label="删除区域">${icon("delete")}</button>` : ""}
-                </div>
+            <div class="region-row__title">
+                ${icon("layers")}
+                <strong>${config.label}</strong>
             </div>
             <div class="region-row__grid">
                 <label class="field">
@@ -932,20 +1339,11 @@ function renderLevelConfigs() {
                     </select>
                 </label>
             </div>
+            <div class="region-row__actions">
+                ${canRemove ? `<button type="button" class="danger-icon-button remove-level" data-id="${config.id}" aria-label="删除区域">${icon("delete")}</button>` : `<span class="region-row__action-spacer" aria-hidden="true"></span>`}
+            </div>
         `;
         container.appendChild(row);
-    });
-
-    container.querySelectorAll(".level-toggle").forEach((element) => {
-        element.addEventListener("change", (event) => {
-            const config = findLevelConfig(event.target.dataset.id);
-            if (!config) {
-                return;
-            }
-            config.enabled = event.target.checked;
-            syncRegionConfigs();
-            renderLevelConfigs();
-        });
     });
 
     container.querySelectorAll(".level-min").forEach((element) => {
@@ -969,12 +1367,10 @@ function renderLevelConfigs() {
     container.querySelectorAll(".level-region").forEach((element) => {
         element.addEventListener("change", (event) => {
             const config = findLevelConfig(event.target.dataset.id);
-            if (!config) {
+            if (!config || config.locked) {
                 return;
             }
-            config.selectedRegionId = event.target.value;
-            syncRegionConfigs();
-            renderLevelConfigs();
+            applyAdminRegionSelection(config, event.target.value);
         });
     });
 
@@ -991,11 +1387,15 @@ function findLevelConfig(id) {
 
 function syncRegionConfigs() {
     levelConfigs.forEach((config) => {
+        const isActive = config.id <= activeLevelCount;
         config.options = getRegionOptionsForConfig(config);
 
         if (config.fixedRegionId) {
             config.selectedRegionId = config.fixedRegionId;
             config.enabled = true;
+        } else if (!isActive) {
+            config.selectedRegionId = "";
+            config.enabled = false;
         } else if (!config.options.some((item) => item.id === config.selectedRegionId)) {
             config.selectedRegionId = config.options[0] ? config.options[0].id : "";
         }
@@ -1005,6 +1405,8 @@ function syncRegionConfigs() {
 
         if (!config.fixedRegionId && config.options.length === 0) {
             config.enabled = false;
+        } else if (!config.fixedRegionId) {
+            config.enabled = isActive;
         }
     });
 }
@@ -1597,6 +1999,8 @@ async function createTask(event) {
     initDefaultLevelConfigs();
     renderTilemapSelector();
     renderLevelConfigs();
+    adminRegionLevel = "province";
+    void renderAdminRegionMap();
     await loadTasks();
     setWorkspaceTab("tasks");
 }

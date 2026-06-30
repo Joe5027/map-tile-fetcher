@@ -262,6 +262,7 @@ func initServer() {
 		protected.GET("/config/tilemaps", getConfiguredMaps)
 		protected.GET("/config/regions", getConfiguredRegions)
 		protected.GET("/config/region-catalog", getRegionCatalog)
+		protected.GET("/config/region-catalog/:id/geojson", getRegionCatalogGeoJSON)
 		protected.GET("/config/geojson-files", getGeoJSONFiles)
 	}
 
@@ -1353,6 +1354,48 @@ func getRegionCatalog(c *gin.Context) {
 		Available: availableItems,
 		Missing:   missingItems,
 	})
+}
+
+func getRegionCatalogGeoJSON(c *gin.Context) {
+	regionID := strings.TrimSpace(c.Param("id"))
+	if regionID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "region id is required"})
+		return
+	}
+
+	data, err := os.ReadFile("./geojson/regions.json")
+	if err != nil {
+		log.Errorf("Failed to read region catalog: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load region catalog"})
+		return
+	}
+
+	var items []RegionCatalogItem
+	if err := json.Unmarshal(data, &items); err != nil {
+		log.Errorf("Failed to parse region catalog: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to parse region catalog"})
+		return
+	}
+
+	for _, item := range items {
+		if item.ID != regionID {
+			continue
+		}
+		resolvedPath, err := resolveGeoJSONPath(item.GeoJSON)
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "region geojson not found"})
+			return
+		}
+		content, err := os.ReadFile(resolvedPath)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read region geojson"})
+			return
+		}
+		c.Data(http.StatusOK, "application/geo+json; charset=utf-8", content)
+		return
+	}
+
+	c.JSON(http.StatusNotFound, gin.H{"error": "region not found"})
 }
 
 func getConfiguredRegions(c *gin.Context) {
