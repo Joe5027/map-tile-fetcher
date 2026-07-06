@@ -7,7 +7,7 @@
     <meta name="description" content="创建任务并批量下载地图图片。">
     <link rel="icon" type="image/svg+xml" href="/static/assets/favicon/favicon.svg?v=1">
     <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css?v=1">
-    <link rel="stylesheet" href="/static/styles.css?v=48">
+    <link rel="stylesheet" href="/static/styles.css?v=49">
 </head>
 <body>
     <div class="page-shell">
@@ -48,23 +48,6 @@
                         <p>创建任务，批量下载地图图片</p>
                     </div>
                 </div>
-                <nav class="workspace-tabs" role="tablist" aria-label="任务工作区">
-                    <button id="createTaskTab" type="button" class="workspace-tab is-active" role="tab" aria-selected="true" aria-controls="createTaskView" data-workspace-tab="create">
-                        <span class="workspace-tab__icon"><img src="/static/assets/icons/plus.svg" alt=""></span>
-                        <span>
-                            <strong>新建计划</strong>
-                            <small>配置范围、地图源和执行方式</small>
-                        </span>
-                    </button>
-                    <button id="taskHistoryTab" type="button" class="workspace-tab" role="tab" aria-selected="false" aria-controls="taskHistoryView" data-workspace-tab="tasks">
-                        <span class="workspace-tab__icon"><img src="/static/assets/icons/task.svg" alt=""></span>
-                        <span>
-                            <strong>我的任务</strong>
-                            <small>查看历史、进度和下载产物</small>
-                        </span>
-                        <b id="workspaceTaskCount">0</b>
-                    </button>
-                </nav>
                 <div class="topbar__actions">
                     <div class="user-chip">
                         <span class="user-avatar">A</span>
@@ -94,6 +77,11 @@
                                 <img src="/static/assets/icons/map.svg" alt="">
                                 <span>范围框选下载</span>
                             </button>
+                            <button type="button" class="mode-toggle" data-task-mode="tasks" aria-pressed="false">
+                                <img src="/static/assets/icons/task.svg" alt="">
+                                <span>我的任务</span>
+                                <b id="workspaceTaskCount" class="mode-toggle__count">0</b>
+                            </button>
                         </div>
                         <img src="/static/assets/icons/success.svg" class="panel-heading__spark" alt="">
                     </div>
@@ -101,12 +89,12 @@
                     <form id="taskForm" class="task-form">
                         <div class="task-layout">
                             <div class="task-left-column">
-                                <label class="field">
+                                <label class="field task-config-control">
                                     <span class="field-label">任务名称</span>
                                     <input type="text" name="name" required placeholder="例如：南京影像下载">
                                 </label>
 
-                                <section id="credentialSection" class="section-card credential-panel">
+                                <section id="credentialSection" class="section-card credential-panel task-config-control">
                                     <div class="section-card__header">
                                         <h3>服务凭证</h3>
                                         <p>统一用于行政区划和范围框选任务；仅随本次创建任务提交</p>
@@ -127,7 +115,7 @@
                                     </div>
                                 </section>
 
-                                <section id="sourceSection" class="section-card">
+                                <section id="sourceSection" class="section-card task-config-control">
                                     <div class="section-card__header">
                                         <h3>地图源选择</h3>
                                         <p>选择地图服务作为数据源，它们会作为一个任务下的子任务创建</p>
@@ -135,7 +123,7 @@
                                     <div id="tilemapSelector" class="source-list"></div>
                                 </section>
 
-                                <div class="task-side-stack">
+                                <div class="task-side-stack task-config-control">
                                     <section class="parameter-grid">
                                         <label class="field">
                                             <span class="field-label">下载线程</span>
@@ -199,7 +187,7 @@
                                     </section>
                                 </div>
 
-                                <section id="rangeModePanel" class="section-card range-panel is-hidden">
+                                <section id="rangeModePanel" class="section-card range-panel task-config-control is-hidden">
                             <div class="section-card__header">
                                 <h3>范围框选配置</h3>
                                 <p>使用矩形或多边形选择下载范围，按 Tianditu img / cia / vec 创建子任务</p>
@@ -254,7 +242,7 @@
                             </div>
                                 </section>
 
-                                <section id="regionConfigPanel" class="section-card region-config-panel">
+                                <section id="regionConfigPanel" class="section-card region-config-panel task-config-control">
                                     <div class="section-card__header section-card__header--split">
                                         <div>
                                             <h3>下载区域配置</h3>
@@ -268,7 +256,51 @@
                                     <div id="regionList" class="region-list"></div>
                                 </section>
 
-                                <div class="task-submit-panel">
+                                <section id="taskHistoryPanel" class="task-history-panel is-hidden" aria-label="我的任务">
+                                    <div class="task-history-panel__header">
+                                        <div>
+                                            <h3>我的任务</h3>
+                                            <p>查看历史任务、运行状态、失败记录和下载产物</p>
+                                        </div>
+                                        <button id="refreshBtn" type="button" class="ghost-button ghost-button--compact">
+                                            <img src="/static/assets/icons/refresh.svg" alt="">
+                                            <span>刷新</span>
+                                        </button>
+                                    </div>
+
+                                    <div id="taskStats" class="task-stats"></div>
+
+                                    <div class="task-toolbar">
+                                        <div id="taskSelectionMeta" class="selection-meta">未选择任务</div>
+                                        <div class="toolbar-actions">
+                                            <button id="taskMoreBtn" type="button" class="ghost-button ghost-button--compact">
+                                                <img src="/static/assets/icons/more.svg" alt="">
+                                                <span>更多操作</span>
+                                            </button>
+                                            <div id="taskMoreMenu" class="toolbar-menu is-hidden">
+                                                <button type="button" data-bulk-action="pauseFiltered">暂停全部</button>
+                                                <button type="button" data-bulk-action="resumeFiltered">恢复全部</button>
+                                                <button type="button" data-bulk-action="cancelFiltered">取消全部</button>
+                                                <button type="button" data-bulk-action="deleteSelected">删除已选</button>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div id="taskList" class="task-list">
+                                        <div class="task-skeleton">
+                                            <div class="task-skeleton__line task-skeleton__line--lg"></div>
+                                            <div class="task-skeleton__line"></div>
+                                            <div class="task-skeleton__line"></div>
+                                        </div>
+                                        <div class="task-skeleton">
+                                            <div class="task-skeleton__line task-skeleton__line--lg"></div>
+                                            <div class="task-skeleton__line"></div>
+                                            <div class="task-skeleton__line"></div>
+                                        </div>
+                                    </div>
+                                </section>
+
+                                <div class="task-submit-panel task-config-control">
                                     <p class="risk-tip">
                                         <img src="/static/assets/icons/warning.svg" alt="">
                                         <span>请求间隔过小可能导致地图服务限制访问，建议设置为 100-500ms。</span>
@@ -346,54 +378,11 @@
                     </form>
                 </section>
 
-                <section id="taskHistoryView" class="panel panel--tasks workspace-view is-hidden" role="tabpanel" aria-labelledby="taskHistoryTab" data-workspace-view="tasks">
-                    <div class="panel-heading panel-heading--tasks">
-                        <div>
-                            <h2>我的任务</h2>
-                            <p>独立查看历史任务、运行状态、失败记录和下载产物</p>
-                        </div>
-                        <button id="refreshBtn" type="button" class="ghost-button">
-                            <img src="/static/assets/icons/refresh.svg" alt="">
-                            <span>刷新列表</span>
-                        </button>
-                    </div>
-
-                    <div id="taskStats" class="task-stats"></div>
-
-                    <div class="task-toolbar">
-                        <div id="taskSelectionMeta" class="selection-meta">未选择任务</div>
-                        <div class="toolbar-actions">
-                            <button id="taskMoreBtn" type="button" class="ghost-button ghost-button--compact">
-                                <img src="/static/assets/icons/more.svg" alt="">
-                                <span>更多操作</span>
-                            </button>
-                            <div id="taskMoreMenu" class="toolbar-menu is-hidden">
-                                <button type="button" data-bulk-action="pauseFiltered">暂停全部</button>
-                                <button type="button" data-bulk-action="resumeFiltered">恢复全部</button>
-                                <button type="button" data-bulk-action="cancelFiltered">取消全部</button>
-                                <button type="button" data-bulk-action="deleteSelected">删除已选</button>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div id="taskList" class="task-list">
-                        <div class="task-skeleton">
-                            <div class="task-skeleton__line task-skeleton__line--lg"></div>
-                            <div class="task-skeleton__line"></div>
-                            <div class="task-skeleton__line"></div>
-                        </div>
-                        <div class="task-skeleton">
-                            <div class="task-skeleton__line task-skeleton__line--lg"></div>
-                            <div class="task-skeleton__line"></div>
-                            <div class="task-skeleton__line"></div>
-                        </div>
-                    </div>
-                </section>
             </main>
         </div>
     </div>
 
     <script src="/static/vendor/leaflet/leaflet.js?v=1"></script>
-    <script src="/static/script.js?v=48"></script>
+    <script src="/static/script.js?v=49"></script>
 </body>
 </html>

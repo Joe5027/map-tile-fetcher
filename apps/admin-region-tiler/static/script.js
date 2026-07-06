@@ -6,6 +6,7 @@ let activeLevelCount = 2;
 let selectedProvider = "";
 let selectedSourceIds = new Set();
 let taskMode = "region";
+let activeMapMode = "region";
 let rangeMap = null;
 let rangeBaseLayer = null;
 let rangeRectangle = null;
@@ -319,29 +320,45 @@ function showApp(user) {
 }
 
 function setWorkspaceTab(tab) {
-    activeWorkspaceTab = tab === "tasks" ? "tasks" : "create";
+    activeWorkspaceTab = "create";
 
     document.querySelectorAll("[data-workspace-tab]").forEach((button) => {
-        const active = button.dataset.workspaceTab === activeWorkspaceTab;
+        const active = button.dataset.workspaceTab === (tab === "tasks" ? "tasks" : "create");
         button.classList.toggle("is-active", active);
         button.setAttribute("aria-selected", active ? "true" : "false");
         button.tabIndex = active ? 0 : -1;
     });
 
     document.querySelectorAll("[data-workspace-view]").forEach((view) => {
-        view.classList.toggle("is-hidden", view.dataset.workspaceView !== activeWorkspaceTab);
+        view.classList.toggle("is-hidden", view.dataset.workspaceView !== "create");
     });
 
-    if (activeWorkspaceTab === "create" && taskMode === "bbox" && rangeMap) {
+    if (tab === "tasks") {
+        setTaskMode("tasks");
+        return;
+    }
+
+    if (taskMode === "tasks") {
+        setTaskMode(activeMapMode);
+        return;
+    }
+
+    if (activeMapMode === "bbox" && rangeMap) {
         window.setTimeout(() => rangeMap.invalidateSize(), 40);
     }
-    if (activeWorkspaceTab === "create" && taskMode === "region" && adminRegionMap) {
+    if (activeMapMode === "region" && adminRegionMap) {
         window.setTimeout(() => adminRegionMap.invalidateSize(), 40);
     }
 }
 
 function setTaskMode(mode) {
-    taskMode = mode === "bbox" ? "bbox" : "region";
+    taskMode = mode === "tasks" ? "tasks" : mode === "bbox" ? "bbox" : "region";
+    if (taskMode !== "tasks") {
+        activeMapMode = taskMode;
+    }
+
+    const isTasksMode = taskMode === "tasks";
+    const mapMode = activeMapMode;
 
     document.querySelectorAll("[data-task-mode]").forEach((button) => {
         const active = button.dataset.taskMode === taskMode;
@@ -349,14 +366,21 @@ function setTaskMode(mode) {
         button.setAttribute("aria-pressed", active ? "true" : "false");
     });
 
-    document.getElementById("sourceSection").classList.toggle("is-hidden", taskMode !== "region");
-    document.getElementById("regionConfigPanel").classList.toggle("is-hidden", taskMode !== "region");
-    document.getElementById("regionModePanel").classList.toggle("is-hidden", taskMode !== "region");
-    document.getElementById("rangeModePanel").classList.toggle("is-hidden", taskMode !== "bbox");
-    document.getElementById("rangePreviewPanel").classList.toggle("is-hidden", taskMode !== "bbox");
-    document.getElementById("addLevelBtn").classList.toggle("is-hidden", taskMode !== "region");
-    document.getElementById("taskForm").classList.toggle("task-form--range", taskMode === "bbox");
-    if (taskMode === "bbox") {
+    document.querySelectorAll(".task-config-control").forEach((element) => {
+        element.classList.toggle("is-hidden", isTasksMode);
+    });
+
+    document.getElementById("taskHistoryPanel").classList.toggle("is-hidden", !isTasksMode);
+    document.querySelector(".task-left-column")?.classList.toggle("task-left-column--tasks", isTasksMode);
+    document.getElementById("sourceSection").classList.toggle("is-hidden", isTasksMode || taskMode !== "region");
+    document.getElementById("regionConfigPanel").classList.toggle("is-hidden", isTasksMode || taskMode !== "region");
+    document.getElementById("rangeModePanel").classList.toggle("is-hidden", isTasksMode || taskMode !== "bbox");
+    document.getElementById("regionModePanel").classList.toggle("is-hidden", mapMode !== "region");
+    document.getElementById("rangePreviewPanel").classList.toggle("is-hidden", mapMode !== "bbox");
+    document.getElementById("addLevelBtn").classList.toggle("is-hidden", isTasksMode || taskMode !== "region");
+    document.getElementById("taskForm").classList.toggle("task-form--range", mapMode === "bbox");
+    document.getElementById("taskForm").classList.toggle("task-form--tasks", isTasksMode);
+    if (mapMode === "bbox") {
         initRangeMap();
         updateRangeDrawControls();
         updateRangeEstimate();
@@ -371,7 +395,9 @@ function setTaskMode(mode) {
         window.setTimeout(() => {
             if (adminRegionMap) {
                 adminRegionMap.invalidateSize();
-                fitAdminRegionMapToSelection();
+                if (!isTasksMode) {
+                    fitAdminRegionMapToSelection();
+                }
             }
         }, 40);
     }
@@ -1910,6 +1936,10 @@ function buildTianDiTuSource(layer, token, index) {
 async function createTask(event) {
     event.preventDefault();
     hideMessage("taskError");
+
+    if (taskMode === "tasks") {
+        return;
+    }
 
     const formData = new FormData(event.target);
     if (taskMode === "bbox") {
