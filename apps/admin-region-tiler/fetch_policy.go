@@ -136,7 +136,6 @@ func defaultFetchPolicy(url string, sourceName string) FetchPolicy {
 	host := strings.ToLower(hostnameOf(url))
 	if strings.HasSuffix(host, ".tianditu.gov.cn") || strings.Contains(strings.ToLower(sourceName), "天地图") {
 		policy.Name = "tianditu"
-		policy.Referer = "https://map.tianditu.gov.cn"
 		policy.RotateHosts = true
 		policy.WorkerCount = 1
 		policy.BaseDelayMS = 120

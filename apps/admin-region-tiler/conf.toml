@@ -39,7 +39,9 @@
 #   name = "tianditu-proxy-pool"
 #   host_contains = "tianditu.gov.cn"
 #   source_name_contains = "天地图"
-#   referer = "https://map.tianditu.gov.cn"
+#   # Browser-style referer can make server-side TianDiTu keys fail with 301013.
+#   # Only set referer when your key is explicitly configured for browser access.
+#   # referer = "https://map.tianditu.gov.cn"
 #   user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 #   worker_count = 1
 #   base_delay_ms = 120
