@@ -165,7 +165,7 @@ func launchWorkerProcess(taskRecordID, runID string) (*exec.Cmd, error) {
 	}
 
 	cmd := exec.Command(exePath, args...)
-	cmd.Dir = filepath.Dir(exePath)
+	cmd.Dir = workerProcessWorkingDir(exePath)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Env = os.Environ()
@@ -173,6 +173,14 @@ func launchWorkerProcess(taskRecordID, runID string) (*exec.Cmd, error) {
 		return nil, err
 	}
 	return cmd, nil
+}
+
+func workerProcessWorkingDir(exePath string) string {
+	workingDir, err := os.Getwd()
+	if err == nil && strings.TrimSpace(workingDir) != "" {
+		return workingDir
+	}
+	return filepath.Dir(exePath)
 }
 
 func resolveConfigPath(path string) string {

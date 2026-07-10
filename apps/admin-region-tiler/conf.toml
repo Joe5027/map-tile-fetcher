@@ -39,7 +39,9 @@
 #   name = "tianditu-proxy-pool"
 #   host_contains = "tianditu.gov.cn"
 #   source_name_contains = "天地图"
-#   referer = "https://map.tianditu.gov.cn"
+#   # Browser-style referer can make server-side TianDiTu keys fail with 301013.
+#   # Only set referer when your key is explicitly configured for browser access.
+#   # referer = "https://map.tianditu.gov.cn"
 #   user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 #   worker_count = 1
 #   base_delay_ms = 120
@@ -52,6 +54,19 @@
 #     "http://user:pass@proxy-1.example.com:8080",
 #     "http://user:pass@proxy-2.example.com:8080"
 #   ]
+
+[[source_policies]]
+  name = "tianditu-range-balanced"
+  host_contains = "tianditu.gov.cn"
+  source_name_contains = "天地图"
+  worker_count = 8
+  base_delay_ms = 50
+  time_jitter_ms = 0
+  max_retries = 0
+  retry_passes = 1
+  rotate_hosts = true
+  retry_statuses = [418, 429, 502, 503, 504]
+
 # 地图源配置列表
 [[tilemaps]]
   id = 1

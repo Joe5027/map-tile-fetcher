@@ -3,8 +3,11 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"math"
 	"net/http"
+	urlpkg "net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -189,6 +192,10 @@ type AuthLoginRequest struct {
 	Password string `json:"password" binding:"required"`
 }
 
+type TiandituPreviewTokenRequest struct {
+	Token string `json:"token"`
+}
+
 type TileMapConfig struct {
 	ID      int    `json:"id"`
 	Name    string `json:"name"`
@@ -247,6 +254,10 @@ var (
 		ByID:    make(map[string]RegionCatalogItem),
 		GeoJSON: make(map[string]cachedRegionGeoJSON),
 	}
+	tiandituPreviewTokens = struct {
+		sync.RWMutex
+		values map[string]string
+	}{values: make(map[string]string)}
 )
 
 func initServer() {
@@ -294,6 +305,8 @@ func initServer() {
 		protected.GET("/config/region-catalog", getRegionCatalog)
 		protected.GET("/config/region-catalog/:id/geojson", getRegionCatalogGeoJSON)
 		protected.GET("/config/geojson-files", getGeoJSONFiles)
+		protected.POST("/tile-preview/tianditu-token", registerTiandituPreviewToken)
+		protected.GET("/tile-preview/tianditu/:tokenID/:layer/:z/:x/:y", proxyTiandituPreviewTile)
 	}
 
 	port := strings.TrimSpace(viper.GetString("app.port"))
@@ -403,6 +416,106 @@ func authMiddleware() gin.HandlerFunc {
 
 func authEnabled() bool {
 	return viper.GetBool("auth.enabled")
+}
+
+func registerTiandituPreviewToken(c *gin.Context) {
+	var req TiandituPreviewTokenRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	token := strings.TrimSpace(req.Token)
+	if token == "" || token == "YOUR_TIANDITU_TOKEN" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "tianditu token is required"})
+		return
+	}
+	if len(token) > 256 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "tianditu token is too long"})
+		return
+	}
+
+	id, err := shortid.Generate()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create preview token"})
+		return
+	}
+
+	tiandituPreviewTokens.Lock()
+	tiandituPreviewTokens.values[id] = token
+	tiandituPreviewTokens.Unlock()
+
+	c.JSON(http.StatusOK, gin.H{"id": id})
+}
+
+func proxyTiandituPreviewTile(c *gin.Context) {
+	tokenID := strings.TrimSpace(c.Param("tokenID"))
+	layer := strings.TrimSpace(c.Param("layer"))
+	z, zErr := strconv.Atoi(strings.TrimSuffix(c.Param("z"), ".png"))
+	x, xErr := strconv.Atoi(strings.TrimSuffix(c.Param("x"), ".png"))
+	y, yErr := strconv.Atoi(strings.TrimSuffix(c.Param("y"), ".png"))
+	if tokenID == "" || zErr != nil || xErr != nil || yErr != nil || z < 0 || z > 18 || x < 0 || y < 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid tile request"})
+		return
+	}
+
+	tileLayer := ""
+	switch layer {
+	case "img":
+		tileLayer = "img_w"
+	case "vec":
+		tileLayer = "vec_w"
+	case "cia":
+		tileLayer = "cia_w"
+	case "cva":
+		tileLayer = "cva_w"
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid tianditu layer"})
+		return
+	}
+
+	tiandituPreviewTokens.RLock()
+	token := tiandituPreviewTokens.values[tokenID]
+	tiandituPreviewTokens.RUnlock()
+	if token == "" {
+		c.JSON(http.StatusNotFound, gin.H{"error": "preview token not found"})
+		return
+	}
+
+	shard := (x + y + z) % 8
+	tileURL := fmt.Sprintf("https://t%d.tianditu.gov.cn/DataServer?T=%s&x=%d&y=%d&l=%d&tk=%s", shard, tileLayer, x, y, z, urlpkg.QueryEscape(token))
+	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, tileURL, nil)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create upstream request"})
+		return
+	}
+	req.Close = true
+	req.Header.Set("User-Agent", "Go-http-client/1.1")
+
+	client := newTileHTTPClient(20*time.Second, "")
+	resp, err := client.Do(req)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "failed to fetch tianditu tile"})
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "failed to read tianditu tile"})
+		return
+	}
+	if resp.StatusCode != http.StatusOK {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "tianditu tile request failed", "status": resp.StatusCode})
+		return
+	}
+
+	contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
+	if contentType == "" {
+		contentType = "image/png"
+	}
+	c.Header("Cache-Control", "private, max-age=300")
+	c.Data(http.StatusOK, contentType, body)
 }
 
 func currentUser(c *gin.Context) *UserRecord {
@@ -523,15 +636,21 @@ func purgeTask(c *gin.Context) {
 	}
 
 	switch plan.Status {
-	case TaskRecordRunning, TaskRecordPaused:
-		c.JSON(http.StatusConflict, gin.H{"error": "running task cannot be deleted"})
+	case TaskRecordRunning:
+		c.JSON(http.StatusConflict, gin.H{"error": "运行中的下载不能直接删除，请先取消该下载。"})
+		return
+	case TaskRecordPaused:
+		c.JSON(http.StatusConflict, gin.H{"error": "已暂停的下载不能直接删除，请先取消该下载。"})
 		return
 	}
 
 	if plan.LastRun != nil {
 		switch plan.LastRun.Status {
-		case TaskRunning, TaskPaused, TaskPending:
-			c.JSON(http.StatusConflict, gin.H{"error": "running task cannot be deleted"})
+		case TaskRunning, TaskPending:
+			c.JSON(http.StatusConflict, gin.H{"error": "运行中的下载不能直接删除，请先取消该下载。"})
+			return
+		case TaskPaused:
+			c.JSON(http.StatusConflict, gin.H{"error": "已暂停的下载不能直接删除，请先取消该下载。"})
 			return
 		}
 	}

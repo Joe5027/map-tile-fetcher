@@ -369,7 +369,7 @@ async function login(page) {
   const appVisible = await page.locator("#appView").evaluate((element) => !element.classList.contains("is-hidden"));
   if (appVisible) {
     await page.locator("#taskForm").waitFor({ state: "visible", timeout: options.timeoutMs });
-    await page.locator("#taskHistoryTab").waitFor({ state: "visible", timeout: options.timeoutMs });
+    await page.locator("[data-task-mode='tasks']").waitFor({ state: "visible", timeout: options.timeoutMs });
     return;
   }
 
@@ -378,7 +378,7 @@ async function login(page) {
   await page.locator("#loginForm button[type='submit']").click();
   await page.locator("#appView").waitFor({ state: "visible", timeout: options.timeoutMs });
   await page.locator("#taskForm").waitFor({ state: "visible", timeout: options.timeoutMs });
-  await page.locator("#taskHistoryTab").waitFor({ state: "visible", timeout: options.timeoutMs });
+  await page.locator("[data-task-mode='tasks']").waitFor({ state: "visible", timeout: options.timeoutMs });
 }
 
 async function smokeRegionFlow(page, createdPayloads) {
@@ -388,13 +388,22 @@ async function smokeRegionFlow(page, createdPayloads) {
   await page.locator("#rangeModePanel").waitFor({ state: "hidden", timeout: options.timeoutMs });
   await page.locator("#regionList .region-row").first().waitFor({ state: "visible", timeout: options.timeoutMs });
   await page.locator("#tilemapSelector .source-card").first().waitFor({ state: "visible", timeout: options.timeoutMs });
-  await page.waitForFunction(() => document.querySelectorAll("#adminRegionMap path[data-admin-region-id]").length > 0, null, { timeout: options.timeoutMs });
+  await waitForPageFunction(
+    page,
+    () => document.querySelectorAll("#adminRegionMap path[data-admin-region-id]").length > 0,
+    "admin region paths to render",
+  );
   await page.locator("#adminRegionMap path[data-admin-region-id]").first().click({ force: true });
-  await page.waitForFunction(() => {
-    const cityTab = document.querySelector("[data-admin-region-level='city']");
-    const checkedLevels = document.querySelectorAll(".level-toggle:checked").length;
-    return Boolean(cityTab?.classList.contains("is-active") && checkedLevels === 1);
-  }, null, { timeout: options.timeoutMs });
+  await waitForPageFunction(
+    page,
+    () => {
+      const cityTab = document.querySelector("[data-admin-region-level='city']");
+      const provinceSelect = document.querySelector(".level-region[data-id='3']");
+      const regionRows = document.querySelectorAll("#regionList .region-row").length;
+      return Boolean(cityTab?.classList.contains("is-active") && regionRows >= 3 && provinceSelect?.value);
+    },
+    "admin region click to activate city level",
+  );
 
   const beforeCount = createdPayloads.length;
   await page.locator("input[name='name']").fill(`smoke region ${Date.now()}`);
@@ -404,7 +413,8 @@ async function smokeRegionFlow(page, createdPayloads) {
 
   const payload = createdPayloads.at(-1);
   assert(Array.isArray(payload.levels) && payload.levels.length > 0, "region payload should include levels");
-  assert(payload.levels.length === 1, "focused region map selection should submit only the selected level by default");
+  assert(payload.levels.length === 3, "focused region map selection should retain the default global and China levels");
+  assert(payload.levels[2]?.minZoom === 9 && payload.levels[2]?.maxZoom === 10, "focused region map selection should submit the selected province zoom level");
   assert(Array.isArray(payload.sources) && payload.sources.length > 0, "region payload should include sources");
   assert(!payload.mode, "region payload should use the legacy-compatible region request shape");
   assert(payload.scheduleMode === "immediate", "region payload should create an immediate task");
@@ -460,7 +470,7 @@ async function smokeRangeFlow(page, createdPayloads) {
 }
 
 async function showCreateTab(page) {
-  await page.locator("#createTaskTab").click();
+  await page.locator("[data-task-mode='region']").click();
   await page.locator("#taskForm").waitFor({ state: "visible", timeout: options.timeoutMs });
 }
 
@@ -488,6 +498,14 @@ async function waitForPayloadCount(payloads, count) {
     await new Promise((resolveWait) => setTimeout(resolveWait, 50));
   }
   throw new Error(`timed out waiting for ${count} task payloads; observed ${payloads.length}`);
+}
+
+async function waitForPageFunction(page, fn, label) {
+  try {
+    await page.waitForFunction(fn, null, { timeout: options.timeoutMs });
+  } catch (error) {
+    throw new Error(`timed out waiting for ${label}: ${error.message}`);
+  }
 }
 
 async function waitForTextNotEqual(locator, disallowed) {

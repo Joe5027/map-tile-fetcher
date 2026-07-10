@@ -111,6 +111,8 @@ type Task struct {
 
 	mu             sync.RWMutex
 	pauseCond      *sync.Cond
+	requestMu      sync.Mutex
+	nextRequestAt  time.Time
 	throttleUntil  time.Time
 	throttleLevel  int
 	retryMu        sync.Mutex
@@ -184,10 +186,10 @@ func NewTask(layers []Layer, m TileMap, opts TaskOptions) *Task {
 		proxyRotator:   newProxyRotator(opts.Policy.Proxies),
 	}
 
-	if task.policy.BaseDelayMS > 0 {
+	if task.policy.BaseDelaySet || task.policy.BaseDelayMS > 0 {
 		task.timeDelay = maxInt(task.policy.BaseDelayMS, 0)
 	}
-	if task.policy.TimeJitterMS > 0 {
+	if task.policy.TimeJitterSet || task.policy.TimeJitterMS > 0 {
 		task.timeJitter = maxInt(task.policy.TimeJitterMS, 0)
 	}
 	if task.policy.WorkerCount > 0 {
@@ -396,14 +398,14 @@ func newTileHTTPClient(timeout time.Duration, proxy string) *http.Client {
 		Proxy: proxyFunc,
 		DialContext: (&net.Dialer{
 			Timeout:   10 * time.Second,
-			KeepAlive: -1,
+			KeepAlive: 30 * time.Second,
 		}).DialContext,
 		ForceAttemptHTTP2:     false,
-		DisableKeepAlives:     true,
-		MaxIdleConns:          0,
-		MaxIdleConnsPerHost:   1,
-		MaxConnsPerHost:       1,
-		IdleConnTimeout:       0,
+		DisableKeepAlives:     false,
+		MaxIdleConns:          128,
+		MaxIdleConnsPerHost:   64,
+		MaxConnsPerHost:       64,
+		IdleConnTimeout:       30 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 	}
@@ -753,18 +755,32 @@ func (task *Task) processTile(job TileJob) error {
 }
 
 func (task *Task) waitForRequestWindow() error {
-	delay := time.Duration(task.timeDelay) * time.Millisecond
+	interval := time.Duration(task.timeDelay) * time.Millisecond
 	if task.timeJitter > 0 {
-		delay += time.Duration(rand.Intn(task.timeJitter+1)) * time.Millisecond
+		interval += time.Duration(rand.Intn(task.timeJitter+1)) * time.Millisecond
 	}
 
 	task.mu.RLock()
 	throttleUntil := task.throttleUntil
 	task.mu.RUnlock()
-	if !throttleUntil.IsZero() {
-		if extra := time.Until(throttleUntil); extra > 0 {
-			delay += extra
+
+	var delay time.Duration
+	if interval > 0 || !throttleUntil.IsZero() {
+		now := time.Now()
+		target := now
+
+		task.requestMu.Lock()
+		if task.nextRequestAt.After(target) {
+			target = task.nextRequestAt
 		}
+		if throttleUntil.After(target) {
+			target = throttleUntil
+		}
+		if target.After(now) {
+			delay = target.Sub(now)
+		}
+		task.nextRequestAt = target.Add(interval)
+		task.requestMu.Unlock()
 	}
 
 	if delay > 0 {
@@ -943,7 +959,6 @@ func (task *Task) fetchTile(mt maptile.Tile, url string) ([]byte, error) {
 		}
 		task.applyRequestHeaders(req)
 
-		start := time.Now()
 		resp, err := task.clientForProxy(lastProxy).Do(req)
 		if err != nil {
 			lastErr = err
@@ -957,8 +972,6 @@ func (task *Task) fetchTile(mt maptile.Tile, url string) ([]byte, error) {
 			} else if len(body) == 0 {
 				lastErr = errors.New("empty tile response")
 			} else {
-				cost := time.Since(start).Milliseconds()
-				log.Infof("tile(z:%d, x:%d, y:%d), %dms , %.2f kb, %s", mt.Z, mt.X, mt.Y, cost, float32(len(body))/1024.0, tileURL)
 				return body, nil
 			}
 		}

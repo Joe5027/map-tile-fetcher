@@ -137,7 +137,6 @@ func saveToFiles(tile Tile, task *Task) error {
 	if err != nil {
 		return err
 	}
-	log.Println(fileName)
 	return nil
 }
 

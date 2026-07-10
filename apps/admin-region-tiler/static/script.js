@@ -6,8 +6,10 @@ let activeLevelCount = 2;
 let selectedProvider = "";
 let selectedSourceIds = new Set();
 let taskMode = "region";
+let activeMapMode = "region";
 let rangeMap = null;
 let rangeBaseLayer = null;
+let rangeLabelLayer = null;
 let rangeRectangle = null;
 let rangePolyline = null;
 let rangePolygon = null;
@@ -17,13 +19,20 @@ let rangeDrawMode = "rectangle";
 let rangeMapExpanded = false;
 let rangeMapOriginalParent = null;
 let rangeMapOriginalNextSibling = null;
+let rangeBaseLayerRenderToken = 0;
+let rangeTiandituPreviewTokenValue = "";
+let rangeTiandituPreviewTokenId = "";
+let rangeTiandituPreviewTokenPromise = null;
 let adminRegionMap = null;
 let adminRegionBaseLayer = null;
+let adminRegionLabelLayer = null;
 let adminRegionLayerGroup = null;
 let adminRegionSelectedLayer = null;
 let adminRegionLevel = "province";
 let adminRegionRenderToken = 0;
+let adminRegionBaseLayerRenderToken = 0;
 let adminRegionMapInitRetries = 0;
+let adminRegionPendingFocusRegionId = "";
 let rangeMapInitRetries = 0;
 let activeWorkspaceTab = "create";
 let currentTaskFilter = "all";
@@ -41,6 +50,7 @@ const MAP_LATITUDE_BOUNDS = [
 ];
 const MAP_MIN_ZOOM = 2;
 const MAP_INIT_RETRY_LIMIT = 30;
+const TOKEN_STORAGE_KEY = "mapTileFetcher.serviceCredentials.v1";
 
 const REGION_LEVEL_RULES = [
     { id: 1, label: "第1级", regionLevel: "world", fixedRegionId: "world", minZoom: 0, maxZoom: 5 },
@@ -65,6 +75,12 @@ const RANGE_LAYER_NAMES = {
     img: "天地图 img 卫星图",
     cia: "天地图 cia 路网",
     vec: "天地图 vec 电子图"
+};
+
+const RANGE_TASK_DEFAULTS = {
+    workers: 8,
+    savePipe: 2,
+    timeDelay: 50
 };
 
 const ADMIN_REGION_LEVEL_CONFIG_IDS = {
@@ -97,10 +113,32 @@ document.addEventListener("DOMContentLoaded", async () => {
 function bindEvents() {
     document.getElementById("loginForm").addEventListener("submit", login);
     document.getElementById("logoutBtn").addEventListener("click", logout);
+    document.getElementById("accountMenuBtn").addEventListener("click", (event) => {
+        event.stopPropagation();
+        toggleAccountMenu();
+    });
+    document.getElementById("accountMenu").addEventListener("click", (event) => {
+        event.stopPropagation();
+    });
+    document.getElementById("openTokenDialogBtn").addEventListener("click", () => {
+        closeAccountMenu();
+        openTokenDialog();
+    });
+    document.getElementById("tokenCredentialForm").addEventListener("submit", saveTokenCredentials);
+    document.getElementById("clearSavedTokenBtn").addEventListener("click", clearSavedTokenCredentials);
+    document.querySelectorAll("[data-close-token-dialog]").forEach((button) => {
+        button.addEventListener("click", closeTokenDialog);
+    });
+    document.getElementById("tokenDialog").addEventListener("click", (event) => {
+        if (event.target.id === "tokenDialog") {
+            closeTokenDialog();
+        }
+    });
     document.getElementById("taskForm").addEventListener("submit", createTask);
     document.getElementById("refreshBtn").addEventListener("click", loadTasks);
     document.getElementById("addLevelBtn").addEventListener("click", addLevelConfig);
     document.getElementById("fitAdminRegionMapBtn").addEventListener("click", fitAdminRegionMapToSelection);
+    document.getElementById("toggleSelectTasksBtn").addEventListener("click", toggleSelectVisibleTasks);
 
     document.querySelectorAll("[data-workspace-tab]").forEach((button) => {
         button.addEventListener("click", () => setWorkspaceTab(button.dataset.workspaceTab));
@@ -124,11 +162,13 @@ function bindEvents() {
             updateRangeOverlay();
             if (element.name === "tiandituToken") {
                 updateRangeBaseLayer();
+                updateAdminRegionBaseLayer();
             }
         });
     });
 
     document.getElementById("rangePreviewSource").addEventListener("change", updateRangeBaseLayer);
+    document.getElementById("adminRegionPreviewSource").addEventListener("change", updateAdminRegionBaseLayer);
 
     document.querySelectorAll("[data-range-draw-mode]").forEach((button) => {
         button.addEventListener("click", () => setRangeDrawMode(button.dataset.rangeDrawMode));
@@ -198,10 +238,11 @@ function bindEvents() {
         if (!button) {
             return;
         }
-        currentTaskFilter = button.dataset.taskFilter;
-        renderTaskStats(cachedTasks);
-        renderTaskList(cachedTasks);
-    });
+            currentTaskFilter = button.dataset.taskFilter;
+            renderTaskStats(cachedTasks);
+            renderTaskList(cachedTasks);
+            renderSelectionMeta();
+        });
 
     document.getElementById("taskMoreBtn").addEventListener("click", (event) => {
         event.stopPropagation();
@@ -277,12 +318,21 @@ function bindEvents() {
     });
 
     document.addEventListener("click", () => {
+        closeAccountMenu();
         document.getElementById("taskMoreMenu").classList.add("is-hidden");
         closeAllTaskMenus();
     });
 
     document.addEventListener("keydown", (event) => {
-        if (event.key === "Escape" && rangeMapExpanded) {
+        if (event.key !== "Escape") {
+            return;
+        }
+        if (!document.getElementById("tokenDialog").classList.contains("is-hidden")) {
+            closeTokenDialog();
+            return;
+        }
+        closeAccountMenu();
+        if (rangeMapExpanded) {
             setRangeMapExpanded(false);
         }
     });
@@ -296,11 +346,11 @@ async function bootstrap() {
     }
 
     showApp(me.data);
+    applySavedCredentialsToTaskForm();
     await Promise.all([loadTilemaps(), loadRegionCatalog()]);
     initDefaultLevelConfigs();
     renderLevelConfigs();
     setTaskMode(taskMode);
-    initAdminRegionMap();
     syncScheduleControls();
     updateRangeEstimate();
     await loadTasks();
@@ -319,29 +369,45 @@ function showApp(user) {
 }
 
 function setWorkspaceTab(tab) {
-    activeWorkspaceTab = tab === "tasks" ? "tasks" : "create";
+    activeWorkspaceTab = "create";
 
     document.querySelectorAll("[data-workspace-tab]").forEach((button) => {
-        const active = button.dataset.workspaceTab === activeWorkspaceTab;
+        const active = button.dataset.workspaceTab === (tab === "tasks" ? "tasks" : "create");
         button.classList.toggle("is-active", active);
         button.setAttribute("aria-selected", active ? "true" : "false");
         button.tabIndex = active ? 0 : -1;
     });
 
     document.querySelectorAll("[data-workspace-view]").forEach((view) => {
-        view.classList.toggle("is-hidden", view.dataset.workspaceView !== activeWorkspaceTab);
+        view.classList.toggle("is-hidden", view.dataset.workspaceView !== "create");
     });
 
-    if (activeWorkspaceTab === "create" && taskMode === "bbox" && rangeMap) {
+    if (tab === "tasks") {
+        setTaskMode("tasks");
+        return;
+    }
+
+    if (taskMode === "tasks") {
+        setTaskMode(activeMapMode);
+        return;
+    }
+
+    if (activeMapMode === "bbox" && rangeMap) {
         window.setTimeout(() => rangeMap.invalidateSize(), 40);
     }
-    if (activeWorkspaceTab === "create" && taskMode === "region" && adminRegionMap) {
+    if (activeMapMode === "region" && adminRegionMap) {
         window.setTimeout(() => adminRegionMap.invalidateSize(), 40);
     }
 }
 
 function setTaskMode(mode) {
-    taskMode = mode === "bbox" ? "bbox" : "region";
+    taskMode = mode === "tasks" ? "tasks" : mode === "bbox" ? "bbox" : "region";
+    if (taskMode !== "tasks") {
+        activeMapMode = taskMode;
+    }
+
+    const isTasksMode = taskMode === "tasks";
+    const mapMode = activeMapMode;
 
     document.querySelectorAll("[data-task-mode]").forEach((button) => {
         const active = button.dataset.taskMode === taskMode;
@@ -349,14 +415,21 @@ function setTaskMode(mode) {
         button.setAttribute("aria-pressed", active ? "true" : "false");
     });
 
-    document.getElementById("sourceSection").classList.toggle("is-hidden", taskMode !== "region");
-    document.getElementById("regionConfigPanel").classList.toggle("is-hidden", taskMode !== "region");
-    document.getElementById("regionModePanel").classList.toggle("is-hidden", taskMode !== "region");
-    document.getElementById("rangeModePanel").classList.toggle("is-hidden", taskMode !== "bbox");
-    document.getElementById("rangePreviewPanel").classList.toggle("is-hidden", taskMode !== "bbox");
-    document.getElementById("addLevelBtn").classList.toggle("is-hidden", taskMode !== "region");
-    document.getElementById("taskForm").classList.toggle("task-form--range", taskMode === "bbox");
-    if (taskMode === "bbox") {
+    document.querySelectorAll(".task-config-control").forEach((element) => {
+        element.classList.toggle("is-hidden", isTasksMode);
+    });
+
+    document.getElementById("taskHistoryPanel").classList.toggle("is-hidden", !isTasksMode);
+    document.querySelector(".task-left-column")?.classList.toggle("task-left-column--tasks", isTasksMode);
+    document.getElementById("sourceSection").classList.toggle("is-hidden", isTasksMode || taskMode !== "region");
+    document.getElementById("regionConfigPanel").classList.toggle("is-hidden", isTasksMode || taskMode !== "region");
+    document.getElementById("rangeModePanel").classList.toggle("is-hidden", isTasksMode || taskMode !== "bbox");
+    document.getElementById("regionModePanel").classList.toggle("is-hidden", mapMode !== "region");
+    document.getElementById("rangePreviewPanel").classList.toggle("is-hidden", mapMode !== "bbox");
+    document.getElementById("addLevelBtn").classList.toggle("is-hidden", isTasksMode || taskMode !== "region");
+    document.getElementById("taskForm").classList.toggle("task-form--range", mapMode === "bbox");
+    document.getElementById("taskForm").classList.toggle("task-form--tasks", isTasksMode);
+    if (mapMode === "bbox") {
         initRangeMap();
         updateRangeDrawControls();
         updateRangeEstimate();
@@ -371,7 +444,9 @@ function setTaskMode(mode) {
         window.setTimeout(() => {
             if (adminRegionMap) {
                 adminRegionMap.invalidateSize();
-                fitAdminRegionMapToSelection();
+                if (!isTasksMode) {
+                    fitAdminRegionMapToSelection();
+                }
             }
         }, 40);
     }
@@ -438,6 +513,127 @@ function readCredentialRequest(formData) {
     };
 }
 
+function getCredentialInputs() {
+    const form = document.getElementById("taskForm");
+    return {
+        tiandituToken: form?.elements.tiandituToken || null,
+        mapboxToken: form?.elements.mapboxToken || null,
+        mapboxSku: form?.elements.mapboxSku || null
+    };
+}
+
+function readTaskFormCredentials() {
+    return readCredentialRequest(new FormData(document.getElementById("taskForm")));
+}
+
+function readSavedCredentials() {
+    try {
+        const raw = window.localStorage.getItem(TOKEN_STORAGE_KEY);
+        if (!raw) {
+            return null;
+        }
+        const parsed = JSON.parse(raw);
+        return {
+            tiandituToken: String(parsed.tiandituToken || "").trim(),
+            mapboxToken: String(parsed.mapboxToken || "").trim(),
+            mapboxSku: String(parsed.mapboxSku || "").trim()
+        };
+    } catch (_error) {
+        return null;
+    }
+}
+
+function writeSavedCredentials(credentials) {
+    window.localStorage.setItem(TOKEN_STORAGE_KEY, JSON.stringify({
+        tiandituToken: String(credentials.tiandituToken || "").trim(),
+        mapboxToken: String(credentials.mapboxToken || "").trim(),
+        mapboxSku: String(credentials.mapboxSku || "").trim()
+    }));
+}
+
+function applyCredentialsToTaskForm(credentials) {
+    const inputs = getCredentialInputs();
+    Object.entries(inputs).forEach(([key, input]) => {
+        if (!input) {
+            return;
+        }
+        input.value = String(credentials[key] || "").trim();
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    refreshCredentialDependentViews();
+}
+
+function applySavedCredentialsToTaskForm() {
+    const credentials = readSavedCredentials();
+    if (!credentials) {
+        return;
+    }
+    applyCredentialsToTaskForm(credentials);
+}
+
+function refreshCredentialDependentViews() {
+    updateRangeEstimate();
+    updateRangeOverlay();
+    updateRangeBaseLayer();
+    updateAdminRegionBaseLayer();
+}
+
+function toggleAccountMenu(force) {
+    const menu = document.getElementById("accountMenu");
+    const button = document.getElementById("accountMenuBtn");
+    const shouldOpen = typeof force === "boolean" ? force : menu.classList.contains("is-hidden");
+    menu.classList.toggle("is-hidden", !shouldOpen);
+    button.setAttribute("aria-expanded", shouldOpen ? "true" : "false");
+}
+
+function closeAccountMenu() {
+    toggleAccountMenu(false);
+}
+
+function openTokenDialog() {
+    const savedCredentials = readSavedCredentials() || {};
+    const formCredentials = readTaskFormCredentials();
+    const credentials = {
+        tiandituToken: formCredentials.tiandituToken || savedCredentials.tiandituToken || "",
+        mapboxToken: formCredentials.mapboxToken || savedCredentials.mapboxToken || "",
+        mapboxSku: formCredentials.mapboxSku || savedCredentials.mapboxSku || ""
+    };
+    document.getElementById("tokenTiandituInput").value = credentials.tiandituToken || "";
+    document.getElementById("tokenMapboxInput").value = credentials.mapboxToken || "";
+    document.getElementById("tokenMapboxSkuInput").value = credentials.mapboxSku || "";
+    hideMessage("tokenDialogMessage");
+    document.getElementById("tokenDialog").classList.remove("is-hidden");
+    window.setTimeout(() => document.getElementById("tokenTiandituInput").focus(), 0);
+}
+
+function closeTokenDialog() {
+    document.getElementById("tokenDialog").classList.add("is-hidden");
+    hideMessage("tokenDialogMessage");
+}
+
+function saveTokenCredentials(event) {
+    event.preventDefault();
+    const credentials = {
+        tiandituToken: document.getElementById("tokenTiandituInput").value.trim(),
+        mapboxToken: document.getElementById("tokenMapboxInput").value.trim(),
+        mapboxSku: document.getElementById("tokenMapboxSkuInput").value.trim()
+    };
+    writeSavedCredentials(credentials);
+    applyCredentialsToTaskForm(credentials);
+    showMessage("tokenDialogMessage", "已保存并同步到服务凭证。");
+    window.setTimeout(closeTokenDialog, 650);
+}
+
+function clearSavedTokenCredentials() {
+    window.localStorage.removeItem(TOKEN_STORAGE_KEY);
+    const emptyCredentials = { tiandituToken: "", mapboxToken: "", mapboxSku: "" };
+    document.getElementById("tokenTiandituInput").value = "";
+    document.getElementById("tokenMapboxInput").value = "";
+    document.getElementById("tokenMapboxSkuInput").value = "";
+    applyCredentialsToTaskForm(emptyCredentials);
+    showMessage("tokenDialogMessage", "已清空保存的 Token。");
+}
+
 function hasUsableCredential(value, placeholder) {
     const trimmed = String(value || "").trim();
     return Boolean(trimmed && trimmed !== placeholder);
@@ -474,7 +670,14 @@ function validateSourceCredentials(sources, credentials) {
 }
 
 function initAdminRegionMap() {
-    if (adminRegionMap || taskMode !== "region") {
+    if (taskMode !== "region") {
+        return;
+    }
+    if (adminRegionMap) {
+        // The map may have been created before the asynchronous region catalog finished loading.
+        if (hasRenderableAdminRegionOptions(adminRegionLevel)) {
+            void renderAdminRegionMap();
+        }
         return;
     }
     if (!window.L) {
@@ -493,16 +696,78 @@ function initAdminRegionMap() {
         maxBounds: MAP_LATITUDE_BOUNDS,
         maxBoundsViscosity: 1,
         worldCopyJump: false
-    }).setView([35.8617, 104.1954], 4);
+    }).setView([35.8617, 104.1954], 5);
 
-    adminRegionBaseLayer = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        minZoom: MAP_MIN_ZOOM,
-        maxZoom: 10
-    }).addTo(adminRegionMap);
+    updateAdminRegionBaseLayer();
     adminRegionLayerGroup = L.layerGroup().addTo(adminRegionMap);
     adminRegionMap.on("click", handleAdminRegionMapClick);
 
     void renderAdminRegionMap();
+}
+
+async function updateAdminRegionBaseLayer() {
+    if (!adminRegionMap || !window.L) {
+        return;
+    }
+    const renderToken = ++adminRegionBaseLayerRenderToken;
+    const source = document.getElementById("adminRegionPreviewSource")?.value || "osm";
+    const credentials = readCredentialRequest(new FormData(document.getElementById("taskForm")));
+    const hasToken = hasUsableCredential(credentials.tiandituToken, "YOUR_TIANDITU_TOKEN");
+    const hint = document.getElementById("adminRegionMapHint");
+
+    let url = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+    let labelUrl = "";
+    let maxZoom = 19;
+    if ((source === "tdt-img" || source === "tdt-vec") && hasToken) {
+        const previewTokenId = await ensureTiandituPreviewToken(credentials.tiandituToken);
+        if (renderToken !== adminRegionBaseLayerRenderToken) {
+            return;
+        }
+        if (previewTokenId) {
+            const layer = source === "tdt-img" ? "img" : "vec";
+            url = `/api/tile-preview/tianditu/${encodeURIComponent(previewTokenId)}/${layer}/{z}/{x}/{y}.png`;
+            labelUrl = `/api/tile-preview/tianditu/${encodeURIComponent(previewTokenId)}/${source === "tdt-img" ? "cia" : "cva"}/{z}/{x}/{y}.png`;
+            maxZoom = 18;
+        } else if (hint) {
+            hint.textContent = "天地图 Token 预览代理不可用";
+        }
+    } else if (source.startsWith("tdt-") && hint) {
+        hint.textContent = "输入天地图 Token 后显示天地图预览";
+    }
+
+    if (renderToken !== adminRegionBaseLayerRenderToken) {
+        return;
+    }
+    if (adminRegionBaseLayer) {
+        adminRegionMap.removeLayer(adminRegionBaseLayer);
+    }
+    if (adminRegionLabelLayer) {
+        adminRegionMap.removeLayer(adminRegionLabelLayer);
+        adminRegionLabelLayer = null;
+    }
+    adminRegionBaseLayer = L.tileLayer(url, {
+        minZoom: MAP_MIN_ZOOM,
+        maxZoom
+    });
+    adminRegionBaseLayer.on("tileerror", () => {
+        if (hint && source.startsWith("tdt-")) {
+            hint.textContent = "天地图预览瓦片加载失败，请检查 Token 权限";
+        }
+    });
+    adminRegionBaseLayer.addTo(adminRegionMap);
+    if (labelUrl) {
+        adminRegionLabelLayer = L.tileLayer(labelUrl, {
+            minZoom: MAP_MIN_ZOOM,
+            maxZoom,
+            opacity: 1
+        });
+        adminRegionLabelLayer.on("tileerror", () => {
+            if (hint) {
+                hint.textContent = "天地图标注加载失败，请检查 Token 权限";
+            }
+        });
+        adminRegionLabelLayer.addTo(adminRegionMap);
+    }
 }
 
 function setAdminRegionLevel(level) {
@@ -594,7 +859,10 @@ async function renderAdminRegionMap() {
         updateAdminRegionMapStatus("empty");
         return;
     }
-    fitAdminRegionMapToSelection();
+    const focused = await focusAdminRegionPendingSelection(token);
+    if (!focused) {
+        fitAdminRegionMapToSelection();
+    }
     updateAdminRegionMapStatus("ready");
 }
 
@@ -616,6 +884,7 @@ function selectAdminRegionFromMap(region) {
         return;
     }
 
+    adminRegionPendingFocusRegionId = region.id;
     applyAdminRegionSelection(config, region.id);
 }
 
@@ -671,6 +940,7 @@ function handleAdminRegionMapBlankClick() {
         adminRegionLevel = "province";
         activeLevelCount = 2;
         clearLevelConfigsFrom(3);
+        adminRegionPendingFocusRegionId = "china";
         syncRegionConfigs();
         renderLevelConfigs();
         void renderAdminRegionMap();
@@ -694,7 +964,20 @@ function handleAdminRegionMapBlankClick() {
         }
     }
     renderLevelConfigs();
+    adminRegionPendingFocusRegionId = getAdminRegionReturnFocusRegionId();
     void renderAdminRegionMap();
+}
+
+function getAdminRegionReturnFocusRegionId() {
+    const currentConfig = getAdminRegionLevelConfig(adminRegionLevel);
+    if (currentConfig && currentConfig.selectedRegionId) {
+        return currentConfig.selectedRegionId;
+    }
+    if (activeLevelCount <= 2) {
+        return "china";
+    }
+    const contextRegion = getAdminRegionContextRegion();
+    return contextRegion ? contextRegion.id : "china";
 }
 
 function bindAdminRegionLayerElements(layer, region) {
@@ -762,7 +1045,54 @@ function fitAdminRegionMapToSelection() {
     if (!bounds || !bounds.isValid()) {
         return;
     }
-    adminRegionMap.fitBounds(bounds, { padding: [18, 18], maxZoom: adminRegionLevel === "district" ? 10 : 7 });
+    adminRegionMap.fitBounds(bounds, { padding: [18, 18], maxZoom: adminRegionLevel === "district" ? 11 : 8 });
+}
+
+async function focusAdminRegionPendingSelection(token) {
+    if (!adminRegionMap || !adminRegionPendingFocusRegionId) {
+        return false;
+    }
+
+    const regionID = adminRegionPendingFocusRegionId;
+    adminRegionPendingFocusRegionId = "";
+
+    try {
+        const geojson = await fetchRegionGeoJSON(regionID);
+        if (token !== adminRegionRenderToken) {
+            return false;
+        }
+        const focusLayer = L.geoJSON(geojson);
+        const bounds = focusLayer.getBounds();
+        if (!bounds || !bounds.isValid()) {
+            return false;
+        }
+        adminRegionMap.fitBounds(bounds.pad(0.12), {
+            animate: true,
+            duration: 0.35,
+            padding: [26, 26],
+            maxZoom: adminRegionFocusMaxZoom(getRegionByID(regionID))
+        });
+        return true;
+    } catch (error) {
+        console.warn("failed to focus admin region", regionID, error);
+        return false;
+    }
+}
+
+function adminRegionFocusMaxZoom(region) {
+    if (!region) {
+        return adminRegionLevel === "district" ? 11 : 8;
+    }
+    if (region.level === "province") {
+        return 8;
+    }
+    if (region.level === "city") {
+        return 11;
+    }
+    if (region.level === "district") {
+        return 12;
+    }
+    return 8;
 }
 
 function adminRegionFeatureStyle(selected) {
@@ -847,7 +1177,7 @@ function initRangeMap() {
         maxBounds: MAP_LATITUDE_BOUNDS,
         maxBoundsViscosity: 1,
         worldCopyJump: false
-    }).setView([35.8617, 104.1954], 4);
+    }).setView([35.8617, 104.1954], 5);
 
     updateRangeBaseLayer();
 
@@ -861,40 +1191,109 @@ function initRangeMap() {
     });
 }
 
-function updateRangeBaseLayer() {
+async function updateRangeBaseLayer() {
     if (!rangeMap || !window.L) {
         return;
     }
+    const renderToken = ++rangeBaseLayerRenderToken;
     const source = document.getElementById("rangePreviewSource")?.value || "osm";
     const credentials = readCredentialRequest(new FormData(document.getElementById("taskForm")));
     const hasToken = hasUsableCredential(credentials.tiandituToken, "YOUR_TIANDITU_TOKEN");
     const hint = document.getElementById("rangePreviewHint");
 
     let url = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+    let labelUrl = "";
     let maxZoom = 19;
     let hintText = "OSM 预览底图";
-    if (source === "tdt-img" && hasToken) {
-        url = `https://t0.tianditu.gov.cn/DataServer?T=img_w&x={x}&y={y}&l={z}&tk=${encodeURIComponent(credentials.tiandituToken)}`;
-        maxZoom = 18;
-        hintText = "天地图影像预览";
-    } else if (source === "tdt-vec" && hasToken) {
-        url = `https://t0.tianditu.gov.cn/DataServer?T=vec_w&x={x}&y={y}&l={z}&tk=${encodeURIComponent(credentials.tiandituToken)}`;
-        maxZoom = 18;
-        hintText = "天地图矢量预览";
+    if ((source === "tdt-img" || source === "tdt-vec") && hasToken) {
+        const previewTokenId = await ensureTiandituPreviewToken(credentials.tiandituToken);
+        if (renderToken !== rangeBaseLayerRenderToken) {
+            return;
+        }
+        if (previewTokenId) {
+            const layer = source === "tdt-img" ? "img" : "vec";
+            url = `/api/tile-preview/tianditu/${encodeURIComponent(previewTokenId)}/${layer}/{z}/{x}/{y}.png`;
+            if (source === "tdt-img") {
+                labelUrl = `/api/tile-preview/tianditu/${encodeURIComponent(previewTokenId)}/cia/{z}/{x}/{y}.png`;
+            } else if (source === "tdt-vec") {
+                labelUrl = `/api/tile-preview/tianditu/${encodeURIComponent(previewTokenId)}/cva/{z}/{x}/{y}.png`;
+            }
+            maxZoom = 18;
+            hintText = source === "tdt-img" ? "天地图影像 + 路网预览" : "天地图矢量 + 标注预览";
+        } else {
+            hintText = "天地图 Token 预览代理不可用";
+        }
     } else if (source.startsWith("tdt-")) {
         hintText = "输入天地图 Token 后显示天地图预览";
     }
 
+    if (renderToken !== rangeBaseLayerRenderToken) {
+        return;
+    }
     if (rangeBaseLayer) {
         rangeMap.removeLayer(rangeBaseLayer);
+    }
+    if (rangeLabelLayer) {
+        rangeMap.removeLayer(rangeLabelLayer);
+        rangeLabelLayer = null;
     }
     rangeBaseLayer = L.tileLayer(url, {
         minZoom: MAP_MIN_ZOOM,
         maxZoom
-    }).addTo(rangeMap);
+    });
+    rangeBaseLayer.on("tileerror", () => {
+        if (hint && source.startsWith("tdt-")) {
+            hint.textContent = "天地图预览瓦片加载失败，请检查 Token 权限";
+        }
+    });
+    rangeBaseLayer.addTo(rangeMap);
+    if (labelUrl) {
+        rangeLabelLayer = L.tileLayer(labelUrl, {
+            minZoom: MAP_MIN_ZOOM,
+            maxZoom,
+            pane: "tilePane",
+            opacity: 1
+        });
+        rangeLabelLayer.on("tileerror", () => {
+            if (hint) {
+                hint.textContent = "天地图标注加载失败，请检查 Token 权限";
+            }
+        });
+        rangeLabelLayer.addTo(rangeMap);
+    }
     if (hint) {
         hint.textContent = hintText;
     }
+}
+
+async function ensureTiandituPreviewToken(token) {
+    const normalized = String(token || "").trim();
+    if (!hasUsableCredential(normalized, "YOUR_TIANDITU_TOKEN")) {
+        return "";
+    }
+    if (rangeTiandituPreviewTokenValue === normalized && rangeTiandituPreviewTokenId) {
+        return rangeTiandituPreviewTokenId;
+    }
+    if (rangeTiandituPreviewTokenPromise && rangeTiandituPreviewTokenValue === normalized) {
+        return rangeTiandituPreviewTokenPromise;
+    }
+
+    rangeTiandituPreviewTokenValue = normalized;
+    rangeTiandituPreviewTokenId = "";
+    rangeTiandituPreviewTokenPromise = fetchJSON("/api/tile-preview/tianditu-token", {
+        method: "POST",
+        body: JSON.stringify({ token: normalized })
+    }).then((response) => {
+        if (!response.ok || !response.data.id) {
+            return "";
+        }
+        rangeTiandituPreviewTokenId = String(response.data.id);
+        return rangeTiandituPreviewTokenId;
+    }).finally(() => {
+        rangeTiandituPreviewTokenPromise = null;
+    });
+
+    return rangeTiandituPreviewTokenPromise;
 }
 
 function handleRangeMapClick(latlng) {
@@ -1135,7 +1534,7 @@ function updateRangeRectangleOverlay(fit = false) {
     }
 
     if (fit) {
-        rangeMap.fitBounds(bounds.pad(0.3), { animate: false, maxZoom: 16 });
+        rangeMap.fitBounds(bounds.pad(0.3), { animate: false, maxZoom: 17 });
     }
     updateRangeDrawControls();
 }
@@ -1192,7 +1591,7 @@ function updateRangePolygonOverlay(fit = false) {
     if (fit) {
         const bounds = L.latLngBounds(rangeClickPoints);
         if (bounds.isValid()) {
-            rangeMap.fitBounds(bounds.pad(0.3), { animate: false, maxZoom: 16 });
+            rangeMap.fitBounds(bounds.pad(0.3), { animate: false, maxZoom: 17 });
         }
     }
     updateRangeDrawControls();
@@ -1331,7 +1730,6 @@ function renderLevelConfigs() {
 
     levelConfigs.slice(0, activeLevelCount).forEach((config) => {
         const row = document.createElement("div");
-        const toggleDisabled = config.options.length === 0;
         const selectDisabled = config.locked || config.options.length === 0;
         const canRemove = config.id > 2 && config.id === activeLevelCount;
 
@@ -1361,27 +1759,10 @@ function renderLevelConfigs() {
                 </label>
             </div>
             <div class="region-row__actions">
-                <label class="switch" aria-label="包含${config.label}">
-                    <input class="level-toggle" type="checkbox" data-id="${config.id}" ${config.enabled ? "checked" : ""} ${toggleDisabled ? "disabled" : ""}>
-                    <span class="switch__track"></span>
-                </label>
                 ${canRemove ? `<button type="button" class="danger-icon-button remove-level" data-id="${config.id}" aria-label="删除区域">${icon("delete")}</button>` : `<span class="region-row__action-spacer" aria-hidden="true"></span>`}
             </div>
         `;
         container.appendChild(row);
-    });
-
-    container.querySelectorAll(".level-toggle").forEach((element) => {
-        element.addEventListener("change", (event) => {
-            const config = findLevelConfig(event.target.dataset.id);
-            if (!config) {
-                return;
-            }
-            config.enabled = event.target.checked;
-            syncRegionConfigs();
-            renderLevelConfigs();
-            void renderAdminRegionMap();
-        });
     });
 
     container.querySelectorAll(".level-min").forEach((element) => {
@@ -1681,13 +2062,9 @@ async function createRangeTask(event, formData) {
         return;
     }
 
-    const workerCount = Number.parseInt(formData.get("workers"), 10) || 0;
-    const savePipe = Number.parseInt(formData.get("savePipe"), 10) || 0;
-    const timeDelay = Number.parseInt(formData.get("timeDelay"), 10) || 0;
-    if (timeDelay < 50) {
-        showMessage("taskError", "请求间隔不能小于 50ms。");
-        return;
-    }
+    const workerCount = RANGE_TASK_DEFAULTS.workers;
+    const savePipe = RANGE_TASK_DEFAULTS.savePipe;
+    const timeDelay = RANGE_TASK_DEFAULTS.timeDelay;
     const schedule = readScheduleRequest(formData);
     if (schedule.error) {
         showMessage("taskError", schedule.error);
@@ -1911,6 +2288,10 @@ async function createTask(event) {
     event.preventDefault();
     hideMessage("taskError");
 
+    if (taskMode === "tasks") {
+        return;
+    }
+
     const formData = new FormData(event.target);
     if (taskMode === "bbox") {
         await createRangeTask(event, formData);
@@ -1931,7 +2312,6 @@ async function createTask(event) {
 
     const levels = levelConfigs
         .slice(0, activeLevelCount)
-        .filter((config) => config.enabled)
         .map((config) => ({
             minZoom: config.minZoom,
             maxZoom: config.maxZoom,
@@ -1939,13 +2319,12 @@ async function createTask(event) {
         }));
 
     if (levels.length === 0) {
-        showMessage("taskError", "请至少启用一个下载区域。");
+        showMessage("taskError", "请至少保留一个下载区域。");
         return;
     }
 
     const invalidConfig = levelConfigs
         .slice(0, activeLevelCount)
-        .filter((config) => config.enabled)
         .find((config) => {
             const region = getRegionByID(config.selectedRegionId);
             return !region || !config.selectedRegionId || !region.geojson || region.maintained === false;
@@ -2370,6 +2749,7 @@ function applyTaskFilter(tasks) {
 function renderSelectionMeta() {
     const count = selectedTaskIds.size;
     document.getElementById("taskSelectionMeta").textContent = count > 0 ? `已选择 ${count} 个任务` : "未选择任务";
+    syncSelectTasksButton();
 }
 
 function cleanupSelections(tasks) {
@@ -2379,6 +2759,40 @@ function cleanupSelections(tasks) {
             selectedTaskIds.delete(id);
         }
     });
+}
+
+function getVisibleTasks() {
+    return applyTaskFilter(cachedTasks);
+}
+
+function toggleSelectVisibleTasks() {
+    const visibleTasks = getVisibleTasks();
+    if (visibleTasks.length === 0) {
+        return;
+    }
+
+    const allSelected = visibleTasks.every((task) => selectedTaskIds.has(task.id));
+    visibleTasks.forEach((task) => {
+        if (allSelected) {
+            selectedTaskIds.delete(task.id);
+        } else {
+            selectedTaskIds.add(task.id);
+        }
+    });
+
+    renderTaskList(cachedTasks);
+    renderSelectionMeta();
+}
+
+function syncSelectTasksButton() {
+    const button = document.getElementById("toggleSelectTasksBtn");
+    if (!button) {
+        return;
+    }
+    const visibleTasks = getVisibleTasks();
+    const allSelected = visibleTasks.length > 0 && visibleTasks.every((task) => selectedTaskIds.has(task.id));
+    button.textContent = allSelected ? "取消全选" : "全选当前";
+    button.disabled = visibleTasks.length === 0;
 }
 
 function toggleTaskMenu(menuId) {
@@ -2423,32 +2837,48 @@ async function handleTaskAction(action, taskId, status) {
 }
 
 async function handleBulkAction(action) {
-    const filtered = applyTaskFilter(cachedTasks);
+    const selectedTasks = cachedTasks.filter((task) => selectedTaskIds.has(task.id));
 
     switch (action) {
-    case "pauseFiltered":
-        await runBulkMutation(filtered.filter((task) => canPause(task.status)), (task) => pauseTask(task.id, task.status, true));
-        break;
-    case "resumeFiltered":
-        await runBulkMutation(filtered.filter((task) => canResume(task.status)), (task) => resumeTask(task.id, task.status, true));
-        break;
-    case "cancelFiltered":
-        if (!window.confirm("确定取消当前筛选范围内未完成任务吗？")) {
+    case "pauseSelected":
+        if (!ensureSelectedTasks(selectedTasks)) {
             return;
         }
-        await runBulkMutation(filtered.filter((task) => canCancel(task.status)), (task) => cancelTask(task.id, task.status, true));
+        await runBulkMutation(selectedTasks.filter((task) => canPause(task.status)), (task) => pauseTask(task.id, task.status, true), "已选任务中没有可暂停的任务。");
+        break;
+    case "resumeSelected":
+        if (!ensureSelectedTasks(selectedTasks)) {
+            return;
+        }
+        await runBulkMutation(selectedTasks.filter((task) => canResume(task.status)), (task) => resumeTask(task.id, task.status, true), "已选任务中没有可恢复的任务。");
+        break;
+    case "cancelSelected":
+        if (!ensureSelectedTasks(selectedTasks)) {
+            return;
+        }
+        if (!window.confirm("确定取消已选任务中未完成的任务吗？")) {
+            return;
+        }
+        await runBulkMutation(selectedTasks.filter((task) => canCancel(task.status)), (task) => cancelTask(task.id, task.status, true), "已选任务中没有可取消的任务。");
         break;
     case "deleteSelected":
-        if (selectedTaskIds.size === 0) {
-            alert("请先选择至少一个任务。");
+        if (!ensureSelectedTasks(selectedTasks)) {
             return;
+        }
+        {
+            const blockedTasks = selectedTasks.filter((task) => !canDelete(task.status));
+            if (blockedTasks.length > 0) {
+                alert(`已选下载中有 ${blockedTasks.length} 个任务还不能删除。\n\n运行中或已暂停的下载不能直接删除，请先执行「取消已选下载」，再删除。\n\n${formatBlockedTaskNames(blockedTasks)}`);
+                return;
+            }
         }
         if (!window.confirm("确定删除已选任务吗？删除后任务记录将不可恢复，但已下载文件不会自动删除。")) {
             return;
         }
         await runBulkMutation(
-            cachedTasks.filter((task) => selectedTaskIds.has(task.id) && canDelete(task.status)),
-            (task) => purgeTask(task.id, task.status, true)
+            selectedTasks.filter((task) => canDelete(task.status)),
+            (task) => purgeTask(task.id, task.status, true),
+            "已选任务中没有可删除的任务。"
         );
         selectedTaskIds.clear();
         break;
@@ -2459,8 +2889,25 @@ async function handleBulkAction(action) {
     renderSelectionMeta();
 }
 
-async function runBulkMutation(tasks, fn) {
+function ensureSelectedTasks(tasks) {
     if (tasks.length === 0) {
+        alert("请先选择至少一个任务。");
+        return false;
+    }
+    return true;
+}
+
+function formatBlockedTaskNames(tasks) {
+    const names = tasks.slice(0, 5).map((task) => `- ${task.name || task.sourceName || task.id}（${translateStatus(task.status)}）`);
+    if (tasks.length > 5) {
+        names.push(`- 另外 ${tasks.length - 5} 个任务`);
+    }
+    return names.join("\n");
+}
+
+async function runBulkMutation(tasks, fn, emptyMessage = "没有可操作的任务。") {
+    if (tasks.length === 0) {
+        alert(emptyMessage);
         return;
     }
     for (const task of tasks) {
@@ -2673,7 +3120,7 @@ function canCancel(status) {
 }
 
 function canDelete(status) {
-    return status === "completed" || status === "failed" || status === "cancelled" || status === "partial_failed";
+    return status !== "running" && status !== "paused";
 }
 
 function canRetryFailures(task) {
