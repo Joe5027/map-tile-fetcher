@@ -150,8 +150,12 @@ img {
 .app-view {
     width: 100%;
     max-width: none;
+    height: 100vh;
     margin: 0;
-    padding: 20px clamp(18px, 1.4vw, 32px) 28px;
+    padding: 20px clamp(18px, 1.4vw, 32px) 16px;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    overflow: hidden;
 }
 
 .topbar {
@@ -188,21 +192,40 @@ img {
     justify-self: end;
 }
 
+.account-menu-wrap {
+    position: relative;
+}
+
 .user-chip {
     display: inline-flex;
     align-items: center;
     gap: 10px;
     padding: 8px 10px;
+    border: 1px solid transparent;
     border-radius: 999px;
+    background: transparent;
     color: var(--text);
     font-size: 14px;
     font-weight: 600;
+    transition: background-color 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.user-chip:hover,
+.user-chip[aria-expanded="true"] {
+    background: rgba(255, 255, 255, 0.82);
+    border-color: rgba(229, 231, 235, 0.86);
+    box-shadow: 0 8px 22px rgba(15, 23, 42, 0.06);
 }
 
 .user-chip img {
     width: 14px;
     height: 14px;
     opacity: 0.6;
+    transition: transform 0.18s ease;
+}
+
+.user-chip[aria-expanded="true"] img {
+    transform: rotate(180deg);
 }
 
 .user-avatar {
@@ -218,11 +241,53 @@ img {
     font-weight: 700;
 }
 
+.account-menu {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    z-index: 60;
+    min-width: 168px;
+    padding: 6px;
+    border: 1px solid rgba(229, 231, 235, 0.96);
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.98);
+    box-shadow: 0 18px 42px rgba(15, 23, 42, 0.16);
+    backdrop-filter: blur(12px);
+}
+
+.account-menu button {
+    width: 100%;
+    height: 38px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 10px;
+    border: 0;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 700;
+    text-align: left;
+}
+
+.account-menu button:hover {
+    background: var(--primary-soft);
+    color: var(--primary);
+}
+
+.account-menu img {
+    width: 15px;
+    height: 15px;
+}
+
 .dashboard {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
     gap: 14px;
-    align-items: start;
+    align-items: stretch;
+    height: 100%;
+    min-height: 0;
 }
 
 .workspace-tabs {
@@ -342,6 +407,10 @@ img {
 
 .panel--form {
     padding: 22px;
+    height: 100%;
+    min-height: 0;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
 }
 
 .panel--tasks {
@@ -380,17 +449,27 @@ img {
     grid-template-columns: minmax(260px, 1fr) auto;
 }
 
+.panel-heading--modes {
+    grid-template-columns: minmax(520px, 720px);
+    justify-content: center;
+    padding-bottom: 14px;
+    border-bottom: 1px solid rgba(229, 231, 235, 0.92);
+}
+
 .task-form {
     display: grid;
     gap: 18px;
     align-items: start;
+    min-height: 0;
 }
 
 .task-layout {
     display: grid;
     grid-template-columns: minmax(340px, 0.58fr) minmax(760px, 2.42fr);
     gap: 18px;
-    align-items: stretch;
+    align-items: start;
+    height: 100%;
+    min-height: 0;
 }
 
 .task-left-column,
@@ -403,12 +482,17 @@ img {
 
 .task-left-column {
     gap: 12px;
+    max-height: 100%;
+    overflow: auto;
+    padding-right: 2px;
 }
 
 .task-right-column {
     align-self: stretch;
     align-items: stretch;
     grid-template-rows: minmax(0, 1fr);
+    height: 100%;
+    min-height: 0;
 }
 
 .task-form.task-form--range .task-layout {
@@ -1266,6 +1350,7 @@ input::placeholder {
     display: grid;
     align-content: stretch;
     height: 100%;
+    min-height: 0;
 }
 
 #regionModePanel {
@@ -1297,7 +1382,7 @@ input::placeholder {
 
 .task-right-column .admin-region-map-card {
     height: 100%;
-    min-height: 680px;
+    min-height: 0;
     display: grid;
     grid-template-rows: auto minmax(0, 1fr) auto;
     margin-bottom: 0;
@@ -1327,6 +1412,14 @@ input::placeholder {
 .admin-region-map-title span {
     color: var(--muted);
     font-size: 12px;
+}
+
+.admin-region-map-actions {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+    flex-wrap: wrap;
 }
 
 .admin-region-level-tabs {
@@ -1370,7 +1463,7 @@ input::placeholder {
 
 .task-right-column .admin-region-map {
     height: 100%;
-    min-height: 520px;
+    min-height: 0;
 }
 
 .admin-region-map-status {
@@ -1409,6 +1502,7 @@ input::placeholder {
     display: grid;
     align-content: stretch;
     height: 100%;
+    min-height: 0;
 }
 
 .range-layer-grid {
@@ -1450,9 +1544,9 @@ input::placeholder {
 
 .task-right-column .range-map-card {
     height: 100%;
-    min-height: 680px;
+    min-height: 0;
     display: grid;
-    grid-template-rows: auto auto minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
 }
 
 .range-map-toolbar {
@@ -1563,7 +1657,7 @@ input::placeholder {
 
 .task-right-column .range-map {
     height: 100%;
-    min-height: 520px;
+    min-height: 0;
 }
 
 .task-left-column .range-coordinate-grid {
@@ -2026,6 +2120,66 @@ input::placeholder {
     color: #b91c1c;
 }
 
+.message.success {
+    border: 1px solid rgba(34, 197, 94, 0.18);
+    background: rgba(240, 253, 244, 0.94);
+    color: #15803d;
+}
+
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1200;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    background: rgba(15, 23, 42, 0.38);
+    backdrop-filter: blur(4px);
+}
+
+.modal-card {
+    width: min(560px, 100%);
+    max-height: calc(100vh - 48px);
+    overflow: auto;
+    padding: 20px;
+    border: 1px solid rgba(229, 231, 235, 0.96);
+    border-radius: 20px;
+    background: rgba(255, 255, 255, 0.98);
+    box-shadow: 0 28px 80px rgba(15, 23, 42, 0.28);
+}
+
+.modal-card__header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 18px;
+}
+
+.modal-card__header h2 {
+    margin: 0 0 4px;
+    font-size: 18px;
+    font-weight: 800;
+}
+
+.modal-card__header p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.token-form {
+    display: grid;
+    gap: 14px;
+}
+
+.modal-card__actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    padding-top: 2px;
+}
+
 .risk-tip {
     margin: 0;
     display: flex;
@@ -2047,11 +2201,13 @@ input::placeholder {
 
 .task-history-panel {
     min-height: 0;
-    max-height: calc(100vh - 154px);
+    height: 100%;
+    max-height: none;
     display: grid;
+    grid-template-rows: auto auto auto minmax(0, 1fr);
     gap: 10px;
-    align-content: start;
-    overflow: auto;
+    align-content: stretch;
+    overflow: hidden;
     padding: 12px;
     border: 1px solid rgba(229, 231, 235, 0.96);
     border-radius: 14px;
@@ -2078,7 +2234,12 @@ input::placeholder {
 }
 
 .task-left-column--tasks {
-    align-content: start;
+    height: 100%;
+    min-height: 0;
+    max-height: 100%;
+    align-content: stretch;
+    align-items: stretch;
+    overflow: hidden;
 }
 
 .task-left-column--tasks .task-stats {
@@ -2110,21 +2271,28 @@ input::placeholder {
 }
 
 .task-left-column--tasks .task-list {
-    gap: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding-right: 4px;
 }
 
 .task-left-column--tasks .task-card {
-    border-radius: 12px;
+    flex: 0 0 auto;
+    border-radius: 10px;
     box-shadow: none;
 }
 
 .task-left-column--tasks .task-card > summary {
-    padding: 12px;
+    padding: 10px;
 }
 
 .task-left-column--tasks .task-card__summary {
-    grid-template-columns: 18px minmax(0, 1fr) auto;
-    gap: 8px;
+    grid-template-columns: 16px minmax(0, 1fr) auto;
+    gap: 7px;
 }
 
 .task-left-column--tasks .task-illustration {
@@ -2136,8 +2304,8 @@ input::placeholder {
 }
 
 .task-left-column--tasks .task-main__title {
-    gap: 6px;
-    margin-bottom: 6px;
+    gap: 5px;
+    margin-bottom: 5px;
 }
 
 .task-left-column--tasks .task-main__title h3 {
@@ -2149,15 +2317,17 @@ input::placeholder {
 }
 
 .task-left-column--tasks .task-metadata {
-    gap: 6px;
-    margin-bottom: 8px;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 4px 8px;
+    margin-bottom: 6px;
     font-size: 11px;
 }
 
 .task-left-column--tasks .task-metrics {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 6px;
-    margin-top: 8px;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 4px;
+    margin-top: 6px;
     font-size: 11px;
 }
 
@@ -2166,43 +2336,87 @@ input::placeholder {
 }
 
 .task-left-column--tasks .task-card__content {
-    padding: 0 12px 12px;
+    padding: 0 10px 10px;
 }
 
 .task-left-column--tasks .child-task-list {
     gap: 8px;
-    margin-top: 10px;
+    margin-top: 8px;
 }
 
 .task-left-column--tasks .child-task {
-    border-radius: 12px;
+    border-radius: 10px;
 }
 
 .task-left-column--tasks .child-task > summary {
-    padding: 10px;
+    padding: 8px 10px;
 }
 
-.task-left-column--tasks .child-task__summary,
+.task-left-column--tasks .child-task__summary {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: start;
+}
+
 .task-left-column--tasks .child-task__meta {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 6px;
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 8px;
+    margin: 6px 0 0;
+    overflow: hidden;
+    white-space: nowrap;
+    font-size: 11px;
 }
 
 .task-left-column--tasks .child-task__title {
-    gap: 6px;
+    gap: 5px;
     margin-bottom: 6px;
+    flex-wrap: nowrap;
 }
 
 .task-left-column--tasks .child-task__title strong {
+    min-width: 0;
+    overflow: hidden;
     font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .task-left-column--tasks .child-task__side {
-    justify-items: start;
+    gap: 4px;
+    justify-items: end;
+    font-size: 0;
+}
+
+.task-left-column--tasks .child-task__side > span {
+    display: none;
 }
 
 .task-left-column--tasks .child-task__content {
-    padding: 0 10px 10px;
+    padding: 0 10px 8px;
+}
+
+.task-left-column--tasks .child-task__footer {
+    align-items: center;
+    margin-top: 8px;
+}
+
+.task-left-column--tasks .progress-bar {
+    height: 4px;
+}
+
+.task-left-column--tasks .status-pill,
+.task-left-column--tasks .artifact-pill,
+.task-left-column--tasks .warning-pill {
+    min-height: 20px;
+    padding: 0 7px;
+    font-size: 11px;
+}
+
+.task-left-column--tasks .artifact-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .task-left-column--tasks .task-empty {
@@ -2279,33 +2493,47 @@ input::placeholder {
     color: var(--muted);
 }
 
+.selection-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
 .toolbar-actions {
     position: relative;
+    display: flex;
+    align-items: center;
+    gap: 6px;
 }
 
 .toolbar-menu {
     position: absolute;
     right: 0;
-    top: calc(100% + 8px);
+    top: calc(100% + 6px);
     z-index: 10;
-    min-width: 164px;
-    padding: 8px;
-    border-radius: 14px;
+    width: 136px;
+    padding: 4px;
+    border-radius: 12px;
     border: 1px solid rgba(229, 231, 235, 0.96);
     background: rgba(255, 255, 255, 0.98);
-    box-shadow: var(--shadow);
+    box-shadow: 0 12px 28px rgba(15, 23, 42, 0.10);
 }
 
 .toolbar-menu button {
     width: 100%;
-    height: 36px;
+    height: 30px;
     display: flex;
     align-items: center;
+    justify-content: center;
     border: 0;
-    border-radius: 10px;
+    border-radius: 8px;
     background: transparent;
-    padding: 0 10px;
+    padding: 0 6px;
     color: var(--text);
+    font-size: 13px;
+    line-height: 1;
+    white-space: nowrap;
 }
 
 .toolbar-menu button:hover {
@@ -2351,6 +2579,7 @@ input::placeholder {
 }
 
 .task-card > summary {
+    display: block;
     list-style: none;
     cursor: pointer;
     padding: 20px;
@@ -2545,6 +2774,7 @@ input::placeholder {
 }
 
 .child-task > summary {
+    display: block;
     list-style: none;
     cursor: pointer;
     padding: 16px 18px;
@@ -2714,8 +2944,21 @@ input::placeholder {
 }
 
 @media (max-width: 1220px) {
+    .app-view {
+        display: block;
+    }
+
+    .panel--form {
+        display: block;
+        height: auto;
+    }
+
     .panel-heading {
         grid-template-columns: minmax(0, 1fr) auto;
+    }
+
+    .panel-heading--modes {
+        grid-template-columns: minmax(0, 1fr);
     }
 
     .panel-heading .mode-switch {
@@ -2727,7 +2970,14 @@ input::placeholder {
     .task-layout,
     .task-form.task-form--range .task-layout {
         grid-template-columns: minmax(0, 1fr);
+        height: auto;
         align-items: start;
+    }
+
+    .task-left-column {
+        max-height: none;
+        overflow: visible;
+        padding-right: 0;
     }
 
     .task-right-column,

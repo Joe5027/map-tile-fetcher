@@ -33,7 +33,9 @@ type FetchPolicy struct {
 	RotateHosts    bool
 	WorkerCount    int
 	BaseDelayMS    int
+	BaseDelaySet   bool
 	TimeJitterMS   int
+	TimeJitterSet  bool
 	MaxRetries     int
 	MaxRetriesSet  bool
 	RetryPasses    int
@@ -48,8 +50,8 @@ type sourcePolicyConfig struct {
 	UserAgent          string            `mapstructure:"user_agent"`
 	Referer            string            `mapstructure:"referer"`
 	WorkerCount        int               `mapstructure:"worker_count"`
-	BaseDelayMS        int               `mapstructure:"base_delay_ms"`
-	TimeJitterMS       int               `mapstructure:"time_jitter_ms"`
+	BaseDelayMS        *int              `mapstructure:"base_delay_ms"`
+	TimeJitterMS       *int              `mapstructure:"time_jitter_ms"`
 	MaxRetries         *int              `mapstructure:"max_retries"`
 	RetryPasses        *int              `mapstructure:"retry_passes"`
 	RotateHosts        *bool             `mapstructure:"rotate_hosts"`
@@ -136,6 +138,7 @@ func defaultFetchPolicy(url string, sourceName string) FetchPolicy {
 	host := strings.ToLower(hostnameOf(url))
 	if strings.HasSuffix(host, ".tianditu.gov.cn") || strings.Contains(strings.ToLower(sourceName), "天地图") {
 		policy.Name = "tianditu"
+		policy.UserAgent = ""
 		policy.RotateHosts = true
 		policy.WorkerCount = 1
 		policy.BaseDelayMS = 120
@@ -187,11 +190,13 @@ func applyConfiguredSourcePolicy(policy *FetchPolicy, rawURL string, sourceName 
 		if cfg.WorkerCount > 0 {
 			policy.WorkerCount = cfg.WorkerCount
 		}
-		if cfg.BaseDelayMS > 0 {
-			policy.BaseDelayMS = cfg.BaseDelayMS
+		if cfg.BaseDelayMS != nil && *cfg.BaseDelayMS >= 0 {
+			policy.BaseDelayMS = *cfg.BaseDelayMS
+			policy.BaseDelaySet = true
 		}
-		if cfg.TimeJitterMS > 0 {
-			policy.TimeJitterMS = cfg.TimeJitterMS
+		if cfg.TimeJitterMS != nil && *cfg.TimeJitterMS >= 0 {
+			policy.TimeJitterMS = *cfg.TimeJitterMS
+			policy.TimeJitterSet = true
 		}
 		if cfg.MaxRetries != nil && *cfg.MaxRetries >= 0 {
 			policy.MaxRetries = *cfg.MaxRetries

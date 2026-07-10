@@ -210,7 +210,7 @@ func (m *RuntimeManager) monitorWorker(active *ActiveRun) {
 	finalizeUnexpectedWorkerExit(active.Plan, active.Run, waitErr)
 
 	if active.Plan.ParentID != "" {
-		if err := m.refreshParentStatus(active.Plan.ParentID); err != nil {
+		if err := retryOnBusy(func() error { return m.refreshParentStatus(active.Plan.ParentID) }); err != nil {
 			log.Errorf("failed to update parent plan status %s: %v", active.Plan.ParentID, err)
 		}
 	}
@@ -338,13 +338,13 @@ func (m *RuntimeManager) Purge(plan *TaskRecord) error {
 		}
 		for _, child := range children {
 			if _, childErr := m.getActive(child.ID); childErr == nil {
-				return errors.New("cannot delete a running task")
+				return errors.New("运行中或已暂停的下载不能直接删除，请先取消该下载。")
 			}
 		}
 	}
 
 	if _, err := m.getActive(plan.ID); err == nil {
-		return errors.New("cannot delete a running task")
+		return errors.New("运行中或已暂停的下载不能直接删除，请先取消该下载。")
 	}
 
 	runs, err := store.listRunsByTaskRecord(plan.ID)

@@ -168,10 +168,22 @@ func initDB() {
 		log.Fatalf("failed to open database: %v", err)
 	}
 
-	db.SetMaxOpenConns(8)
-	db.SetMaxIdleConns(4)
+	workerMode := shouldRunWorkerMode()
+	if workerMode {
+		db.SetMaxOpenConns(1)
+		db.SetMaxIdleConns(1)
+	} else {
+		db.SetMaxOpenConns(8)
+		db.SetMaxIdleConns(4)
+	}
 
 	store = &SQLiteStore{db: db}
+	if workerMode {
+		if _, err := db.Exec(`PRAGMA busy_timeout = 10000;`); err != nil {
+			log.Fatalf("failed to configure worker database connection: %v", err)
+		}
+		return
+	}
 	if err := store.initSchema(); err != nil {
 		log.Fatalf("failed to initialize schema: %v", err)
 	}
