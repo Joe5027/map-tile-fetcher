@@ -72,7 +72,7 @@ func initConf(cfgFile string) {
 	viper.SetDefault("app.database", "tiler.db")
 	viper.SetDefault("output.format", "mbtiles")
 	viper.SetDefault("output.directory", "output")
-	viper.SetDefault("task.workers", 1)
+	viper.SetDefault("task.workers", minimumSubtaskWorkers)
 	viper.SetDefault("task.savepipe", 1)
 	viper.SetDefault("task.timedelay", 200)
 	viper.SetDefault("task.time_jitter_ms", 150)
@@ -86,6 +86,7 @@ func initConf(cfgFile string) {
 	viper.SetDefault("auth.enabled", true)
 	viper.SetDefault("auth.default_username", "admin")
 	viper.SetDefault("auth.default_password", "adminmap")
+	viper.SetDefault("auth.cookie_secure", false)
 }
 
 func main() {
@@ -120,7 +121,9 @@ func main() {
 // 确保静态文件目录存在
 func ensureStaticDir() {
 	if _, err := os.Stat("./static"); os.IsNotExist(err) {
-		os.MkdirAll("./static", os.ModePerm)
+		if err := os.MkdirAll("./static", directoryPermissions); err != nil {
+			log.Fatalf("failed to create static directory: %v", err)
+		}
 	}
 }
 

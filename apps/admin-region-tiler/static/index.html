@@ -7,7 +7,7 @@
     <meta name="description" content="创建任务并批量下载地图图片。">
     <link rel="icon" type="image/svg+xml" href="/static/assets/favicon/favicon.svg?v=1">
     <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css?v=1">
-    <link rel="stylesheet" href="/static/styles.css?v=75">
+    <link rel="stylesheet" href="/static/styles.css?v=76">
 </head>
 <body>
     <div class="page-shell">
@@ -131,11 +131,10 @@
                                         <label class="field">
                                             <span class="field-label">下载线程</span>
                                             <select name="workers">
-                                                <option value="1">1</option>
-                                                <option value="2">2</option>
-                                                <option value="3" selected>3</option>
-                                                <option value="4">4</option>
-                                                <option value="5">5</option>
+                                                <option value="20" selected>20</option>
+                                                <option value="30">30</option>
+                                                <option value="40">40</option>
+                                                <option value="50">50</option>
                                             </select>
                                         </label>
                                         <label class="field">
@@ -230,11 +229,11 @@
                                 </label>
                                 <label class="field">
                                     <span class="field-label">最小级别</span>
-                                    <input type="number" name="rangeMinZoom" min="0" max="20" step="1" value="10">
+                                    <input type="number" name="rangeMinZoom" min="0" max="20" step="1" value="1">
                                 </label>
                                 <label class="field">
                                     <span class="field-label">最大级别</span>
-                                    <input type="number" name="rangeMaxZoom" min="0" max="20" step="1" value="12">
+                                    <input type="number" name="rangeMaxZoom" min="0" max="20" step="1" value="18">
                                 </label>
                             </div>
 
@@ -429,6 +428,6 @@
     </div>
 
     <script src="/static/vendor/leaflet/leaflet.js?v=1"></script>
-    <script src="/static/script.js?v=75"></script>
+    <script src="/static/script.js?v=76"></script>
 </body>
 </html>

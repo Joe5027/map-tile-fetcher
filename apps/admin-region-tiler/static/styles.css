@@ -1467,15 +1467,7 @@ input::placeholder {
 }
 
 .admin-region-map-status {
-    min-height: 44px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 8px 12px;
-    border-top: 1px solid rgba(229, 231, 235, 0.92);
-    color: var(--muted);
-    font-size: 12px;
+    display: none;
 }
 
 .admin-region-map-status .ghost-button {

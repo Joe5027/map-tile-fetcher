@@ -28,22 +28,23 @@ let adminRegionBaseLayer = null;
 let adminRegionLabelLayer = null;
 let adminRegionLayerGroup = null;
 let adminRegionSelectedLayer = null;
+let taskAreaPreviewLayer = null;
 let adminRegionLevel = "province";
 let adminRegionRenderToken = 0;
 let adminRegionBaseLayerRenderToken = 0;
 let adminRegionMapInitRetries = 0;
 let adminRegionPendingFocusRegionId = "";
 let rangeMapInitRetries = 0;
-let activeWorkspaceTab = "create";
 let currentTaskFilter = "all";
 let cachedTasks = [];
+let taskPollingTimer = null;
 const expandedProviders = new Set();
 const expandedGroupTasks = new Set();
 const expandedChildTasks = new Set();
 const selectedTaskIds = new Set();
 const adminRegionGeoJSONCache = new Map();
 const WEB_MERCATOR_MAX_LAT = 85.05112878;
-const HORIZONTAL_DRAG_LIMIT_LNG = 360000;
+const HORIZONTAL_DRAG_LIMIT_LNG = 180;
 const MAP_LATITUDE_BOUNDS = [
     [-WEB_MERCATOR_MAX_LAT, -HORIZONTAL_DRAG_LIMIT_LNG],
     [WEB_MERCATOR_MAX_LAT, HORIZONTAL_DRAG_LIMIT_LNG]
@@ -78,7 +79,7 @@ const RANGE_LAYER_NAMES = {
 };
 
 const RANGE_TASK_DEFAULTS = {
-    workers: 8,
+    workers: 20,
     savePipe: 2,
     timeDelay: 50
 };
@@ -315,6 +316,14 @@ function bindEvents() {
             );
             return;
         }
+
+        const taskCard = event.target.closest("details[data-group-task-id]");
+        if (taskCard && !event.target.closest(".task-select, a, button")) {
+            const task = cachedTasks.find((item) => item.id === taskCard.dataset.groupTaskId);
+            if (task) {
+                void previewTaskArea(task);
+            }
+        }
     });
 
     document.addEventListener("click", () => {
@@ -354,10 +363,11 @@ async function bootstrap() {
     syncScheduleControls();
     updateRangeEstimate();
     await loadTasks();
-    window.setInterval(loadTasks, 5000);
+    startTaskPolling();
 }
 
 function showLogin() {
+    stopTaskPolling();
     document.getElementById("loginView").classList.remove("is-hidden");
     document.getElementById("appView").classList.add("is-hidden");
 }
@@ -368,9 +378,21 @@ function showApp(user) {
     document.getElementById("appView").classList.remove("is-hidden");
 }
 
-function setWorkspaceTab(tab) {
-    activeWorkspaceTab = "create";
+function startTaskPolling() {
+    stopTaskPolling();
+    taskPollingTimer = window.setInterval(() => {
+        void loadTasks();
+    }, 5000);
+}
 
+function stopTaskPolling() {
+    if (taskPollingTimer !== null) {
+        window.clearInterval(taskPollingTimer);
+        taskPollingTimer = null;
+    }
+}
+
+function setWorkspaceTab(tab) {
     document.querySelectorAll("[data-workspace-tab]").forEach((button) => {
         const active = button.dataset.workspaceTab === (tab === "tasks" ? "tasks" : "create");
         button.classList.toggle("is-active", active);
@@ -670,9 +692,6 @@ function validateSourceCredentials(sources, credentials) {
 }
 
 function initAdminRegionMap() {
-    if (taskMode !== "region") {
-        return;
-    }
     if (adminRegionMap) {
         // The map may have been created before the asynchronous region catalog finished loading.
         if (hasRenderableAdminRegionOptions(adminRegionLevel)) {
@@ -1632,6 +1651,7 @@ async function login(event) {
 
 async function logout() {
     await fetchJSON("/api/auth/logout", { method: "POST", allowUnauthorized: true });
+    stopTaskPolling();
     showLogin();
 }
 
@@ -1864,7 +1884,7 @@ function renderRegionOptions(config) {
     }
 
     return config.options
-        .map((item) => `<option value="${item.id}" ${item.id === config.selectedRegionId ? "selected" : ""}>${item.name}</option>`)
+        .map((item) => `<option value="${escapeAttribute(item.id)}" ${item.id === config.selectedRegionId ? "selected" : ""}>${escapeHTML(item.name)}</option>`)
         .join("");
 }
 
@@ -1892,9 +1912,16 @@ function renderTilemapSelector() {
 }
 
 function renderProviderCard(group) {
-    const selected = selectedProvider === group.id;
-    const expanded = expandedProviders.has(group.id);
+    const rawGroupID = String(group.id ?? "");
+    const selected = selectedProvider === rawGroupID;
+    const expanded = expandedProviders.has(rawGroupID);
     const selectedCount = group.items.filter((item) => selectedSourceIds.has(String(item.id))).length;
+    group = {
+        ...group,
+        id: escapeAttribute(rawGroupID),
+        name: escapeHTML(group.name),
+        description: escapeHTML(group.description)
+    };
     return `
         <div class="source-card ${selected ? "is-active" : ""}">
             <button type="button" class="source-card__selector" data-provider-select="${group.id}">
@@ -1933,6 +1960,18 @@ function renderProviderCard(group) {
 
 function renderTilemapOption(tilemap) {
     const checked = selectedSourceIds.has(String(tilemap.id));
+    const sourceFormat = escapeHTML(String(getTaskTilemapFormat(tilemap)).toUpperCase());
+    const sourceHost = escapeHTML(formatTilemapHost(tilemap.url));
+    const minZoom = Number.isFinite(Number(tilemap.min_zoom)) ? Number(tilemap.min_zoom) : 0;
+    const maxZoom = Number.isFinite(Number(tilemap.max_zoom)) ? Number(tilemap.max_zoom) : 0;
+    tilemap = {
+        ...tilemap,
+        id: escapeAttribute(tilemap.id),
+        name: escapeHTML(tilemap.name),
+        min_zoom: minZoom,
+        max_zoom: maxZoom,
+        schema: escapeHTML(String(tilemap.schema || ""))
+    };
     return `
         <label class="source-option" onclick="event.stopPropagation()">
             <input class="tilemap-source-option" type="checkbox" value="${tilemap.id}" ${checked ? "checked" : ""}>
@@ -1943,11 +1982,11 @@ function renderTilemapOption(tilemap) {
                         ${icon(childTaskIcon({ sourceName: tilemap.name }), "source-option__icon")}
                         <strong>${tilemap.name}</strong>
                     </span>
-                    <span>${String(getTaskTilemapFormat(tilemap)).toUpperCase()}</span>
+                    <span>${sourceFormat}</span>
                 </span>
                 <span class="source-option__meta">
                     <span>${tilemap.min_zoom}-${tilemap.max_zoom}级</span>
-                    <span>${formatTilemapHost(tilemap.url)}</span>
+                    <span>${sourceHost}</span>
                     <span>${tilemap.schema.toUpperCase()}</span>
                 </span>
             </span>
@@ -2162,7 +2201,22 @@ function getRangePolygonRequest() {
     }));
 }
 
+function validateTaskName(name) {
+    const normalized = String(name || "").trim();
+    if (!normalized) {
+        return "任务名称不能为空。";
+    }
+    if (Array.from(normalized).length > 80) {
+        return "任务名称不能超过 80 个字符。";
+    }
+    return "";
+}
+
 function validateRangeRequest(request) {
+    const nameError = validateTaskName(document.getElementById("taskForm")?.elements.name?.value);
+    if (nameError) {
+        return nameError;
+    }
     if (!hasUsableCredential(request.credentials.tiandituToken, "YOUR_TIANDITU_TOKEN")) {
         return "请输入真实的天地图 Token。";
     }
@@ -2295,6 +2349,12 @@ async function createTask(event) {
     const formData = new FormData(event.target);
     if (taskMode === "bbox") {
         await createRangeTask(event, formData);
+        return;
+    }
+
+    const nameError = validateTaskName(formData.get("name"));
+    if (nameError) {
+        showMessage("taskError", nameError);
         return;
     }
 
@@ -2492,7 +2552,9 @@ function renderGroupTask(task) {
     const children = Array.isArray(task.children) ? task.children : [];
     const progress = toPercent(task.progress);
     const riskHint = summarizeTaskRisk(task, children);
-    const isOpen = expandedGroupTasks.has(task.id);
+    const rawTaskID = String(task.id || "");
+    task = { ...task, id: escapeAttribute(rawTaskID), name: escapeHTML(task.name) };
+    const isOpen = expandedGroupTasks.has(rawTaskID);
     const menuId = `menu-${task.id}`;
 
     return `
@@ -2559,9 +2621,18 @@ function renderGroupTask(task) {
 function renderStandaloneTask(task) {
     const progress = toPercent(task.progress);
     const riskHint = detectTaskRisk(task);
+    const rawTaskID = String(task.id || "");
+    task = {
+        ...task,
+        id: escapeAttribute(rawTaskID),
+        name: escapeHTML(task.name),
+        errorMessage: escapeHTML(task.errorMessage),
+        artifactName: escapeHTML(task.artifactName),
+        downloadUrl: escapeAttribute(task.downloadUrl)
+    };
     const menuId = `menu-${task.id}`;
     return `
-        <details class="task-card" data-group-task-id="${task.id}" ${expandedGroupTasks.has(task.id) ? "open" : ""}>
+        <details class="task-card" data-group-task-id="${task.id}" ${expandedGroupTasks.has(rawTaskID) ? "open" : ""}>
             <summary>
                 <div class="task-card__summary">
                     <label class="task-check" onclick="event.stopPropagation()">
@@ -2640,10 +2711,20 @@ function renderStandaloneDetail(task) {
 function renderChildTask(task) {
     const progress = toPercent(task.progress);
     const riskHint = detectTaskRisk(task);
-    const isOpen = expandedChildTasks.has(task.id);
+    const rawTaskID = String(task.id || "");
+    task = {
+        ...task,
+        id: escapeAttribute(rawTaskID),
+        name: escapeHTML(task.name),
+        sourceName: escapeHTML(task.sourceName),
+        errorMessage: escapeHTML(task.errorMessage),
+        artifactName: escapeHTML(task.artifactName),
+        downloadUrl: escapeAttribute(task.downloadUrl)
+    };
+    const isOpen = expandedChildTasks.has(rawTaskID);
     const artifactAction = task.artifactStatus === "ready"
         ? `<a href="${task.downloadUrl}" class="artifact-link">${icon("download")}<span>下载产物</span></a>`
-        : `<span class="artifact-text">产物：${translateArtifactStatus(task.artifactStatus)}</span>`;
+        : `<span class="artifact-text">产物：${task.artifactStatus === "packing" && task.artifactName ? task.artifactName : translateArtifactStatus(task.artifactStatus)}</span>`;
 
     return `
         <details class="child-task" data-child-task-id="${task.id}" ${isOpen ? "open" : ""}>
@@ -2709,8 +2790,88 @@ function renderArtifactPill(status) {
     return `<span class="artifact-pill">产物：${translateArtifactStatus(status)}</span>`;
 }
 
+async function previewTaskArea(task) {
+    const area = task && task.area ? task.area : {};
+    if (area.mode === "bbox" && area.bbox) {
+        activeMapMode = "bbox";
+        setTaskMode("tasks");
+        window.setTimeout(() => showTaskBBoxOnMap(area.bbox), 50);
+        return;
+    }
+
+    activeMapMode = "region";
+    setTaskMode("tasks");
+    const response = await fetchJSON(`/api/tasks/${encodeURIComponent(task.id)}/area`);
+    if (!response.ok || !adminRegionMap || !window.L) {
+        return;
+    }
+    if (taskAreaPreviewLayer) {
+        adminRegionMap.removeLayer(taskAreaPreviewLayer);
+    }
+    taskAreaPreviewLayer = L.geoJSON(selectMostSpecificTaskArea(response.data), {
+        style: { color: "#2563eb", weight: 3, fillColor: "#2563eb", fillOpacity: 0.14 }
+    }).addTo(adminRegionMap);
+    const bounds = taskAreaPreviewLayer.getBounds();
+    if (bounds.isValid()) {
+        adminRegionMap.fitBounds(bounds.pad(0.12), { padding: [26, 26], maxZoom: 11 });
+    }
+}
+
+function selectMostSpecificTaskArea(geojson) {
+    const features = Array.isArray(geojson && geojson.features) ? geojson.features : [];
+    if (features.length <= 1 || !window.L) {
+        return geojson;
+    }
+
+    let selectedFeature = null;
+    let selectedArea = Number.POSITIVE_INFINITY;
+    features.forEach((feature) => {
+        const bounds = L.geoJSON(feature).getBounds();
+        if (!bounds || !bounds.isValid()) {
+            return;
+        }
+        const southWest = bounds.getSouthWest();
+        const northEast = bounds.getNorthEast();
+        const area = Math.abs((northEast.lng - southWest.lng) * (northEast.lat - southWest.lat));
+        if (area > 0 && area < selectedArea) {
+            selectedArea = area;
+            selectedFeature = feature;
+        }
+    });
+
+    return selectedFeature
+        ? { type: "FeatureCollection", features: [selectedFeature] }
+        : geojson;
+}
+
+function showTaskBBoxOnMap(bbox) {
+    if (!rangeMap || !window.L) {
+        return;
+    }
+    clearRangeOverlays();
+    const bounds = L.latLngBounds([bbox.minLat, bbox.minLon], [bbox.maxLat, bbox.maxLon]);
+    rangeRectangle = L.rectangle(bounds, {
+        color: "#2563eb", weight: 3, dashArray: "6 6", fillColor: "#2563eb", fillOpacity: 0.14
+    }).addTo(rangeMap);
+    rangeMap.fitBounds(bounds.pad(0.2), { padding: [26, 26], maxZoom: 17 });
+}
+
+function escapeHTML(value) {
+    return String(value ?? "").replace(/[&<>'"]/g, (character) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        "'": "&#39;",
+        "\"": "&quot;"
+    }[character]));
+}
+
+function escapeAttribute(value) {
+    return escapeHTML(value);
+}
+
 function renderWarningPill(text) {
-    return `<span class="warning-pill">${text}</span>`;
+    return `<span class="warning-pill">${escapeHTML(text)}</span>`;
 }
 
 function countTasks(tasks) {
@@ -3068,19 +3229,23 @@ async function fetchJSON(url, options = {}) {
         config.body = options.body;
     }
 
-    const response = await fetch(url, config);
-    let data = {};
     try {
-        data = await response.json();
+        const response = await fetch(url, config);
+        let data = {};
+        try {
+            data = await response.json();
+        } catch (_error) {
+            data = {};
+        }
+
+        if (response.status === 401 && !options.allowUnauthorized) {
+            showLogin();
+        }
+
+        return { ok: response.ok, status: response.status, data };
     } catch (_error) {
-        data = {};
+        return { ok: false, status: 0, data: { error: "网络请求失败，请检查本地服务是否正在运行。" } };
     }
-
-    if (response.status === 401 && !options.allowUnauthorized) {
-        showLogin();
-    }
-
-    return { ok: response.ok, status: response.status, data };
 }
 
 function translateStatus(status) {

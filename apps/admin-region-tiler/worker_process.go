@@ -82,10 +82,12 @@ func runWorkerProcess(taskRecordID, runID string) error {
 	}
 
 	done := make(chan struct{})
+	progressDone := make(chan struct{})
 	progressTicker := time.NewTicker(1 * time.Second)
 	defer progressTicker.Stop()
 
 	go func() {
+		defer close(progressDone)
 		for {
 			select {
 			case <-progressTicker.C:
@@ -100,6 +102,7 @@ func runWorkerProcess(taskRecordID, runID string) error {
 	task.Run()
 	controller.stopLoop()
 	close(done)
+	<-progressDone
 
 	persistRunProgress(run, task)
 	applyTaskSnapshot(run, task)
@@ -108,7 +111,7 @@ func runWorkerProcess(taskRecordID, runID string) error {
 		return err
 	}
 
-	if err := prepareArtifactForRun(task, run); err != nil {
+	if err := prepareArtifactForRun(taskRecord, task, run); err != nil {
 		run.ArtifactStatus = ArtifactFailed
 		if run.ErrorMessage == "" {
 			run.ErrorMessage = err.Error()
@@ -258,41 +261,82 @@ func persistRunProgress(run *TaskRunRecord, task *Task) {
 }
 
 func applyTaskSnapshot(run *TaskRunRecord, task *Task) {
-	run.Status = task.Status
-	run.Total = task.Total
-	run.Current = task.Current
-	run.SuccessCount = task.SuccessCount
-	run.FailureCount = task.FailureCount
-	run.ErrorMessage = task.ErrorMessage
-	run.OutputPath = task.File
-	run.StartedAt = task.StartedAt
-	run.FinishedAt = task.FinishedAt
+	snapshot := task.snapshot()
+	run.Status = TaskStatus(snapshot.Status)
+	run.Total = snapshot.Total
+	run.Current = snapshot.Current
+	run.SuccessCount = snapshot.SuccessCount
+	run.FailureCount = snapshot.FailureCount
+	run.ErrorMessage = snapshot.ErrorMessage
+	run.OutputPath = snapshot.File
+	if snapshot.StartedAt != "" {
+		startedAt, err := time.Parse(time.RFC3339, snapshot.StartedAt)
+		if err == nil {
+			run.StartedAt = &startedAt
+		}
+	}
+	if snapshot.FinishedAt != "" {
+		finishedAt, err := time.Parse(time.RFC3339, snapshot.FinishedAt)
+		if err == nil {
+			run.FinishedAt = &finishedAt
+		}
+	}
 }
 
-func prepareArtifactForRun(task *Task, run *TaskRunRecord) error {
-	if task.File == "" {
+func prepareArtifactForRun(taskRecord *TaskRecord, task *Task, run *TaskRunRecord) error {
+	taskSnapshot := task.snapshot()
+	if taskSnapshot.File == "" {
 		return nil
 	}
 
 	artifactDir := filepath.Join(viper.GetString("output.directory"), "_artifacts")
-	if err := os.MkdirAll(artifactDir, os.ModePerm); err != nil {
+	if err := os.MkdirAll(artifactDir, directoryPermissions); err != nil {
 		return err
 	}
 
-	if strings.EqualFold(task.outformat, "mbtiles") || strings.HasSuffix(strings.ToLower(task.File), ".mbtiles") {
-		run.ArtifactPath = task.File
-		run.ArtifactName = filepath.Base(task.File)
+	if strings.EqualFold(task.outformat, "mbtiles") || strings.HasSuffix(strings.ToLower(taskSnapshot.File), ".mbtiles") {
+		run.ArtifactPath = taskSnapshot.File
+		run.ArtifactName = filepath.Base(taskSnapshot.File)
 		return nil
 	}
 
 	run.ArtifactStatus = ArtifactPacking
-	zipPath := filepath.Join(artifactDir, run.ID+".zip")
-	if err := zipDirectory(task.File, zipPath); err != nil {
+	zipPath := filepath.Join(artifactDir, archiveFileName(taskRecord.Name, taskRecord.SourceName))
+	if err := zipDirectory(taskSnapshot.File, zipPath, func(current, total int) {
+		run.ArtifactName = fmt.Sprintf("压缩中：%d/%d", current, total)
+		if err := retryOnBusy(func() error { return store.updateRunProgress(run) }); err != nil {
+			log.Warnf("failed to persist archive progress for run %s: %v", run.ID, err)
+		}
+	}); err != nil {
 		return err
 	}
 	run.ArtifactPath = zipPath
 	run.ArtifactName = filepath.Base(zipPath)
 	return nil
+}
+
+func archiveFileName(taskName, childName string) string {
+	taskName = strings.TrimSpace(taskName)
+	childName = strings.TrimSpace(childName)
+	initial := "task"
+	if runes := []rune(taskName); len(runes) > 0 {
+		initial = string(runes[0])
+	}
+	if childName == "" {
+		childName = "subtask"
+	}
+	return safeFilePart(initial) + "-" + safeFilePart(childName) + ".zip"
+}
+
+func safeFilePart(value string) string {
+	value = strings.Trim(value, " .")
+	value = strings.Map(func(r rune) rune {
+		if r < 0x20 || strings.ContainsRune(`\\/:*?"<>|`, r) {
+			return '_'
+		}
+		return r
+	}, value)
+	return strings.Trim(value, " .")
 }
 
 func finalizeUnexpectedWorkerExit(taskRecord *TaskRecord, run *TaskRunRecord, waitErr error) {

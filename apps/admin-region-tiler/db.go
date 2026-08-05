@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
@@ -15,6 +16,7 @@ import (
 
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
+	"golang.org/x/crypto/bcrypt"
 )
 
 var (
@@ -150,6 +152,10 @@ type SQLiteStore struct {
 	db *sql.DB
 }
 
+type sqlExecer interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
 var (
 	store          *SQLiteStore
 	sessionMaxAge  = 7 * 24 * time.Hour
@@ -158,7 +164,7 @@ var (
 )
 
 func initDB() {
-	if err := os.MkdirAll(defaultDataDir, os.ModePerm); err != nil {
+	if err := os.MkdirAll(defaultDataDir, directoryPermissions); err != nil {
 		log.Fatalf("failed to create data directory: %v", err)
 	}
 
@@ -457,23 +463,31 @@ func (s *SQLiteStore) backfillNormalizedRecords() error {
 }
 
 func (s *SQLiteStore) syncNormalizedTaskRecord(plan *TaskRecord) error {
+	return s.syncNormalizedTaskRecordWithExec(s.db, plan)
+}
+
+func (s *SQLiteStore) syncNormalizedTaskRecordWithExec(execer sqlExecer, plan *TaskRecord) error {
 	if plan == nil {
 		return nil
 	}
 	switch plan.Kind {
 	case TaskRecordKindChild:
-		return s.upsertNormalizedTaskSource(plan.ParentID, plan.ID, plan.SourceName, plan.URL, plan.Format, plan.Schema, 0, plan.CreatedAt, plan.UpdatedAt)
+		return s.upsertNormalizedTaskSourceWithExec(execer, plan.ParentID, plan.ID, plan.SourceName, plan.URL, plan.Format, plan.Schema, 0, plan.CreatedAt, plan.UpdatedAt)
 	case TaskRecordKindSingle:
-		if err := s.upsertNormalizedTask(plan); err != nil {
+		if err := s.upsertNormalizedTaskWithExec(execer, plan); err != nil {
 			return err
 		}
-		return s.upsertNormalizedTaskSource(plan.ID, plan.ID+":source", plan.SourceName, plan.URL, plan.Format, plan.Schema, 0, plan.CreatedAt, plan.UpdatedAt)
+		return s.upsertNormalizedTaskSourceWithExec(execer, plan.ID, plan.ID+":source", plan.SourceName, plan.URL, plan.Format, plan.Schema, 0, plan.CreatedAt, plan.UpdatedAt)
 	default:
-		return s.upsertNormalizedTask(plan)
+		return s.upsertNormalizedTaskWithExec(execer, plan)
 	}
 }
 
 func (s *SQLiteStore) upsertNormalizedTask(plan *TaskRecord) error {
+	return s.upsertNormalizedTaskWithExec(s.db, plan)
+}
+
+func (s *SQLiteStore) upsertNormalizedTaskWithExec(execer sqlExecer, plan *TaskRecord) error {
 	areaJSON, err := json.Marshal(map[string]any{
 		"levels": plan.Levels,
 	})
@@ -490,7 +504,7 @@ func (s *SQLiteStore) upsertNormalizedTask(plan *TaskRecord) error {
 		updatedAt = createdAt
 	}
 
-	_, err = s.db.Exec(
+	_, err = execer.Exec(
 		`INSERT INTO tasks (
 			id, user_id, parent_id, mode, name, area_json, zoom_min, zoom_max, schedule_mode,
 			run_at, status, legacy_plan_id, created_at, updated_at
@@ -527,6 +541,10 @@ func (s *SQLiteStore) upsertNormalizedTask(plan *TaskRecord) error {
 }
 
 func (s *SQLiteStore) upsertNormalizedTaskSource(taskID, sourceID, name, rawURL, format, schema string, position int, createdAt, updatedAt time.Time) error {
+	return s.upsertNormalizedTaskSourceWithExec(s.db, taskID, sourceID, name, rawURL, format, schema, position, createdAt, updatedAt)
+}
+
+func (s *SQLiteStore) upsertNormalizedTaskSourceWithExec(execer sqlExecer, taskID, sourceID, name, rawURL, format, schema string, position int, createdAt, updatedAt time.Time) error {
 	if strings.TrimSpace(taskID) == "" {
 		return nil
 	}
@@ -540,7 +558,7 @@ func (s *SQLiteStore) upsertNormalizedTaskSource(taskID, sourceID, name, rawURL,
 		name = rawURL
 	}
 
-	_, err := s.db.Exec(
+	_, err := execer.Exec(
 		`INSERT INTO task_sources (
 			id, task_id, name, layer, url, format, schema, position, created_at, updated_at
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -903,10 +921,14 @@ func (s *SQLiteStore) seedDefaultUser() error {
 		return nil
 	}
 
+	passwordHash, err := passwordHash(password)
+	if err != nil {
+		return err
+	}
 	_, err = s.db.Exec(
 		`INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)`,
 		username,
-		hashPassword(password),
+		passwordHash,
 		time.Now().Unix(),
 	)
 	return err
@@ -944,8 +966,19 @@ func (s *SQLiteStore) authenticateUser(username, password string) (*UserRecord, 
 	if err != nil {
 		return nil, err
 	}
-	if user.PasswordHash != hashPassword(password) {
+	matches, legacy, err := passwordMatches(user.PasswordHash, password)
+	if err != nil || !matches {
 		return nil, errors.New("invalid credentials")
+	}
+	if legacy {
+		upgradedHash, hashErr := passwordHash(password)
+		if hashErr != nil {
+			return nil, hashErr
+		}
+		if _, updateErr := s.db.Exec(`UPDATE users SET password_hash = ? WHERE id = ?`, upgradedHash, user.ID); updateErr != nil {
+			return nil, updateErr
+		}
+		user.PasswordHash = upgradedHash
 	}
 	return user, nil
 }
@@ -965,6 +998,9 @@ func (s *SQLiteStore) createSession(userID int64) (*SessionRecord, error) {
 		return nil, err
 	}
 	now := time.Now()
+	if _, err := s.db.Exec(`DELETE FROM sessions WHERE expires_at <= ?`, now.Unix()); err != nil {
+		return nil, err
+	}
 	session := &SessionRecord{
 		Token:     token,
 		UserID:    userID,
@@ -1016,42 +1052,65 @@ func (s *SQLiteStore) getUserByID(id int64) (*UserRecord, error) {
 }
 
 func (s *SQLiteStore) createTaskRecord(plan *TaskRecord) error {
-	levelsJSON, err := json.Marshal(plan.Levels)
+	return s.createTaskRecords(plan)
+}
+
+func (s *SQLiteStore) createTaskRecords(plans ...*TaskRecord) error {
+	if len(plans) == 0 {
+		return errors.New("at least one task record is required")
+	}
+	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
-	now := time.Now().Unix()
-	plan.CreatedAt = time.Unix(now, 0)
-	plan.UpdatedAt = plan.CreatedAt
-	_, err = s.db.Exec(
-		`INSERT INTO plans (
+	defer tx.Rollback()
+
+	now := time.Now().Truncate(time.Second)
+	for _, plan := range plans {
+		if plan == nil {
+			return errors.New("task record is required")
+		}
+		if strings.TrimSpace(plan.ID) == "" {
+			return errors.New("task record id is required")
+		}
+		levelsJSON, err := json.Marshal(plan.Levels)
+		if err != nil {
+			return err
+		}
+		plan.CreatedAt = now
+		plan.UpdatedAt = now
+		if _, err = tx.Exec(
+			`INSERT INTO plans (
 			id, user_id, parent_id, kind, name, source_name, url, format, schema, workers, save_pipe, time_delay,
 			schedule_mode, run_at, status, levels_json, last_run_id, created_at, updated_at
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		plan.ID,
-		plan.UserID,
-		plan.ParentID,
-		string(plan.Kind),
-		plan.Name,
-		plan.SourceName,
-		plan.URL,
-		plan.Format,
-		plan.Schema,
-		plan.Workers,
-		plan.SavePipe,
-		plan.TimeDelay,
-		string(plan.ScheduleMode),
-		plan.RunAt.Unix(),
-		string(plan.Status),
-		string(levelsJSON),
-		plan.LastRunID,
-		now,
-		now,
-	)
-	if err != nil {
-		return err
+			plan.ID,
+			plan.UserID,
+			plan.ParentID,
+			string(plan.Kind),
+			plan.Name,
+			plan.SourceName,
+			plan.URL,
+			plan.Format,
+			plan.Schema,
+			plan.Workers,
+			plan.SavePipe,
+			plan.TimeDelay,
+			string(plan.ScheduleMode),
+			plan.RunAt.Unix(),
+			string(plan.Status),
+			string(levelsJSON),
+			plan.LastRunID,
+			now.Unix(),
+			now.Unix(),
+		); err != nil {
+			return err
+		}
+		if err := s.syncNormalizedTaskRecordWithExec(tx, plan); err != nil {
+			return err
+		}
 	}
-	return s.syncNormalizedTaskRecord(plan)
+	return tx.Commit()
 }
 
 func (s *SQLiteStore) listTaskRecordsByUser(userID int64) ([]*TaskRecord, error) {
@@ -1233,7 +1292,7 @@ func (s *SQLiteStore) updateRunProgress(run *TaskRunRecord) error {
 	_, err := s.db.Exec(
 		`UPDATE task_runs
 		    SET status = ?, output_path = ?, total = ?, current = ?, success_count = ?, failure_count = ?,
-		        error_message = ?, started_at = ?, finished_at = ?, artifact_status = ?, updated_at = ?
+		        error_message = ?, started_at = ?, finished_at = ?, artifact_name = ?, artifact_status = ?, updated_at = ?
 		  WHERE id = ?`,
 		string(run.Status),
 		run.OutputPath,
@@ -1244,6 +1303,7 @@ func (s *SQLiteStore) updateRunProgress(run *TaskRunRecord) error {
 		run.ErrorMessage,
 		timeToUnix(run.StartedAt),
 		timeToUnix(run.FinishedAt),
+		run.ArtifactName,
 		string(run.ArtifactStatus),
 		time.Now().Unix(),
 		run.ID,
@@ -1344,7 +1404,26 @@ func newToken() (string, error) {
 	return hex.EncodeToString(raw), nil
 }
 
-func hashPassword(password string) string {
+func passwordHash(password string) (string, error) {
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return "", err
+	}
+	return string(hash), nil
+}
+
+func passwordMatches(storedHash, password string) (matches bool, legacy bool, err error) {
+	if strings.HasPrefix(storedHash, "$2a$") || strings.HasPrefix(storedHash, "$2b$") || strings.HasPrefix(storedHash, "$2y$") {
+		return bcrypt.CompareHashAndPassword([]byte(storedHash), []byte(password)) == nil, false, nil
+	}
+	expected := legacyPasswordHash(password)
+	if subtle.ConstantTimeCompare([]byte(storedHash), []byte(expected)) != 1 {
+		return false, true, nil
+	}
+	return true, true, nil
+}
+
+func legacyPasswordHash(password string) string {
 	sum := sha256.Sum256([]byte(password))
 	return hex.EncodeToString(sum[:])
 }

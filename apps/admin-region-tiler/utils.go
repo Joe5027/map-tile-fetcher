@@ -3,7 +3,7 @@ package main
 import (
 	"bytes"
 	"database/sql"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	_ "image/gif"
@@ -12,20 +12,26 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 
 	"github.com/paulmach/orb"
 	"github.com/paulmach/orb/geojson"
-	"github.com/paulmach/orb/maptile"
-	"github.com/paulmach/orb/maptile/tilecover"
-	log "github.com/sirupsen/logrus"
+)
+
+const (
+	directoryPermissions = 0o755
+	filePermissions      = 0o644
+	maxTilePixels        = 16_777_216
 )
 
 func validateTileResponse(body []byte, format string) error {
 	switch strings.ToLower(strings.TrimSpace(format)) {
 	case PNG, JPG, WEBP, "":
-		if _, _, err := image.DecodeConfig(bytes.NewReader(body)); err != nil {
+		config, _, err := image.DecodeConfig(bytes.NewReader(body))
+		if err != nil {
 			return fmt.Errorf("tile image validation failed: %w", err)
+		}
+		if config.Width <= 0 || config.Height <= 0 || int64(config.Width)*int64(config.Height) > maxTilePixels {
+			return fmt.Errorf("tile image dimensions exceed %d pixels", maxTilePixels)
 		}
 	}
 	return nil
@@ -121,6 +127,22 @@ func resolveGeoJSONPath(path string) (string, error) {
 	return "", fmt.Errorf("geojson file not found: %s", cleaned)
 }
 
+// resolveManagedTaskGeoJSONPath only permits GeoJSON files that belong to the
+// application. Task records are persistent and must not turn an arbitrary local
+// path into a later API response or download input.
+func resolveManagedTaskGeoJSONPath(path string) (string, error) {
+	resolved, err := resolveGeoJSONPath(path)
+	if err != nil {
+		return "", err
+	}
+	for _, root := range []string{"geojson", filepath.Join(defaultDataDir, "generated-areas")} {
+		if _, err := ensurePathWithinRoot(resolved, root, false); err == nil {
+			return resolved, nil
+		}
+	}
+	return "", errors.New("task geojson must be located in geojson or data/generated-areas")
+}
+
 func saveToMBTile(tile Tile, db *sql.DB) error {
 	_, err := db.Exec("insert or ignore into tiles (zoom_level, tile_column, tile_row, tile_data) values (?, ?, ?, ?);", tile.T.Z, tile.T.X, tile.flipY(), tile.C)
 	if err != nil {
@@ -131,9 +153,15 @@ func saveToMBTile(tile Tile, db *sql.DB) error {
 
 func saveToFiles(tile Tile, task *Task) error {
 	dir := filepath.Join(task.File, fmt.Sprintf(`%d`, tile.T.Z), fmt.Sprintf(`%d`, tile.T.X))
-	os.MkdirAll(dir, os.ModePerm)
-	fileName := filepath.Join(dir, fmt.Sprintf(`%d.%s`, tile.T.Y, task.TileMap.Format))
-	err := os.WriteFile(fileName, tile.C, os.ModePerm)
+	if err := os.MkdirAll(dir, directoryPermissions); err != nil {
+		return err
+	}
+	y := tile.T.Y
+	if strings.EqualFold(task.TileMap.Schema, "tms") {
+		y = tile.flipY()
+	}
+	fileName := filepath.Join(dir, fmt.Sprintf(`%d.%s`, y, task.TileMap.Format))
+	err := os.WriteFile(fileName, tile.C, filePermissions)
 	if err != nil {
 		return err
 	}
@@ -170,66 +198,6 @@ func optimizeDatabase(db *sql.DB) error {
 	return nil
 }
 
-func loadFeature(path string) (*geojson.Feature, error) {
-	resolvedPath, err := resolveGeoJSONPath(path)
-	if err != nil {
-		return nil, err
-	}
-
-	data, err := os.ReadFile(resolvedPath)
-	if err != nil {
-		return nil, fmt.Errorf("unable to read file: %w", err)
-	}
-
-	f, err := geojson.UnmarshalFeature(data)
-	if err == nil {
-		return f, nil
-	}
-
-	fc, err := geojson.UnmarshalFeatureCollection(data)
-	if err == nil {
-		if len(fc.Features) != 1 {
-			return nil, fmt.Errorf("must have 1 feature: %d", len(fc.Features))
-		}
-		return fc.Features[0], nil
-	}
-
-	g, err := geojson.UnmarshalGeometry(data)
-	if err != nil {
-		return nil, fmt.Errorf("unable to unmarshal feature: %w", err)
-	}
-
-	return geojson.NewFeature(g.Geometry()), nil
-}
-
-func loadFeatureCollection(path string) (*geojson.FeatureCollection, error) {
-	resolvedPath, err := resolveGeoJSONPath(path)
-	if err != nil {
-		return nil, err
-	}
-
-	data, err := os.ReadFile(resolvedPath)
-	if err != nil {
-		return nil, fmt.Errorf("unable to read file: %w", err)
-	}
-
-	fc, err := geojson.UnmarshalFeatureCollection(data)
-	if err != nil {
-		return nil, fmt.Errorf("unable to unmarshal feature collection: %w", err)
-	}
-
-	count := 0
-	for i := range fc.Features {
-		if fc.Features[i].Properties["name"] != "original" {
-			fc.Features[count] = fc.Features[i]
-			count++
-		}
-	}
-	fc.Features = fc.Features[:count]
-
-	return fc, nil
-}
-
 func loadCollection(path string) (orb.Collection, error) {
 	resolvedPath, err := resolveGeoJSONPath(path)
 	if err != nil {
@@ -252,54 +220,4 @@ func loadCollection(path string) (orb.Collection, error) {
 	}
 
 	return collection, nil
-}
-
-// output gets called if there is a test failure for debugging.
-func output(name string, r *geojson.FeatureCollection) {
-	f, err := loadFeature("./data/" + name + ".geojson")
-	if err != nil {
-		log.Fatalf("unable to load feature: %v", err)
-	}
-	if f.Properties == nil {
-		f.Properties = make(geojson.Properties)
-	}
-
-	f.Properties["fill"] = "#FF0000"
-	f.Properties["fill-opacity"] = "0.5"
-	f.Properties["stroke"] = "#FF0000"
-	f.Properties["name"] = "original"
-	r.Append(f)
-
-	data, err := json.MarshalIndent(r, "", " ")
-	if err != nil {
-		log.Fatalf("error marshalling json: %v", err)
-	}
-
-	err = os.WriteFile("failure_"+name+".geojson", data, 0644)
-	if err != nil {
-		log.Fatalf("write file failure: %v", err)
-	}
-}
-
-// output gets called if there is a test failure for debugging.
-func output2(name string, r *geojson.FeatureCollection, wg *sync.WaitGroup) {
-	defer wg.Done()
-	data, err := json.MarshalIndent(r, "", " ")
-	if err != nil {
-		log.Fatalf("error marshalling json: %v", err)
-	}
-
-	err = os.WriteFile(name+".geojson", data, 0644)
-	if err != nil {
-		log.Fatalf("write file failure: %v", err)
-	}
-}
-
-func getZoomCount(g orb.Geometry, minz int, maxz int) map[int]int64 {
-
-	info := make(map[int]int64)
-	for z := minz; z <= maxz; z++ {
-		info[z] = tilecover.GeometryCount(g, maptile.Zoom(z))
-	}
-	return info
 }
