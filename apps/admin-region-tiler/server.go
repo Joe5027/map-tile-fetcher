@@ -227,6 +227,10 @@ type RegionCatalogResponse struct {
 	Missing   []RegionCatalogItem `json:"missing"`
 }
 
+type RegionGeoJSONBatchResponse struct {
+	Regions map[string]json.RawMessage `json:"regions"`
+}
+
 type cachedRegionGeoJSON struct {
 	Path    string
 	ModTime time.Time
@@ -252,6 +256,7 @@ type regionCatalogCacheState struct {
 }
 
 const regionCatalogCacheTTL = 10 * time.Second
+const maxRegionGeoJSONBatchSize = 64
 const previewTokenTTL = 15 * time.Minute
 const maxPreviewTileBytes int64 = 8 << 20
 
@@ -308,6 +313,7 @@ func initServer() {
 		protected.GET("/config/tilemaps", getConfiguredMaps)
 		protected.GET("/config/regions", getConfiguredRegions)
 		protected.GET("/config/region-catalog", getRegionCatalog)
+		protected.GET("/config/region-catalog/geojson-batch", getRegionCatalogGeoJSONBatch)
 		protected.GET("/config/region-catalog/:id/geojson", getRegionCatalogGeoJSON)
 		protected.GET("/config/geojson-files", getGeoJSONFiles)
 		protected.POST("/tile-preview/tianditu-token", registerTiandituPreviewToken)
@@ -1661,6 +1667,55 @@ func getRegionCatalogGeoJSON(c *gin.Context) {
 	c.Data(http.StatusOK, "application/geo+json; charset=utf-8", content)
 }
 
+func getRegionCatalogGeoJSONBatch(c *gin.Context) {
+	requestedIDs := c.QueryArray("id")
+	if len(requestedIDs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "at least one region id is required"})
+		return
+	}
+
+	regionIDs := make([]string, 0, len(requestedIDs))
+	seen := make(map[string]struct{}, len(requestedIDs))
+	for _, rawID := range requestedIDs {
+		regionID := strings.TrimSpace(rawID)
+		if regionID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "region id must not be empty"})
+			return
+		}
+		if _, exists := seen[regionID]; exists {
+			continue
+		}
+		seen[regionID] = struct{}{}
+		regionIDs = append(regionIDs, regionID)
+	}
+	if len(regionIDs) > maxRegionGeoJSONBatchSize {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("at most %d region ids are allowed", maxRegionGeoJSONBatchSize)})
+		return
+	}
+
+	contents, err := cachedRegionGeoJSONContents(regionIDs)
+	if err != nil {
+		if errors.Is(err, errRegionNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "region not found"})
+			return
+		}
+		if errors.Is(err, errRegionGeoJSONMissing) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "region geojson not found"})
+			return
+		}
+		log.Errorf("Failed to read batch region geojson: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read region geojson"})
+		return
+	}
+
+	regions := make(map[string]json.RawMessage, len(contents))
+	for regionID, content := range contents {
+		regions[regionID] = json.RawMessage(content)
+	}
+	c.Header("Cache-Control", "private, max-age=300")
+	c.JSON(http.StatusOK, RegionGeoJSONBatchResponse{Regions: regions})
+}
+
 func cachedRegionCatalog() (RegionCatalogResponse, map[string]RegionCatalogItem, error) {
 	info, err := os.Stat("./geojson/regions.json")
 	if err != nil {
@@ -1742,6 +1797,31 @@ func cachedRegionGeoJSONContent(regionID string) ([]byte, error) {
 	if !exists {
 		return nil, errRegionNotFound
 	}
+	return cachedRegionGeoJSONContentForItem(regionID, item)
+}
+
+func cachedRegionGeoJSONContents(regionIDs []string) (map[string][]byte, error) {
+	_, byID, err := cachedRegionCatalog()
+	if err != nil {
+		return nil, err
+	}
+
+	contents := make(map[string][]byte, len(regionIDs))
+	for _, regionID := range regionIDs {
+		item, exists := byID[regionID]
+		if !exists {
+			return nil, errRegionNotFound
+		}
+		content, err := cachedRegionGeoJSONContentForItem(regionID, item)
+		if err != nil {
+			return nil, err
+		}
+		contents[regionID] = content
+	}
+	return contents, nil
+}
+
+func cachedRegionGeoJSONContentForItem(regionID string, item RegionCatalogItem) ([]byte, error) {
 	resolvedPath, err := resolveGeoJSONPath(item.GeoJSON)
 	if err != nil {
 		return nil, errRegionGeoJSONMissing
