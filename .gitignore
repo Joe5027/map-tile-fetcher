@@ -50,6 +50,8 @@ run.stderr.log
 .tmp-region-data/
 tmp/
 .playwright-mcp/
+apps/admin-region-tiler/geojson/materialize-report.json
+apps/admin-region-tiler/geojson/download-report.json
 
 # OS/editor noise
 .DS_Store

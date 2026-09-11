@@ -2,6 +2,13 @@
 
 ## Facts
 
+- 2026-09-11 repository cleanup: removed 24 redundant docs, unused package
+  scaffolding, unreferenced static files and a generated report. Actual region
+  geometry, runtime compatibility tables and active UI/test assets remain.
+  `docs/maintenance-audit-2026-09-11.md` records the deletion evidence and seven
+  unresolved maintenance issues, including five confirmed missing region files.
+- README follow-up PR #4 merged as `37cfe7c`; its main CI passed and the
+  temporary `codex/readme-sync` branch was removed locally and remotely.
 - 2026-09-11 README follow-up: root documentation now covers repair behavior,
   limits, legacy handling and validation. Source/binary runs read process
   environment variables, not `.env` automatically; initial credentials do not
@@ -55,8 +62,9 @@
 
 ## Decisions
 
-- Keep `main` as the only long-term branch. Merge the validated PR #3 head and
-  remove `agent/audit-hardening` only after the resulting main CI succeeds.
+- Keep `main` as the only long-term branch. PR #3 and its branch cleanup are
+  complete. For future batches, merge the checked PR head and remove its
+  temporary branch only after the resulting main CI succeeds.
 - Defaults: 1,000,000 tiles per parent across sources, three active children,
   paused children retaining their slot, and three requested workers (1-50).
 - Preserve legacy records and artifacts; reconcile explicitly without tile
@@ -157,8 +165,9 @@
 
 ## Next Action
 
-- For this delivery, verify the final PR head checks, merge with the validated
-  bilingual message, wait for main CI, and remove only the fully merged repair
-  branch. Use live GitHub state to determine whether these steps are complete.
+- Use `docs/maintenance-audit-2026-09-11.md` for remaining issues. Start with
+  region maintenance script data preservation and geometry correctness, then
+  existing-user password rotation. Check live GitHub state for any pending
+  cleanup PR before creating a duplicate batch.
 - Before any future release, rerun preflight and verify `main` CI. Plan a
   separate, explicitly authorized deployment and database backup/copy validation.

@@ -8,6 +8,8 @@ tiles/
 dist/
 build/
 .tmp-region-data/
+geojson/materialize-report.json
+geojson/download-report.json
 
 tiler
 tiler.exe

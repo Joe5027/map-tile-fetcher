@@ -1,5 +1,9 @@
 # GitHub Star Conversion Playbook
 
+> Historical promotion plan. The release checklist below still targets v0.1.0
+> and is not a validated procedure for current releases. See the
+> [maintenance audit](maintenance-audit-2026-09-11.md) before reusing it.
+
 This playbook is the first-stage execution guide for improving Map Tile
 Fetcher conversion from repository visitor to star. It is intentionally focused
 on Chinese GIS and map-development audiences.

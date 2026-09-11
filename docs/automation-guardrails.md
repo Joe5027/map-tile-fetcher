@@ -36,7 +36,7 @@ Facts:
 - Start from AGENTS.md, docs/project-map.md, docs/done-definition.md, docs/ai-operating-handbook.md, and git status.
 - Confirm the repository only contains the in-scope app under apps/admin-region-tiler.
 - Confirm retired .NET range downloader runtime code has not reappeared.
-- Check for drift between README.md, PROJECT_MANIFEST.md, RELEASE_HANDOFF_PROMPT.md, LICENSE, and docs/merge-plan.md.
+- Check for drift between README.md, PROJECT_MANIFEST.md, docs/long-term-memory.md, LICENSE, and docs/merge-plan.md.
 - Check that docs/knowledge-graph.md still names the current single-app architecture and AI control surfaces.
 - Check that docs/long-term-memory.md still follows the handoff contract if it exists.
 - Check for sensitive token or password literals, allowing documented placeholders and the documented development default admin password only.
@@ -67,7 +67,7 @@ python C:\Users\32674\.codex\skills\deep-execution-upgrade\scripts\audit_environ
 ```
 
 ```powershell
-rg -n "Apache|MIT|License|许可证|许可" README.md PROJECT_MANIFEST.md RELEASE_HANDOFF_PROMPT.md docs LICENSE
+rg -n "Apache|MIT|License|许可证|许可" README.md PROJECT_MANIFEST.md docs LICENSE
 ```
 
 ```powershell

@@ -168,15 +168,17 @@ node .\scripts\release_preflight.mjs
 
 ## 当前架构
 
-新的内部包结构从 `internal/` 开始：
+当前内部包和主应用的职责如下：
 
-- `internal/api`：统一 HTTP API。
-- `internal/auth`：可选登录和会话。
-- `internal/config`：应用配置、地图源和输出路径。
-- `internal/area`：bbox 和行政区划区域选择。
-- `internal/planner`：任务定义、运行记录和子任务规划。
-- `internal/downloader`：瓦片枚举、下载、重试和写入。
-- `internal/artifact`：ZIP、MBTiles 和兼容产物。
-- `internal/web`：统一静态前端辅助。
+- `internal/area`：bbox 和行政区划参数校验。
+- `internal/downloader`：bbox 瓦片坐标及数量计算。
+- `server.go`、`main.go`、`db.go`：HTTP API、配置、登录、SQLite 事务与迁移。
+- `runtime.go`、`queue.go`：任务控制、持久排队和工作进程调度。
+- `task.go`、`enumeration.go`、`worker_process.go`：枚举、下载、重试和写入。
+- `artifact_lifecycle.go`、`integrity.go`、`reconcile.go`：产物发布、删除、累计完整度与历史核对。
+- `static/`：登录、新建计划、任务管理及地图预览页面。
+
+详细入口见 [项目地图](../../docs/project-map.md)，清理结果和后续问题见
+[维护清单](../../docs/maintenance-audit-2026-09-11.md)。
 
 旧 `.NET` 范围下载器的框选交互和简单天地图流程已迁移到当前 Go 应用，旧运行代码已退役。

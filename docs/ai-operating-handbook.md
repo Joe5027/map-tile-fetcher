@@ -137,12 +137,10 @@ Current-session tool evidence wins over configured inventory. Use PowerShell,
 `rg` after confirming it runs, and `apply_patch` for local edits. Treat
 unexposed or replaced plugins as fallback routes, not hard dependencies.
 
-## Next Enhancement Queue
+## Maintenance Priorities
 
-1. Add browser automation for range-mode and region-mode smoke tests when a
-   local Playwright or equivalent dependency is available.
-2. Continue reducing legacy `plans` naming after compatibility is no longer
-   needed.
-3. Improve failure retry UX on top of persisted failure records.
-4. Handle global overgrown system skills, such as `imagegen`, in a separate
-   global-control tranche so repo guidance remains focused.
+Browser automation and cumulative failure retries are implemented and covered
+by the validation chain. Use [the maintenance audit](maintenance-audit-2026-09-11.md)
+for remaining work instead of recreating completed tasks. Keep legacy `plans`
+tables while compatibility still depends on them. Global environment work is
+outside repository maintenance.
