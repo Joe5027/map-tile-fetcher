@@ -23,8 +23,9 @@ type ActiveRun struct {
 }
 
 type RuntimeManager struct {
-	mu     sync.RWMutex
-	active map[string]*ActiveRun
+	operations sync.Mutex
+	mu         sync.RWMutex
+	active     map[string]*ActiveRun
 }
 
 type Scheduler struct {
@@ -91,14 +92,21 @@ func (s *Scheduler) dispatchDueTaskRecords() {
 var errTaskAlreadyActive = errors.New("task already active")
 
 func (m *RuntimeManager) StartTaskRecord(plan *TaskRecord) error {
+	m.operations.Lock()
+	defer m.operations.Unlock()
 	return m.startTaskRecordWithTrigger(plan, string(plan.ScheduleMode))
 }
 
 func (m *RuntimeManager) RetryFailures(plan *TaskRecord) error {
+	m.operations.Lock()
+	defer m.operations.Unlock()
 	return m.startTaskRecordWithTrigger(plan, triggerRetryFailures)
 }
 
 func (m *RuntimeManager) startTaskRecordWithTrigger(plan *TaskRecord, triggerMode string) error {
+	if err := store.checkNotDeleting(plan.ID); err != nil {
+		return err
+	}
 	if plan.Kind == TaskRecordKindGroup {
 		children, err := store.listTaskChildrenByParent(plan.ID)
 		if err != nil {
@@ -196,6 +204,14 @@ func (m *RuntimeManager) startTaskRecordWithTrigger(plan *TaskRecord, triggerMod
 		ArtifactStatus: ArtifactNone,
 		StartedAt:      &now,
 		Total:          task.Total,
+	}
+	runDir, err := managedRunDirectory(plan, run.ID)
+	if err != nil {
+		return err
+	}
+	run.OutputPath = filepath.Join(runDir, "tiles")
+	if task.outformat == "mbtiles" {
+		run.OutputPath = filepath.Join(runDir, "tiles.mbtiles")
 	}
 
 	if err := store.createRun(run); err != nil {
@@ -352,40 +368,9 @@ func (m *RuntimeManager) Cancel(plan *TaskRecord) error {
 }
 
 func (m *RuntimeManager) Purge(plan *TaskRecord) error {
-	if plan.Kind == TaskRecordKindGroup {
-		children, err := store.listTaskChildrenByParent(plan.ID)
-		if err != nil {
-			return err
-		}
-		for _, child := range children {
-			if _, childErr := m.getActive(child.ID); childErr == nil {
-				return errors.New("运行中或已暂停的下载不能直接删除，请先取消该下载。")
-			}
-		}
-	}
-
-	if _, err := m.getActive(plan.ID); err == nil {
-		return errors.New("运行中或已暂停的下载不能直接删除，请先取消该下载。")
-	}
-
-	runs, err := store.listRunsByTaskRecord(plan.ID)
-	if err != nil {
-		return err
-	}
-
-	paths := collectTaskPaths(runs)
-	for _, path := range paths {
-		if err := removeTaskPath(path); err != nil {
-			return err
-		}
-	}
-	for _, path := range generatedAreaPaths(plan) {
-		if err := removeGeneratedAreaPath(path); err != nil {
-			return err
-		}
-	}
-
-	return store.purgeTaskRecord(plan.ID)
+	m.operations.Lock()
+	defer m.operations.Unlock()
+	return m.purgeManagedTask(plan)
 }
 
 func (m *RuntimeManager) getActive(planID string) (*ActiveRun, error) {
@@ -491,6 +476,20 @@ func ensurePathWithinRoot(path string, root string, allowRoot bool) (string, err
 	relative, err := filepath.Rel(rootAbs, pathAbs)
 	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(os.PathSeparator)) || (!allowRoot && relative == ".") {
 		return "", errors.New("refusing to access a path outside the managed directory")
+	}
+	// Check every existing ancestor, including the configured root. Lexical
+	// containment alone does not prevent deletion through a directory symlink.
+	for current := pathAbs; ; current = filepath.Dir(current) {
+		info, statErr := os.Lstat(current)
+		if statErr != nil && !os.IsNotExist(statErr) {
+			return "", statErr
+		}
+		if statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+			return "", errors.New("managed paths must not contain symbolic links")
+		}
+		if filepath.Dir(current) == current {
+			break
+		}
 	}
 	return pathAbs, nil
 }

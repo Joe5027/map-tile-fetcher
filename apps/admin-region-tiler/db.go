@@ -211,6 +211,8 @@ func (s *SQLiteStore) initSchema() error {
 			password_hash TEXT NOT NULL,
 			created_at INTEGER NOT NULL
 		);`,
+		`CREATE TABLE IF NOT EXISTS task_deletions (plan_id TEXT PRIMARY KEY, error_message TEXT NOT NULL DEFAULT '');`,
+		`CREATE TABLE IF NOT EXISTS deletion_paths (plan_id TEXT NOT NULL, path TEXT NOT NULL, kind TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(plan_id,path));`,
 		`CREATE TABLE IF NOT EXISTS sessions (
 			token TEXT PRIMARY KEY,
 			user_id INTEGER NOT NULL,
@@ -604,26 +606,27 @@ func (s *SQLiteStore) syncTaskStatus(planID string, status TaskRecordStatus) err
 }
 
 func (s *SQLiteStore) upsertArtifactFromRun(run *TaskRunRecord) error {
+	return s.upsertArtifactWithExec(s.db, run)
+}
+
+func (s *SQLiteStore) upsertArtifactWithExec(execer sqlExecer, run *TaskRunRecord) error {
 	if run == nil {
 		return nil
 	}
 	if strings.TrimSpace(run.ArtifactPath) == "" && run.ArtifactStatus == ArtifactNone {
 		return nil
 	}
-	taskID, err := s.taskIDForTaskRecord(run.TaskRecordID)
-	if err != nil {
-		return err
-	}
+	taskID := run.TaskRecordID
 	now := time.Now().Unix()
 	name := strings.TrimSpace(run.ArtifactName)
 	if name == "" {
 		name = filepath.Base(run.ArtifactPath)
 	}
 
-	_, err = s.db.Exec(
+	_, err := execer.Exec(
 		`INSERT INTO artifacts (
 			id, task_id, run_id, name, path, format, package_format, status, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, (SELECT CASE WHEN parent_id <> '' THEN parent_id ELSE id END FROM plans WHERE id = ?), ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			task_id = excluded.task_id,
 			run_id = excluded.run_id,
@@ -1312,7 +1315,12 @@ func (s *SQLiteStore) updateRunProgress(run *TaskRunRecord) error {
 }
 
 func (s *SQLiteStore) finalizeRun(run *TaskRunRecord) error {
-	_, err := s.db.Exec(
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	_, err = tx.Exec(
 		`UPDATE task_runs
 		    SET status = ?, output_path = ?, artifact_path = ?, artifact_name = ?, artifact_status = ?,
 		        total = ?, current = ?, success_count = ?, failure_count = ?, error_message = ?,
@@ -1336,7 +1344,10 @@ func (s *SQLiteStore) finalizeRun(run *TaskRunRecord) error {
 	if err != nil {
 		return err
 	}
-	return s.upsertArtifactFromRun(run)
+	if err := s.upsertArtifactWithExec(tx, run); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *SQLiteStore) getRun(runID string) (*TaskRunRecord, error) {
@@ -1356,16 +1367,25 @@ func (s *SQLiteStore) purgeTaskRecord(planID string) error {
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.Exec(`DELETE FROM task_runs WHERE plan_id IN (SELECT id FROM plans WHERE id = ? OR parent_id = ?)`, planID, planID); err != nil {
+	if _, err := tx.Exec(`DELETE FROM artifacts WHERE run_id IN (SELECT id FROM task_runs WHERE plan_id IN (SELECT id FROM plans WHERE id = ? OR parent_id = ?))`, planID, planID); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(`DELETE FROM artifacts WHERE task_id = ? OR task_id IN (SELECT id FROM plans WHERE parent_id = ?)`, planID, planID); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`DELETE FROM failures WHERE task_id = ? OR task_id IN (SELECT id FROM plans WHERE parent_id = ?)`, planID, planID); err != nil {
+	if _, err := tx.Exec(`DELETE FROM failures WHERE task_id = ? OR source_id = ? OR source_id IN (SELECT id FROM plans WHERE parent_id = ?)`, planID, planID, planID); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`DELETE FROM task_sources WHERE task_id = ? OR task_id IN (SELECT id FROM plans WHERE parent_id = ?)`, planID, planID); err != nil {
+	if _, err := tx.Exec(`DELETE FROM task_sources WHERE task_id = ? OR id = ? OR task_id IN (SELECT id FROM plans WHERE parent_id = ?)`, planID, planID, planID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM task_runs WHERE plan_id IN (SELECT id FROM plans WHERE id = ? OR parent_id = ?)`, planID, planID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM deletion_paths WHERE plan_id = ?`, planID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM task_deletions WHERE plan_id = ?`, planID); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(`DELETE FROM tasks WHERE id = ? OR parent_id = ?`, planID, planID); err != nil {

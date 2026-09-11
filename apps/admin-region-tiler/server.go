@@ -739,11 +739,12 @@ func downloadTaskArtifact(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "task not found"})
 		return
 	}
-	if plan.LastRun == nil || plan.LastRun.ArtifactStatus != ArtifactReady || plan.LastRun.ArtifactPath == "" {
+	published, err := store.publishedRun(plan.ID)
+	if err != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "artifact is not ready"})
 		return
 	}
-	artifactPath, err := ensurePathWithinRoot(plan.LastRun.ArtifactPath, viper.GetString("output.directory"), false)
+	artifactPath, err := ensurePathWithinRoot(published.ArtifactPath, viper.GetString("output.directory"), false)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "artifact is unavailable"})
 		return
@@ -753,7 +754,7 @@ func downloadTaskArtifact(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "artifact is unavailable"})
 		return
 	}
-	name := filepath.Base(strings.TrimSpace(plan.LastRun.ArtifactName))
+	name := filepath.Base(strings.TrimSpace(published.ArtifactName))
 	if name == "." || name == string(filepath.Separator) || name == "" {
 		name = filepath.Base(artifactPath)
 	}
@@ -1377,6 +1378,13 @@ func taskResponseFromRecord(plan *TaskRecord) TaskResponse {
 		}
 	}
 
+	if store != nil {
+		if published, err := store.publishedRun(plan.ID); err == nil {
+			response.ArtifactStatus = ArtifactReady
+			response.ArtifactName = published.ArtifactName
+			response.DownloadURL = "/api/tasks/" + plan.ID + "/download"
+		}
+	}
 	applyFailureSummary(plan.ID, &response)
 	applyProgressAndArtifact(&response)
 	return response

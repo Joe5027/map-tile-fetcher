@@ -3033,7 +3033,7 @@ async function handleBulkAction(action) {
                 return;
             }
         }
-        if (!window.confirm("确定删除已选任务吗？删除后任务记录将不可恢复，但已下载文件不会自动删除。")) {
+        if (!window.confirm("确定删除已选任务及其全部子任务、历史下载文件、ZIP/MBTiles 和失败记录吗？此操作不可恢复。共享区域文件会保留至最后一个引用删除。")) {
             return;
         }
         await runBulkMutation(
@@ -3194,7 +3194,7 @@ async function purgeTask(id, status, silent = false) {
     if (!canDelete(status)) {
         return;
     }
-    if (!silent && !window.confirm("确定删除该任务吗？删除后任务记录将不可恢复，但已下载文件不会自动删除。")) {
+    if (!silent && !window.confirm("确定删除该任务及其全部子任务、历史下载文件、ZIP/MBTiles 和失败记录吗？此操作不可恢复。共享区域文件会保留至最后一个引用删除。")) {
         return;
     }
     await mutateTask(`/api/tasks/${id}/purge`, "DELETE", silent);

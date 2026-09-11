@@ -11,7 +11,6 @@ import (
 
 	"github.com/paulmach/orb/maptile"
 	log "github.com/sirupsen/logrus"
-	"github.com/spf13/viper"
 )
 
 const workerDBRetryAttempts = 12
@@ -48,6 +47,12 @@ func runWorkerProcess(taskRecordID, runID string) error {
 	if err != nil {
 		_ = failRunBeforeStart(taskRecord, run, err)
 		return err
+	}
+	task.File = run.OutputPath
+	if task.File != "" {
+		if err := os.MkdirAll(filepath.Dir(task.File), directoryPermissions); err != nil {
+			return failRunBeforeStart(taskRecord, run, err)
+		}
 	}
 	if run.TriggerMode == triggerRetryFailures {
 		var records []FailureRecord
@@ -285,24 +290,32 @@ func applyTaskSnapshot(run *TaskRunRecord, task *Task) {
 
 func prepareArtifactForRun(taskRecord *TaskRecord, task *Task, run *TaskRunRecord) error {
 	taskSnapshot := task.snapshot()
+	if taskSnapshot.Status == string(TaskCancelled) || taskSnapshot.Status == string(TaskFailed) {
+		return nil
+	}
 	if taskSnapshot.File == "" {
 		return nil
 	}
 
-	artifactDir := filepath.Join(viper.GetString("output.directory"), "_artifacts")
+	artifactDir, err := managedRunDirectory(taskRecord, run.ID)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(artifactDir, directoryPermissions); err != nil {
 		return err
 	}
 
 	if strings.EqualFold(task.outformat, "mbtiles") || strings.HasSuffix(strings.ToLower(taskSnapshot.File), ".mbtiles") {
 		run.ArtifactPath = taskSnapshot.File
-		run.ArtifactName = filepath.Base(taskSnapshot.File)
+		run.ArtifactName = strings.TrimSuffix(archiveFileName(taskRecord.Name, taskRecord.SourceName), ".zip") + ".mbtiles"
 		return nil
 	}
 
 	run.ArtifactStatus = ArtifactPacking
-	zipPath := filepath.Join(artifactDir, archiveFileName(taskRecord.Name, taskRecord.SourceName))
-	if err := zipDirectory(taskSnapshot.File, zipPath, func(current, total int) {
+	zipPath := filepath.Join(artifactDir, "artifact.zip")
+	stagingPath := zipPath + ".partial"
+	defer os.Remove(stagingPath)
+	if err := zipDirectory(taskSnapshot.File, stagingPath, func(current, total int) {
 		run.ArtifactName = fmt.Sprintf("压缩中：%d/%d", current, total)
 		if err := retryOnBusy(func() error { return store.updateRunProgress(run) }); err != nil {
 			log.Warnf("failed to persist archive progress for run %s: %v", run.ID, err)
@@ -310,22 +323,32 @@ func prepareArtifactForRun(taskRecord *TaskRecord, task *Task, run *TaskRunRecor
 	}); err != nil {
 		return err
 	}
+	if err := validateArchive(stagingPath); err != nil {
+		return err
+	}
+	if _, err := os.Stat(zipPath); err == nil {
+		return fmt.Errorf("run artifact already exists")
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.Rename(stagingPath, zipPath); err != nil {
+		return err
+	}
 	run.ArtifactPath = zipPath
-	run.ArtifactName = filepath.Base(zipPath)
+	run.ArtifactName = archiveFileName(taskRecord.Name, taskRecord.SourceName)
 	return nil
 }
 
 func archiveFileName(taskName, childName string) string {
 	taskName = strings.TrimSpace(taskName)
 	childName = strings.TrimSpace(childName)
-	initial := "task"
-	if runes := []rune(taskName); len(runes) > 0 {
-		initial = string(runes[0])
+	if taskName == "" {
+		taskName = "task"
 	}
 	if childName == "" {
 		childName = "subtask"
 	}
-	return safeFilePart(initial) + "-" + safeFilePart(childName) + ".zip"
+	return safeFilePart(taskName) + "-" + safeFilePart(childName) + ".zip"
 }
 
 func safeFilePart(value string) string {
@@ -336,7 +359,14 @@ func safeFilePart(value string) string {
 		}
 		return r
 	}, value)
-	return strings.Trim(value, " .")
+	runes := []rune(strings.Trim(value, " ."))
+	if len(runes) > 40 {
+		runes = runes[:40]
+	}
+	if len(runes) == 0 {
+		return "task"
+	}
+	return string(runes)
 }
 
 func finalizeUnexpectedWorkerExit(taskRecord *TaskRecord, run *TaskRunRecord, waitErr error) {
