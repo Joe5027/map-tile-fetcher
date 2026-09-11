@@ -50,6 +50,8 @@ go run .
 `conf.toml` 和进程环境变量（如 `AUTH_DEFAULT_USERNAME`、`AUTH_DEFAULT_PASSWORD`），
 不会自动加载 `.env`；Docker Compose 和下方 `docker run --env-file .env` 才会注入该文件。
 这些账号配置用于初始化用户，修改配置不会重置数据库中已有同名用户的密码。
+已有用户可在账号菜单修改密码，或由维护者使用离线恢复命令；详见
+[密码修改与离线恢复](docs/password-recovery.md)。
 
 ### Docker 镜像和部署
 
@@ -146,6 +148,11 @@ Compose 会持久化 `data/`、`output/`、`geojson/` 和 `conf.toml`。如果�
 
 ### 发布和安装
 
+当前源码的 Windows/Linux 开发验证包统一由
+[`scripts/build_release.py`](apps/admin-region-tiler/scripts/build_release.py) 生成，
+命令、构建身份及安装验收见 [构建与安装](docs/build-and-install.md)。
+页面、`tiler --version` 和 `/api/version` 显示实际构建版本；本轮不新增发布标签。
+
 - 已发布预览版：[`v0.3.0`](https://github.com/Joe5027/map-tile-fetcher/releases/tag/v0.3.0)（发布说明及下载包）
 - 历史发布说明：[`docs/releases/v0.1.0.md`](docs/releases/v0.1.0.md)
 - 用户手册：[`docs/user-manual-zh.md`](docs/user-manual-zh.md)
@@ -206,6 +213,9 @@ Source and binary runs read `conf.toml` and process environment variables such a
 `AUTH_DEFAULT_USERNAME` and `AUTH_DEFAULT_PASSWORD`; they do not load `.env` automatically.
 Docker Compose and the `docker run --env-file .env` command below inject that file.
 These settings initialize users; changing them does not reset an existing user's password.
+Existing users can change their password from the account menu. Maintainers can use
+`tiler admin reset-password --database PATH --username NAME` after stopping all runtime
+processes. The command prompts privately, backs up the existing database and revokes sessions.
 
 ### Docker Image And Deployment
 
@@ -311,6 +321,10 @@ Safe placeholders:
 Real tokens should stay in local `.env`, local config, or your deployment secret manager. Do not commit real tokens to Git.
 
 ### Release And Install
+
+Use [`scripts/build_release.py`](apps/admin-region-tiler/scripts/build_release.py) for
+Windows/Linux verification packages. See [Build and Install](docs/build-and-install.md).
+The UI, `tiler --version` and `/api/version` share the actual build identity.
 
 - Published preview: [`v0.3.0`](https://github.com/Joe5027/map-tile-fetcher/releases/tag/v0.3.0) (release notes and downloads)
 - Historical release notes: [`docs/releases/v0.1.0.md`](docs/releases/v0.1.0.md)

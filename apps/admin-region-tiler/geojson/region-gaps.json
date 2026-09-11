@@ -1,0 +1,43 @@
+{
+  "460323": {
+    "name": "中沙群岛的岛礁及其海域",
+    "reasonCode": "historical_boundary_unverified",
+    "reason": "历史目录区域尚无经核验的独立边界，不能使用整个三沙市替代。",
+    "checkedAt": "2026-09-11", "sourceDate": "2020-04-18", "boundaryDate": "unknown",
+    "crs": "unverified", "usageTerms": "No reusable boundary dataset obtained",
+    "source": "https://www.mod.gov.cn/gfbw/qwfb/4863771.html",
+    "provider": "https://geo.datav.aliyun.com/areas_v3/bound/geojson?code=460323", "providerStatus": 404
+  },
+  "653228": {
+    "name": "和康县", "reasonCode": "authoritative_boundary_unavailable",
+    "reason": "已核实设县公告，尚缺来源及坐标系明确的完整边界。",
+    "checkedAt": "2026-09-11", "sourceDate": "2024-12-27", "boundaryDate": "unknown",
+    "crs": "unverified", "usageTerms": "No reusable boundary dataset obtained",
+    "source": "https://www.xjpcsc.gov.cn/article/d45d1af202d8486ea035ecdfaf7fe9c7",
+    "provider": "https://geo.datav.aliyun.com/areas_v3/bound/geojson?code=653228", "providerStatus": 404
+  },
+  "653229": {
+    "name": "和安县", "reasonCode": "authoritative_boundary_unavailable",
+    "reason": "已核实设县公告，尚缺来源及坐标系明确的完整边界。",
+    "checkedAt": "2026-09-11", "sourceDate": "2024-12-27", "boundaryDate": "unknown",
+    "crs": "unverified", "usageTerms": "No reusable boundary dataset obtained",
+    "source": "https://www.xinjiang.gov.cn/xinjiang/tzgg/202412/a0b3b3ac363546589618dd9d49cc7fd7.shtml",
+    "provider": "https://geo.datav.aliyun.com/areas_v3/bound/geojson?code=653229", "providerStatus": 404
+  },
+  "659011": {
+    "name": "新星市", "reasonCode": "boundary_attachment_required",
+    "reason": "官方界线说明要求以协议附图为准，尚未取得完整附图和坐标系依据。",
+    "checkedAt": "2026-09-11", "sourceDate": "2021-02-04", "boundaryDate": "unknown",
+    "crs": "unverified", "usageTerms": "Text directions are not a reusable complete geometry dataset",
+    "source": "https://www.xinjiang.gov.cn/xinjiang/zfgbml/202106/0f5b54112d0f43a59f9befc9e40d87da.shtml",
+    "provider": "https://geo.datav.aliyun.com/areas_v3/bound/geojson?code=659011", "providerStatus": 404
+  },
+  "659012": {
+    "name": "白杨市", "reasonCode": "authoritative_boundary_unavailable",
+    "reason": "已核实设市公告，尚缺来源及坐标系明确的完整边界。",
+    "checkedAt": "2026-09-11", "sourceDate": "2023-01-20", "boundaryDate": "unknown",
+    "crs": "unverified", "usageTerms": "No reusable boundary dataset obtained",
+    "source": "https://www.xinjiang.gov.cn/xinjiang/tzgg/202301/8bd4c6578fae4c469680d068c187c7b0.shtml",
+    "provider": "https://geo.datav.aliyun.com/areas_v3/bound/geojson?code=659012", "providerStatus": 404
+  }
+}

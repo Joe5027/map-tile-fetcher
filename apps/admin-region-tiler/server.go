@@ -223,11 +223,13 @@ type DownloadRegionConfig struct {
 }
 
 type RegionCatalogItem struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Level    string `json:"level"`
-	ParentID string `json:"parentId"`
-	GeoJSON  string `json:"geojson"`
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Level      string `json:"level"`
+	ParentID   string `json:"parentId"`
+	GeoJSON    string `json:"geojson"`
+	ReasonCode string `json:"reasonCode,omitempty"`
+	Reason     string `json:"reason,omitempty"`
 }
 
 type RegionCatalogResponse struct {
@@ -294,12 +296,14 @@ func initServer() {
 	})
 
 	r.POST("/api/auth/login", loginHandler)
+	r.GET("/api/version", func(c *gin.Context) { c.JSON(200, currentBuildInfo()) })
 	r.POST("/api/auth/logout", logoutHandler)
 
 	protected := r.Group("/api")
 	protected.Use(authMiddleware())
 	{
 		protected.GET("/auth/me", meHandler)
+		protected.POST("/auth/password", passwordHandler)
 		protected.POST("/tasks", createTask)
 		protected.GET("/config/limits", func(c *gin.Context) {
 			c.JSON(200, gin.H{"maxTiles": maxTaskTiles(), "maxActive": maxActiveTasks(), "defaultWorkers": 3, "minWorkers": 1, "maxWorkers": 50})
@@ -364,8 +368,12 @@ func loginHandler(c *gin.Context) {
 		return
 	}
 
-	session, err := store.createSession(user.ID)
+	session, err := store.createSession(user)
 	if err != nil {
+		if errors.Is(err, errPasswordConflict) {
+			c.JSON(409, gin.H{"error": "credentials changed; log in again"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create session"})
 		return
 	}
@@ -1828,6 +1836,7 @@ func cachedRegionCatalog() (RegionCatalogResponse, map[string]RegionCatalogItem,
 		resolvedPath, err := resolveGeoJSONPath(item.GeoJSON)
 		if err != nil {
 			log.Warnf("region catalog entry %s points to missing geojson %s: %v", item.ID, item.GeoJSON, err)
+			explainMissingRegion(&item)
 			missingItems = append(missingItems, item)
 			byID[item.ID] = item
 			continue

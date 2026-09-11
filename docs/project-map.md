@@ -48,6 +48,12 @@ Out of scope unless the user explicitly changes direction:
   - SQLite schema, user/session records, legacy-compatible plan/run records,
     normalized `tasks`, `task_sources`, `artifacts`, and `failures` tables,
     child relations, and interrupted-plan recovery
+- `password.go`, `admin.go`, `maintenance_lock_*.go`
+  - authenticated password rotation, conditional session creation, attempt limits,
+    and offline backup/recovery protected against active server/worker access
+- `build_info.go`, `scripts/build_release.py`, `scripts/verify_package.py`
+  - common build identity and deterministic Windows/Linux packages; native
+    extraction, manifest, login, static-resource and loopback download validation
 - `runtime.go`
   - scheduler, active run coordination, worker launch, pause/resume/cancel,
     artifact preparation, purge safety, and parent status aggregation
@@ -108,6 +114,8 @@ Out of scope unless the user explicitly changes direction:
 Important endpoints:
 
 - `POST /api/auth/login`, `POST /api/auth/logout`
+- public read-only `GET /api/version`
+- protected `POST /api/auth/password`
 - protected `GET /api/auth/me`
 - protected `POST /api/tasks`
 - protected `GET /api/tasks`, `GET /api/tasks/:id`

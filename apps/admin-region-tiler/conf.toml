@@ -1,5 +1,5 @@
 [app]
-	version = "v 0.1.0"
+    # Legacy app.version is ignored; build identity comes from the executable.
 	title = "MapCloud Tiler"
 [output]
 	#can be mbtiles/file

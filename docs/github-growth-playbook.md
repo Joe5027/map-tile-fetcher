@@ -1,8 +1,7 @@
 # GitHub Star Conversion Playbook
 
-> Historical promotion plan. The release checklist below still targets v0.1.0
-> and is not a validated procedure for current releases. See the
-> [maintenance audit](maintenance-audit-2026-09-11.md) before reusing it.
+> Historical promotion plan. Build and installation procedures are maintained in
+> [Build and Install](build-and-install.md); this document does not authorize publication.
 
 This playbook is the first-stage execution guide for improving Map Tile
 Fetcher conversion from repository visitor to star. It is intentionally focused
@@ -33,38 +32,11 @@ Homepage can stay empty until there is a hosted demo or documentation site.
    node .\scripts\release_preflight.mjs
    ```
 
-2. Build release assets from `apps/admin-region-tiler`:
-
-   ```powershell
-   $env:GOOS='windows'; $env:GOARCH='amd64'; go build -o ..\..\dist\release\v0.1.0\windows-amd64\map-tile-fetcher.exe .
-   $env:GOOS='linux'; $env:GOARCH='amd64'; go build -o ..\..\dist\release\v0.1.0\linux-amd64\map-tile-fetcher .
-   Remove-Item Env:\GOOS
-   Remove-Item Env:\GOARCH
-   ```
-
-3. Copy runtime resources into each asset directory:
-
-   ```powershell
-   foreach ($target in @($winDir, $linuxDir)) {
-     Copy-Item -LiteralPath .\conf.toml -Destination $target -Force
-     Copy-Item -LiteralPath .\.env.example -Destination $target -Force
-     Copy-Item -LiteralPath .\README.md -Destination $target -Force
-     Copy-Item -LiteralPath .\static -Destination $target -Recurse -Force
-     Copy-Item -LiteralPath .\geojson -Destination $target -Recurse -Force
-     Copy-Item -LiteralPath .\deploy -Destination $target -Recurse -Force
-     New-Item -ItemType Directory -Force -Path (Join-Path $target 'data'), (Join-Path $target 'output') | Out-Null
-   }
-   ```
-
-4. Package:
-
-   ```powershell
-   Compress-Archive -Path ..\..\dist\release\v0.1.0\windows-amd64\* -DestinationPath ..\..\dist\release\map-tile-fetcher-v0.1.0-windows-amd64.zip -Force
-   tar -czf ..\..\dist\release\map-tile-fetcher-v0.1.0-linux-amd64.tar.gz -C ..\..\dist\release\v0.1.0\linux-amd64 .
-   ```
-
-5. Create GitHub Release `v0.1.0` and paste the content from
-   `docs/releases/v0.1.0.md`.
+2. Use `scripts/build_release.py` from the app directory with an explicit source
+   revision and new output directory. See [Build and Install](build-and-install.md).
+3. Verify both native packages, manifests, checksums and protected main CI.
+4. Publication requires a separate authorized release task; the build script
+   never creates tags or publishes a GitHub Release.
 
 ## Distribution Copy
 

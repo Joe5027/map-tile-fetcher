@@ -287,7 +287,8 @@ async function runSmoke(baseURL) {
   const consoleErrors = [];
 
   page.on("console", (message) => {
-    if (message.type() === "error" && !isExpectedConsoleError(message.text())) {
+    if (message.type() === "error" && !isExpectedConsoleError(message.text()) &&
+        !(message.location().url.endsWith("/api/auth/password") && message.text().includes("status of 403"))) {
       consoleErrors.push(message.text());
     }
   });

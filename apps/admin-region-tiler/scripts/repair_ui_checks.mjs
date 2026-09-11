@@ -7,6 +7,15 @@ export async function runRepairUIChecks(page) {
   const screenshots=resolve("tmp/repair-ui");
   await mkdir(screenshots,{recursive:true});
   await page.evaluate(()=>stopTaskPolling());
+  await page.evaluate(()=>{document.getElementById("buildVersion").textContent="dev+123456789abc.dirty";});
+  const missingState = await page.evaluate(() => {
+    const item = missingRegionCatalog.find(item => item.id === "659011");
+    const select = document.createElement("select");
+    select.innerHTML = renderRegionOptions({options:[{...item,maintained:false}],selectedRegionId:""});
+    return {code:item.reasonCode,disabled:select.options[0].disabled,text:select.textContent};
+  });
+  assert.equal(missingState.code,"boundary_attachment_required");
+  assert(missingState.disabled && missingState.text.includes("附图"),"missing boundary reason or disable state missing");
   const task={id:"ui-task",kind:"single",name:'长名称'.repeat(30)+'<img src=x onerror="window.injected=1">',status:"completed",artifactStatus:"ready",downloadUrl:"/api/tasks/ui-task/download",total:4,current:4,successCount:4,integrity:{status:"complete",available:4,expected:4},effectiveWorkers:3,effectiveTimeDelay:80};
   if (process.env.TILER_REPAIR_BASELINE) {
     const oldCSS=execFileSync("git",["show",`${process.env.TILER_REPAIR_BASELINE}:apps/admin-region-tiler/static/styles.css`],{encoding:"utf8"});
@@ -91,7 +100,45 @@ export async function runRepairUIChecks(page) {
   await page.clock.fastForward(5000);
   await page.waitForFunction(()=>taskLoadPromise===null);
   assert.equal(pollRequests,1,"re-login created multiple pollers");
+  await runPasswordUIChecks(page, screenshots);
   await page.evaluate(()=>logout());
   assert(await page.evaluate(()=>!authenticated&&taskPollingTimer===null),"logout left polling active");
   console.log("Repair UI checks passed: 390/768/1440px, preview ordering, full geometry, expiry, account reset, 401/re-login, polling");
+}
+
+async function runPasswordUIChecks(page, screenshots) {
+  for (const width of [390,768,1440]) {
+    await page.setViewportSize({width,height:900});
+    await page.locator("#accountMenuBtn").click();
+    await page.locator("#openPasswordDialogBtn").click();
+    const bounds=await page.locator("#passwordDialog").boundingBox();
+    assert(bounds.x>=0&&bounds.x+bounds.width<=width,"password dialog outside viewport");
+    await page.screenshot({path:resolve(screenshots,`${width}-password.png`)});
+    await page.locator("#cancelPasswordBtn").click();
+  }
+  await page.locator("#accountMenuBtn").click();
+  await page.locator("#openPasswordDialogBtn").click();
+  await page.locator('[name="currentPassword"]').fill("wrong password");
+  await page.locator('[name="newPassword"]').fill("test replacement password");
+  await page.locator('[name="confirmPassword"]').fill("test replacement password");
+  await page.locator("#savePasswordBtn").click();
+  await page.waitForFunction(()=>document.getElementById("passwordError").textContent.includes("原密码错误"));
+  await page.locator('[name="currentPassword"]').fill("adminmap");
+  let requests=0;
+  await page.route("**/api/auth/password",async route=>{
+    requests++;
+    await new Promise(resolve=>setTimeout(resolve,150));
+    await route.continue();
+  });
+  await page.locator("#savePasswordBtn").click();
+  assert(await page.locator("#savePasswordBtn").isDisabled());
+  await page.evaluate(()=>document.getElementById("passwordForm").requestSubmit());
+  await page.waitForFunction(()=>!authenticated&&!document.getElementById("passwordDialog").open);
+  assert.equal(requests,1,"duplicate password request");
+  assert(await page.evaluate(()=>taskPollingTimer===null&&rangeTiandituPreviewTokenId===""),"password change kept cache or poller");
+  await page.locator('#loginForm [name="username"]').fill("admin");
+  await page.locator('#loginForm [name="password"]').fill("test replacement password");
+  await page.locator('#loginForm button[type="submit"]').click();
+  await page.waitForFunction(()=>authenticated&&taskPollingTimer!==null);
+  console.log("Password UI passed: validation, real change, duplicate prevention, logout, new login and 390/768/1440px dialog");
 }

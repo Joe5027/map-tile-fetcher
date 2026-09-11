@@ -2,6 +2,33 @@
 
 ## Facts
 
+- The seven-item maintenance implementation is accepted on clean code commit
+  `6d4d088`: push CI passed all jobs, including Linux race/vet, Windows/Linux
+  locked region environments and native package reproducibility/startup checks.
+  PR #6 carries integration; the acceptance record links immutable run evidence.
+  Five investigated region gaps remain intentionally unavailable under the
+  approved data policy. No production, tags or Release publication was performed.
+
+- M5/M6 add `scripts/build_release.py` for explicit Git snapshots, deterministic
+  Windows ZIP/Linux tar.gz packages and a shared CLI/API/UI/Docker build identity.
+  No new tags or GitHub Releases are part of this delivery. Native package checks
+  use fresh directories and a loopback tile service.
+
+- M4 investigated all five catalog gaps. No verified complete WGS84 boundaries
+  were obtained; preserve explicit reasons and evidence in
+  `docs/region-gap-investigation-2026-09-11.md`. The gap gate rejects new missing
+  files and stale exceptions. Do not approximate geometry from announcements.
+
+- M3 adds authenticated password changes, transactional session revocation,
+  conditional login/legacy upgrades and offline recovery with shared/exclusive
+  maintenance locks. See `docs/password-recovery.md`; offline recovery never
+  runs ordinary initialization or task recovery.
+
+- Maintenance implementation now uses `codex/maintenance-fixes` from `1109e4d`.
+  M1/M2/M7 replace direct region deployment with offline inspection and new,
+  validated bundles. Regression and remaining batch status are tracked in
+  `docs/maintenance-acceptance-2026-09-11.md`; no production or Release actions.
+
 - 2026-09-11 repository cleanup: removed 24 redundant docs, unused package
   scaffolding, unreferenced static files and a generated report. Actual region
   geometry, runtime compatibility tables and active UI/test assets remain.
@@ -165,9 +192,8 @@
 
 ## Next Action
 
-- Use `docs/maintenance-audit-2026-09-11.md` for remaining issues. Start with
-  region maintenance script data preservation and geometry correctness, then
-  existing-user password rotation. Check live GitHub state for any pending
-  cleanup PR before creating a duplicate batch.
+- For future maintenance, begin with the acceptance record and current GitHub
+  status for PR #6; do not repeat completed implementation or approximate the
+  five documented boundaries. Keep protected main checks and branch cleanup.
 - Before any future release, rerun preflight and verify `main` CI. Plan a
   separate, explicitly authorized deployment and database backup/copy validation.

@@ -5,6 +5,11 @@ import process from "node:process";
 
 const checks = [
   {
+    label: "Region maintenance contracts (offline fixtures)",
+    command: process.env.REGION_PYTHON || "python",
+    args: ["-B", "-m", "unittest", "discover", "-s", "scripts", "-p", "test_*.py", "-v"],
+  },
+  {
     label: "Go test suite",
     command: "go",
     args: ["test", "./..."],

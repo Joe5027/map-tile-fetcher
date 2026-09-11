@@ -64,6 +64,12 @@ node .\scripts\release_preflight.mjs
 
 The release preflight runs Go tests, frontend syntax checks, UI smoke,
 tracked-file sensitive-value scanning, and tracked generated-file scanning.
+It also runs `python -B -m unittest discover -s scripts -p test_*.py -v`.
+Set `REGION_PYTHON` to the isolated Python 3.13 interpreter installed with
+`pip install --require-hashes --only-binary=:all: -r scripts/requirements-region.lock`.
+See [region tooling](region-maintenance.md) and [build/install validation](build-and-install.md).
+Windows/Linux package CI builds twice, compares checksums, extracts in a fresh
+directory and verifies login, resources, version and a real loopback download.
 
 The Go suite includes `TestAPILifecycle`, which builds the real app binary and
 exercises HTTP, the scheduler, SQLite and ordinary worker processes against a

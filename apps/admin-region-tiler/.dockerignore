@@ -8,6 +8,11 @@ tiles/
 dist/
 build/
 .tmp-region-data/
+.venv*/
+__pycache__/
+tmp/
+*.pyc
+*.maintenance.lock
 geojson/materialize-report.json
 geojson/download-report.json
 
