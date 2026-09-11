@@ -2,6 +2,12 @@
 
 ## Facts
 
+- 2026-09-11 README follow-up: root documentation now covers repair behavior,
+  limits, legacy handling and validation. Source/binary runs read process
+  environment variables, not `.env` automatically; initial credentials do not
+  reset existing users. GitHub's published `v0.3.0` preview predates the repairs;
+  current behavior refers to `main`. PR #3 was merged as `8b0933b`, its resulting
+  main CI passed, and `agent/audit-hardening` was removed locally and remotely.
 - 2026-09-11 repair delivery: the ten-defect implementation, baseline failure
   evidence, current regression results and migration procedures are indexed in
   `docs/repair-acceptance-2026-09-11.md`. Use that file before repeating audits.
