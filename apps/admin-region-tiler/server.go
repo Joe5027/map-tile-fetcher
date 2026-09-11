@@ -17,6 +17,7 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"github.com/paulmach/orb"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 	"github.com/teris-io/shortid"
@@ -135,6 +136,9 @@ type TaskFailureSummaryResponse struct {
 }
 
 type TaskResponse struct {
+	Queue                 QueueState                 `json:"queue"`
+	EffectiveWorkers      int                        `json:"effectiveWorkers"`
+	EffectiveTimeDelay    int                        `json:"effectiveTimeDelay"`
 	Integrity             IntegrityState             `json:"integrity"`
 	ID                    string                     `json:"id"`
 	ParentID              string                     `json:"parentId,omitempty"`
@@ -297,6 +301,9 @@ func initServer() {
 	{
 		protected.GET("/auth/me", meHandler)
 		protected.POST("/tasks", createTask)
+		protected.GET("/config/limits", func(c *gin.Context) {
+			c.JSON(200, gin.H{"maxTiles": maxTaskTiles(), "maxActive": maxActiveTasks(), "defaultWorkers": 3, "minWorkers": 1, "maxWorkers": 50})
+		})
 		protected.GET("/tasks", listTasks)
 		protected.GET("/tasks/:id", getTask)
 		protected.GET("/tasks/:id/area", getTaskArea)
@@ -611,6 +618,11 @@ func createTaskFromRequest(c *gin.Context, req CreateTaskRequest) {
 
 	plan, children, err := buildTaskRecordsFromRequest(user.ID, req)
 	if err != nil {
+		var budget *TileBudgetError
+		if errors.As(err, &budget) {
+			c.JSON(400, gin.H{"code": "tile_budget_exceeded", "estimatedTiles": budget.Estimated, "limit": budget.Limit, "conservative": budget.Conservative, "error": budget.Error()})
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -628,8 +640,8 @@ func createTaskFromRequest(c *gin.Context, req CreateTaskRequest) {
 		return
 	}
 
-	if plan.RunAt.Before(time.Now().Add(2 * time.Second)) {
-		_ = runtimeManager.StartTaskRecord(plan)
+	if err := runtimeManager.StartTaskRecord(plan); err != nil {
+		log.Errorf("queue task %s: %v", plan.ID, err)
 	}
 
 	refreshed, err := store.getTaskRecordForUser(user.ID, plan.ID)
@@ -914,6 +926,12 @@ func buildTaskRecordsFromRequest(userID int64, req CreateTaskRequest) (*TaskReco
 	if utf8.RuneCountInString(req.Name) > 80 {
 		return nil, nil, errors.New("name must be 80 characters or fewer")
 	}
+	if req.Workers < 0 || req.Workers > 50 {
+		return nil, nil, errors.New("workers must be between 1 and 50")
+	}
+	if req.TimeDelay < 0 {
+		return nil, nil, errors.New("timeDelay must not be negative")
+	}
 
 	mode := req.ScheduleMode
 	if mode == "" {
@@ -939,6 +957,24 @@ func buildTaskRecordsFromRequest(userID int64, req CreateTaskRequest) (*TaskReco
 	if err != nil {
 		return nil, nil, err
 	}
+	if len(req.Area.Polygon) > 0 && req.Zoom != nil {
+		points, err := normalizePolygonCoordinates(req.Area.Polygon)
+		if err != nil {
+			return nil, nil, err
+		}
+		bound := orb.Bound{Min: orb.Point{points[0].Lon, points[0].Lat}, Max: orb.Point{points[0].Lon, points[0].Lat}}
+		for _, p := range points {
+			bound = bound.Extend(orb.Point{p.Lon, p.Lat})
+		}
+		n, err := boundBudget(bound, req.Zoom.Min, req.Zoom.Max)
+		if err != nil {
+			return nil, nil, err
+		}
+		n *= int64(len(sources))
+		if n > maxTaskTiles() {
+			return nil, nil, &TileBudgetError{Estimated: n, Limit: maxTaskTiles(), Conservative: true}
+		}
+	}
 	outputFormat, err := normalizeOutputFormat(req.Output.Format)
 	if err != nil {
 		return nil, nil, err
@@ -962,6 +998,9 @@ func buildTaskRecordsFromRequest(userID int64, req CreateTaskRequest) (*TaskReco
 		levels = append(levels, normalized)
 	}
 
+	if _, err := validateTaskBudget(levels, len(sources)); err != nil {
+		return nil, nil, err
+	}
 	groupID, err := shortid.Generate()
 	if err != nil {
 		return nil, nil, fmt.Errorf("generate task group id: %w", err)
@@ -974,7 +1013,7 @@ func buildTaskRecordsFromRequest(userID int64, req CreateTaskRequest) (*TaskReco
 		URL:          sources[0].URL,
 		Format:       sources[0].Format,
 		Schema:       sources[0].Schema,
-		Workers:      maxInt(firstPositive(req.Workers, viper.GetInt("task.workers")), 20),
+		Workers:      effectiveWorkers(req.Workers, FetchPolicy{}),
 		SavePipe:     firstPositive(req.SavePipe, viper.GetInt("task.savepipe")),
 		TimeDelay:    maxInt(req.TimeDelay, 0),
 		ScheduleMode: mode,
@@ -1363,7 +1402,11 @@ func taskResponseFromRecord(plan *TaskRecord) TaskResponse {
 	}
 	if store != nil {
 		response.Integrity = store.integrityState(plan.ID)
+		response.Queue = store.queueState(plan.ID)
 	}
+	policy := defaultFetchPolicy(plan.URL, plan.SourceName)
+	response.EffectiveWorkers = effectiveWorkers(plan.Workers, policy)
+	response.EffectiveTimeDelay = maxInt(plan.TimeDelay, policy.BaseDelayMS)
 
 	minZoom := 100
 	maxZoom := -1
@@ -1541,6 +1584,9 @@ func taskSourceFromRecord(plan *TaskRecord) TaskSourceResponse {
 }
 
 func effectiveTaskRecordStatusForResponse(plan *TaskRecord, run *TaskRunRecord) TaskStatus {
+	if plan.Status == TaskRecordQueued {
+		return TaskStatus(TaskRecordQueued)
+	}
 	if run == nil {
 		switch plan.Status {
 		case TaskRecordPaused:

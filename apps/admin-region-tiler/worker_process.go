@@ -66,23 +66,25 @@ func runWorkerProcess(taskRecordID, runID string) error {
 			_ = failRunBeforeStart(taskRecord, run, err)
 			return err
 		}
-		var records []FailureRecord
-		err = retryOnBusy(func() error {
-			var innerErr error
-			records, innerErr = store.listRetryableFailureRecords(taskRecord.ID)
-			return innerErr
-		})
+		summary, err := store.failureSummary(taskRecord.ID)
 		if err != nil {
 			_ = failRunBeforeStart(taskRecord, run, err)
 			return err
 		}
-		retryJobs := tileJobsFromFailureRecords(records)
-		if len(retryJobs) == 0 {
+		if summary.Retryable == 0 {
 			_ = failRunBeforeStart(taskRecord, run, errNoRetryableFailures)
 			return errNoRetryableFailures
 		}
-		task.SetExplicitJobs(retryJobs)
+		task.Total = summary.Retryable
+		task.retrySource = func(visit func(TileJob) error) error { return store.walkRetryFailures(taskRecord.ID, visit) }
+	} else {
+		var count int64
+		if err := task.forEachExpected(func(TileJob) error { count++; return nil }); err != nil {
+			return failRunBeforeStart(taskRecord, run, err)
+		}
+		task.Total = count
 	}
+	task.failureSink = store.failureSink(taskRecord, run.ID)
 
 	run.Total = task.Total
 	run.Status = TaskRunning
@@ -122,10 +124,6 @@ func runWorkerProcess(taskRecordID, runID string) error {
 
 	persistRunProgress(run, task)
 	applyTaskSnapshot(run, task)
-
-	if err := retryOnBusy(func() error { return store.replaceFailureRecords(run, task.FailureRecords()) }); err != nil {
-		return err
-	}
 
 	state := IntegrityState{Status: "unchecked"}
 	if run.Status == TaskCompleted || run.Status == TaskPartialFailed {

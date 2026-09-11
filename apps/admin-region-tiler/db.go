@@ -26,6 +26,8 @@ var (
 
 type TaskRecordStatus string
 
+const TaskRecordQueued TaskRecordStatus = "queued"
+
 const (
 	TaskRecordScheduled     TaskRecordStatus = "scheduled"
 	TaskRecordRunning       TaskRecordStatus = "running"
@@ -959,6 +961,12 @@ func (s *SQLiteStore) seedDefaultUser() error {
 }
 
 func (s *SQLiteStore) recoverInterruptedTaskRecords() error {
+	if _, err := s.db.Exec(`UPDATE plans SET status='failed' WHERE id IN (SELECT plan_id FROM execution_queue WHERE state='running')`); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`DELETE FROM execution_queue WHERE state='running'`); err != nil {
+		return err
+	}
 	if err := s.recoverPublications(); err != nil {
 		return err
 	}
@@ -1395,6 +1403,9 @@ func (s *SQLiteStore) purgeTaskRecord(planID string) error {
 		return err
 	}
 	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM execution_queue WHERE plan_id IN (SELECT id FROM plans WHERE id=? OR parent_id=?)`, planID, planID); err != nil {
+		return err
+	}
 	for _, table := range []string{"run_coverage", "pending_publications"} {
 		if _, err := tx.Exec(`DELETE FROM `+table+` WHERE run_id IN (SELECT id FROM task_runs WHERE plan_id IN (SELECT id FROM plans WHERE id = ? OR parent_id = ?))`, planID, planID); err != nil {
 			return err

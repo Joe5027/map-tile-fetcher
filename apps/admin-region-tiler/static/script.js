@@ -79,7 +79,7 @@ const RANGE_LAYER_NAMES = {
 };
 
 const RANGE_TASK_DEFAULTS = {
-    workers: 20,
+    workers: 3,
     savePipe: 2,
     timeDelay: 50
 };
@@ -356,7 +356,7 @@ async function bootstrap() {
 
     showApp(me.data);
     applySavedCredentialsToTaskForm();
-    await Promise.all([loadTilemaps(), loadRegionCatalog()]);
+    await Promise.all([loadTilemaps(), loadRegionCatalog(), loadTaskLimits()]);
     initDefaultLevelConfigs();
     renderLevelConfigs();
     setTaskMode(taskMode);
@@ -364,6 +364,15 @@ async function bootstrap() {
     updateRangeEstimate();
     await loadTasks();
     startTaskPolling();
+}
+
+async function loadTaskLimits() {
+    const response = await fetchJSON("/api/config/limits");
+    if (!response.ok) return;
+    const input = document.querySelector('[name="workers"]');
+    input.min = response.data.minWorkers;
+    input.max = response.data.maxWorkers;
+    RANGE_TASK_DEFAULTS.workers = response.data.defaultWorkers;
 }
 
 function showLogin() {
@@ -2884,7 +2893,7 @@ function managedDownloadURL(task) {
 function renderIntegrity(task) {
     const state = task.integrity || {};
     const labels = { unchecked: "未核对", checking: "核对中", complete: "完整", incomplete: "存在缺口", interrupted: "核对中断" };
-    return `<span class="artifact-text">累计产物：${labels[state.status] || "未核对"} ${Number(state.available) || 0}/${Number(state.expected) || 0}${state.error ? `；${escapeHTML(state.error)}` : ""}</span>`;
+    return `<span class="artifact-text">累计产物：${labels[state.status] || "未核对"} ${Number(state.available) || 0}/${Number(state.expected) || 0}${state.error ? `；${escapeHTML(state.error)}` : ""}<br>生效线程：${Number(task.effectiveWorkers) || 0}；间隔：${Number(task.effectiveTimeDelay) || 0} ms${task.queue?.state === "queued" ? `；排队位置：${Number(task.queue.position) || 0}` : ""}</span>`;
 }
 
 function renderWarningPill(text) {
@@ -3281,6 +3290,7 @@ function translateStatus(status) {
     const map = {
         scheduled: "计划中",
         pending: "等待中",
+        queued: "排队中",
         running: "运行中",
         paused: "已暂停",
         completed: "已完成",
@@ -3310,7 +3320,7 @@ function canResume(status) {
 }
 
 function canCancel(status) {
-    return status === "scheduled" || status === "pending" || status === "running" || status === "paused";
+    return status === "scheduled" || status === "queued" || status === "pending" || status === "running" || status === "paused";
 }
 
 function canDelete(status) {

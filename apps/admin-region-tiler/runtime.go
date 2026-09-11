@@ -87,6 +87,9 @@ func (s *Scheduler) dispatchDueTaskRecords() {
 			log.Errorf("failed to start plan %s: %v", plan.ID, err)
 		}
 	}
+	s.manager.operations.Lock()
+	_ = s.manager.dispatchQueued()
+	s.manager.operations.Unlock()
 }
 
 var errTaskAlreadyActive = errors.New("task already active")
@@ -94,13 +97,13 @@ var errTaskAlreadyActive = errors.New("task already active")
 func (m *RuntimeManager) StartTaskRecord(plan *TaskRecord) error {
 	m.operations.Lock()
 	defer m.operations.Unlock()
-	return m.startTaskRecordWithTrigger(plan, string(plan.ScheduleMode))
+	return m.enqueue(plan, string(plan.ScheduleMode))
 }
 
 func (m *RuntimeManager) RetryFailures(plan *TaskRecord) error {
 	m.operations.Lock()
 	defer m.operations.Unlock()
-	return m.startTaskRecordWithTrigger(plan, triggerRetryFailures)
+	return m.enqueue(plan, triggerRetryFailures)
 }
 
 func (m *RuntimeManager) startTaskRecordWithTrigger(plan *TaskRecord, triggerMode string) error {
@@ -258,9 +261,13 @@ func (m *RuntimeManager) monitorWorker(active *ActiveRun) {
 		}
 	}
 
+	m.operations.Lock()
+	defer m.operations.Unlock()
+	_, _ = store.db.Exec(`DELETE FROM execution_queue WHERE plan_id=?`, active.Plan.ID)
 	m.mu.Lock()
 	delete(m.active, active.Plan.ID)
 	m.mu.Unlock()
+	_ = m.dispatchQueued()
 }
 
 func (m *RuntimeManager) Pause(planID string) error {
@@ -347,7 +354,12 @@ func (m *RuntimeManager) Cancel(plan *TaskRecord) error {
 		return store.updateTaskRecordStatus(plan.ID, TaskRecordCancelled)
 	}
 
-	if plan.Status == TaskRecordScheduled {
+	if plan.Status == TaskRecordScheduled || plan.Status == TaskRecordQueued {
+		m.operations.Lock()
+		defer m.operations.Unlock()
+		if _, err := store.db.Exec(`DELETE FROM execution_queue WHERE plan_id=?`, plan.ID); err != nil {
+			return err
+		}
 		return store.updateTaskRecordStatus(plan.ID, TaskRecordCancelled)
 	}
 
@@ -634,6 +646,9 @@ func aggregateGroupStatus(plan *TaskRecord) TaskRecordStatus {
 		if child.LastRun != nil {
 			status = statusToTaskRecordStatus(child.LastRun.Status)
 		}
+		if child.Status == TaskRecordQueued {
+			status = TaskRecordQueued
+		}
 		switch status {
 		case TaskRecordCompleted:
 			completed++
@@ -665,7 +680,7 @@ func aggregateGroupStatus(plan *TaskRecord) TaskRecordStatus {
 	case completed+failed+cancelled == total && failed > 0:
 		return TaskRecordPartialFailed
 	case scheduled == total:
-		return TaskRecordScheduled
+		return TaskRecordQueued
 	default:
 		return TaskRecordRunning
 	}

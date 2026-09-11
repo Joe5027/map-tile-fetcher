@@ -130,12 +130,7 @@
                                     <section class="parameter-grid">
                                         <label class="field">
                                             <span class="field-label">下载线程</span>
-                                            <select name="workers">
-                                                <option value="20" selected>20</option>
-                                                <option value="30">30</option>
-                                                <option value="40">40</option>
-                                                <option value="50">50</option>
-                                            </select>
+                                            <input type="number" name="workers" min="1" max="50" value="3">
                                         </label>
                                         <label class="field">
                                             <span class="field-label">保存线程</span>

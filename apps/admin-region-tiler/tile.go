@@ -38,6 +38,7 @@ type Set struct {
 
 // Layer 级别&瓦片数
 type Layer struct {
+	BBox       *BBoxRequest
 	URL        string
 	Zoom       int
 	Count      int64

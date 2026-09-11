@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/paulmach/orb/maptile"
-	"github.com/paulmach/orb/maptile/tilecover"
 	"github.com/spf13/viper"
 )
 
@@ -41,6 +40,8 @@ func (s *SQLiteStore) initIntegritySchema() error {
 		}
 	}
 	for _, statement := range []string{
+		`CREATE TABLE IF NOT EXISTS execution_queue(plan_id TEXT PRIMARY KEY,trigger_mode TEXT NOT NULL,due_at INTEGER NOT NULL,enqueued_at INTEGER NOT NULL,state TEXT NOT NULL)`,
+		`CREATE INDEX IF NOT EXISTS idx_execution_queue_order ON execution_queue(state,due_at,enqueued_at,plan_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_failure_coordinates ON failures(source_id,resolved_at,z,x,y,url)`,
 		`CREATE TABLE IF NOT EXISTS task_integrity(plan_id TEXT PRIMARY KEY,status TEXT NOT NULL DEFAULT 'unchecked',expected INTEGER NOT NULL DEFAULT 0,available INTEGER NOT NULL DEFAULT 0,missing INTEGER NOT NULL DEFAULT 0,error_message TEXT NOT NULL DEFAULT '',run_id TEXT NOT NULL DEFAULT '')`,
 		`CREATE TABLE IF NOT EXISTS run_coverage(run_id TEXT NOT NULL,z INTEGER NOT NULL,x INTEGER NOT NULL,y INTEGER NOT NULL,url TEXT NOT NULL,PRIMARY KEY(run_id,z,x,y,url))`,
@@ -160,25 +161,6 @@ func (r *tileOutputReader) read(tile maptile.Tile) ([]byte, error) {
 	}
 	defer source.Close()
 	return readLimitedResponseBody(source, maxTileResponseBytes)
-}
-
-func (task *Task) forEachExpected(visit func(TileJob) error) error {
-	for _, layer := range task.Layers {
-		if len(layer.Tiles) > 0 {
-			for _, tile := range layer.Tiles {
-				if err := visit(TileJob{Tile: tile, URL: layer.URL}); err != nil {
-					return err
-				}
-			}
-		} else {
-			for tile := range tilecover.Collection(layer.Collection, maptile.Zoom(layer.Zoom)) {
-				if err := visit(TileJob{Tile: tile, URL: layer.URL}); err != nil {
-					return err
-				}
-			}
-		}
-	}
-	return nil
 }
 
 // Coverage is recorded on disk, and only publication makes matching failures
