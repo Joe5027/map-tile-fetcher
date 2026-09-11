@@ -7,6 +7,14 @@ export async function runRepairUIChecks(page) {
   const screenshots=resolve("tmp/repair-ui");
   await mkdir(screenshots,{recursive:true});
   await page.evaluate(()=>stopTaskPolling());
+  const missingState = await page.evaluate(() => {
+    const item = missingRegionCatalog.find(item => item.id === "659011");
+    const select = document.createElement("select");
+    select.innerHTML = renderRegionOptions({options:[{...item,maintained:false}],selectedRegionId:""});
+    return {code:item.reasonCode,disabled:select.options[0].disabled,text:select.textContent};
+  });
+  assert.equal(missingState.code,"boundary_attachment_required");
+  assert(missingState.disabled && missingState.text.includes("附图"),"missing boundary reason or disable state missing");
   const task={id:"ui-task",kind:"single",name:'长名称'.repeat(30)+'<img src=x onerror="window.injected=1">',status:"completed",artifactStatus:"ready",downloadUrl:"/api/tasks/ui-task/download",total:4,current:4,successCount:4,integrity:{status:"complete",available:4,expected:4},effectiveWorkers:3,effectiveTimeDelay:80};
   if (process.env.TILER_REPAIR_BASELINE) {
     const oldCSS=execFileSync("git",["show",`${process.env.TILER_REPAIR_BASELINE}:apps/admin-region-tiler/static/styles.css`],{encoding:"utf8"});

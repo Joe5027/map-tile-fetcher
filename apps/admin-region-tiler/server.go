@@ -223,11 +223,13 @@ type DownloadRegionConfig struct {
 }
 
 type RegionCatalogItem struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Level    string `json:"level"`
-	ParentID string `json:"parentId"`
-	GeoJSON  string `json:"geojson"`
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Level      string `json:"level"`
+	ParentID   string `json:"parentId"`
+	GeoJSON    string `json:"geojson"`
+	ReasonCode string `json:"reasonCode,omitempty"`
+	Reason     string `json:"reason,omitempty"`
 }
 
 type RegionCatalogResponse struct {
@@ -1833,6 +1835,7 @@ func cachedRegionCatalog() (RegionCatalogResponse, map[string]RegionCatalogItem,
 		resolvedPath, err := resolveGeoJSONPath(item.GeoJSON)
 		if err != nil {
 			log.Warnf("region catalog entry %s points to missing geojson %s: %v", item.ID, item.GeoJSON, err)
+			explainMissingRegion(&item)
 			missingItems = append(missingItems, item)
 			byID[item.ID] = item
 			continue

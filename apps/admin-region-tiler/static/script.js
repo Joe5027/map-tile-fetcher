@@ -1899,6 +1899,7 @@ function renderLevelConfigs() {
             <div class="region-row__actions">
                 ${canRemove ? `<button type="button" class="danger-icon-button remove-level" data-id="${config.id}" aria-label="删除区域">${icon("delete")}</button>` : `<span class="region-row__action-spacer" aria-hidden="true"></span>`}
             </div>
+            ${config.options.filter(item => item.maintained === false).map(item => `<p class="message error">${escapeHTML(item.name)}：${escapeHTML(item.reason || "区域边界文件缺失")}</p>`).join("")}
         `;
         container.appendChild(row);
     });
@@ -1952,8 +1953,8 @@ function syncRegionConfigs() {
         } else if (!isActive) {
             config.selectedRegionId = "";
             config.enabled = false;
-        } else if (!config.options.some((item) => item.id === config.selectedRegionId)) {
-            config.selectedRegionId = config.options[0] ? config.options[0].id : "";
+        } else if (!config.options.some((item) => item.id === config.selectedRegionId && item.maintained !== false)) {
+            config.selectedRegionId = config.options.find(item => item.maintained !== false)?.id || "";
         }
 
         const selectedRegion = getRegionByID(config.selectedRegionId);
@@ -2002,7 +2003,7 @@ function renderRegionOptions(config) {
     }
 
     return config.options
-        .map((item) => `<option value="${escapeAttribute(item.id)}" ${item.id === config.selectedRegionId ? "selected" : ""}>${escapeHTML(item.name)}</option>`)
+        .map((item) => `<option value="${escapeAttribute(item.id)}" ${item.maintained === false ? "disabled" : ""} ${item.id === config.selectedRegionId ? "selected" : ""}>${escapeHTML(item.name)}${item.maintained === false ? ` (${escapeHTML(item.reason || "边界缺失")})` : ""}</option>`)
         .join("");
 }
 

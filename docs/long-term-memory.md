@@ -2,6 +2,11 @@
 
 ## Facts
 
+- M4 investigated all five catalog gaps. No verified complete WGS84 boundaries
+  were obtained; preserve explicit reasons and evidence in
+  `docs/region-gap-investigation-2026-09-11.md`. The gap gate rejects new missing
+  files and stale exceptions. Do not approximate geometry from announcements.
+
 - M3 adds authenticated password changes, transactional session revocation,
   conditional login/legacy upgrades and offline recovery with shared/exclusive
   maintenance locks. See `docs/password-recovery.md`; offline recovery never
