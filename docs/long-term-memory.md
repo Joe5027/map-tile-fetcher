@@ -2,6 +2,11 @@
 
 ## Facts
 
+- M3 adds authenticated password changes, transactional session revocation,
+  conditional login/legacy upgrades and offline recovery with shared/exclusive
+  maintenance locks. See `docs/password-recovery.md`; offline recovery never
+  runs ordinary initialization or task recovery.
+
 - Maintenance implementation now uses `codex/maintenance-fixes` from `1109e4d`.
   M1/M2/M7 replace direct region deployment with offline inspection and new,
   validated bundles. Regression and remaining batch status are tracked in
@@ -170,7 +175,7 @@
 
 ## Next Action
 
-- Continue M3 password rotation, M4 documented region gaps, and M5/M6 build
+- M3 password rotation passed local preflight and vet. Continue M4 documented region gaps and M5/M6 build
   identity and packaging on the maintenance branch. Commit/push each verified
   batch, merge only after all validation and then verify new main CI.
 - Before any future release, rerun preflight and verify `main` CI. Plan a

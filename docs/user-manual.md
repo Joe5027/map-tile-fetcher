@@ -178,3 +178,9 @@ node .\scripts\release_preflight.mjs
 
 The preflight runs Go tests, frontend syntax checks, browser UI smoke, sensitive
 value scanning, and generated-file scanning.
+
+## Password Maintenance
+
+Use the account menu to change your own password. Offline recovery is available via
+`tiler admin reset-password --database PATH --username NAME` with hidden terminal input.
+Stop all server/worker processes first. See [password recovery](password-recovery.md).

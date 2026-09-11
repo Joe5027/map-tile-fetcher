@@ -10,6 +10,7 @@ tiles/
 *.db
 *.db-shm
 *.db-wal
+*.maintenance.lock
 
 # .NET build/publish output
 bin/

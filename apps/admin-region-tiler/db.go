@@ -154,7 +154,8 @@ type FailureSummary struct {
 }
 
 type SQLiteStore struct {
-	db *sql.DB
+	db              *sql.DB
+	maintenanceLock *os.File
 }
 
 type sqlExecer interface {
@@ -174,6 +175,10 @@ func initDB() {
 	}
 
 	dbPath := filepath.Join(defaultDataDir, viper.GetString("app.database"))
+	maintenanceLock, err := acquireMaintenanceLock(dbPath, false)
+	if err != nil {
+		log.Fatalf("database is under offline maintenance: %v", err)
+	}
 	// Apply connection-local settings to every pooled connection, including
 	// connections opened after initialization while workers publish artifacts.
 	db, err := sql.Open("sqlite", dbPath+"?_pragma=busy_timeout(10000)&_txlock=immediate")
@@ -190,7 +195,7 @@ func initDB() {
 		db.SetMaxIdleConns(4)
 	}
 
-	store = &SQLiteStore{db: db}
+	store = &SQLiteStore{db: db, maintenanceLock: maintenanceLock}
 	if workerMode {
 		if _, err := db.Exec(`PRAGMA busy_timeout = 10000;`); err != nil {
 			log.Fatalf("failed to configure worker database connection: %v", err)
@@ -218,6 +223,8 @@ func (s *SQLiteStore) initSchema() error {
 			password_hash TEXT NOT NULL,
 			created_at INTEGER NOT NULL
 		);`,
+		`CREATE TABLE IF NOT EXISTS password_attempts (user_id INTEGER NOT NULL, attempted_at INTEGER NOT NULL);`,
+		`CREATE INDEX IF NOT EXISTS idx_password_attempts ON password_attempts(user_id, attempted_at);`,
 		`CREATE TABLE IF NOT EXISTS task_deletions (plan_id TEXT PRIMARY KEY, error_message TEXT NOT NULL DEFAULT '');`,
 		`CREATE TABLE IF NOT EXISTS deletion_paths (plan_id TEXT NOT NULL, path TEXT NOT NULL, kind TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(plan_id,path));`,
 		`CREATE TABLE IF NOT EXISTS sessions (
@@ -1013,8 +1020,12 @@ func (s *SQLiteStore) authenticateUser(username, password string) (*UserRecord, 
 		if hashErr != nil {
 			return nil, hashErr
 		}
-		if _, updateErr := s.db.Exec(`UPDATE users SET password_hash = ? WHERE id = ?`, upgradedHash, user.ID); updateErr != nil {
+		result, updateErr := s.db.Exec(`UPDATE users SET password_hash = ? WHERE id = ? AND password_hash = ?`, upgradedHash, user.ID, user.PasswordHash)
+		if updateErr != nil {
 			return nil, updateErr
+		}
+		if n, err := result.RowsAffected(); err != nil || n != 1 {
+			return nil, errPasswordConflict
 		}
 		user.PasswordHash = upgradedHash
 	}
@@ -1030,7 +1041,7 @@ func (s *SQLiteStore) defaultUser() (*UserRecord, error) {
 	return scanUser(row)
 }
 
-func (s *SQLiteStore) createSession(userID int64) (*SessionRecord, error) {
+func (s *SQLiteStore) createSession(user *UserRecord) (*SessionRecord, error) {
 	token, err := newToken()
 	if err != nil {
 		return nil, err
@@ -1041,19 +1052,24 @@ func (s *SQLiteStore) createSession(userID int64) (*SessionRecord, error) {
 	}
 	session := &SessionRecord{
 		Token:     token,
-		UserID:    userID,
+		UserID:    user.ID,
 		CreatedAt: now,
 		ExpiresAt: now.Add(sessionMaxAge),
 	}
-	_, err = s.db.Exec(
-		`INSERT INTO sessions (token, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)`,
+	result, err := s.db.Exec(
+		`INSERT INTO sessions (token, user_id, expires_at, created_at)
+         SELECT ?, id, ?, ? FROM users WHERE id = ? AND password_hash = ?`,
 		session.Token,
-		session.UserID,
 		session.ExpiresAt.Unix(),
 		session.CreatedAt.Unix(),
+		user.ID,
+		user.PasswordHash,
 	)
 	if err != nil {
 		return nil, err
+	}
+	if n, err := result.RowsAffected(); err != nil || n != 1 {
+		return nil, errPasswordConflict
 	}
 	return session, nil
 }

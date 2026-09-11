@@ -92,6 +92,13 @@ func initConf(cfgFile string) {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "admin" {
+		if err := runAdmin(os.Args[2:], hiddenPassword, os.Stderr); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	flag.Parse()
 	if hf {
 		flag.Usage()
@@ -105,6 +112,8 @@ func main() {
 
 	// 初始化数据库
 	initDB()
+	defer store.maintenanceLock.Close()
+	defer store.db.Close()
 
 	if shouldRunWorkerMode() {
 		if err := runWorkerProcess(workerTaskRecordID, workerRunID); err != nil {

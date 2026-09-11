@@ -122,6 +122,14 @@ document.addEventListener("DOMContentLoaded", async () => {
 });
 
 function bindEvents() {
+    document.getElementById("openPasswordDialogBtn").addEventListener("click", () => {
+        closeAccountMenu();
+        document.getElementById("passwordForm").reset();
+        hideMessage("passwordError");
+        document.getElementById("passwordDialog").showModal();
+    });
+    document.getElementById("cancelPasswordBtn").addEventListener("click", () => document.getElementById("passwordDialog").close());
+    document.getElementById("passwordForm").addEventListener("submit", changePassword);
     document.getElementById("taskPreviewLevel").addEventListener("change",(event)=>{
         if(taskPreviewTask) void previewTaskArea(taskPreviewTask,Number(event.target.value));
     });
@@ -389,6 +397,8 @@ async function loadTaskLimits() {
 }
 
 function showLogin() {
+    document.getElementById("passwordDialog").close();
+    document.getElementById("passwordForm").reset();
     authenticated = false;
     taskLoadGeneration++;
     resetPreviewCredentials();
@@ -399,6 +409,7 @@ function showLogin() {
 }
 
 function showApp(user) {
+    document.getElementById("openPasswordDialogBtn").classList.toggle("is-hidden", user.authEnabled === false);
     authenticated = true;
     taskLoadGeneration++;
     taskLoadPromise = null;
@@ -1731,6 +1742,35 @@ async function logout() {
     await fetchJSON("/api/auth/logout", { method: "POST", allowUnauthorized: true });
     stopTaskPolling();
     showLogin();
+}
+
+let passwordBusy = false;
+async function changePassword(event) {
+    event.preventDefault();
+    if (passwordBusy) return;
+    hideMessage("passwordError");
+    const fields = new FormData(event.target);
+    const currentPassword = fields.get("currentPassword");
+    const newPassword = fields.get("newPassword");
+    if (newPassword !== fields.get("confirmPassword")) {
+        showMessage("passwordError", "两次输入的新密码不一致"); return;
+    }
+    if ([...newPassword].length < 12 || new TextEncoder().encode(newPassword).length > 72 || newPassword === currentPassword) {
+        showMessage("passwordError", "新密码至少 12 个字符、最多 72 字节，且不能与原密码相同"); return;
+    }
+    passwordBusy = true;
+    document.getElementById("savePasswordBtn").disabled = true;
+    const generation = taskLoadGeneration;
+    try {
+        const response = await fetchJSON("/api/auth/password", {method:"POST", body:JSON.stringify({currentPassword, newPassword})});
+        if (generation !== taskLoadGeneration) return;
+        if (!response.ok) { showMessage("passwordError", response.data.error || "修改密码失败"); return; }
+        showLogin();
+        showMessage("loginError", "密码已修改，请使用新密码重新登录");
+    } finally {
+        passwordBusy = false;
+        document.getElementById("savePasswordBtn").disabled = false;
+    }
 }
 
 async function loadTilemaps() {

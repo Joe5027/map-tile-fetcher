@@ -56,6 +56,10 @@
                             <img src="/static/assets/icons/chevron-down.svg" alt="">
                         </button>
                         <div id="accountMenu" class="account-menu is-hidden" role="menu" aria-labelledby="accountMenuBtn">
+                            <button id="openPasswordDialogBtn" type="button" role="menuitem">
+                                <img src="/static/assets/icons/user.svg" alt="">
+                                <span>修改密码</span>
+                            </button>
                             <button id="openTokenDialogBtn" type="button" role="menuitem">
                                 <img src="/static/assets/icons/setting.svg" alt="">
                                 <span>Token 维护</span>
@@ -425,6 +429,26 @@
             </form>
         </div>
     </div>
+
+    <dialog id="passwordDialog" class="modal-card password-dialog" aria-labelledby="passwordDialogTitle">
+        <div class="modal-card__header"><h2 id="passwordDialogTitle">修改密码</h2></div>
+        <form id="passwordForm" class="token-form">
+            <label class="field"><span class="field-label">原密码</span>
+                <input name="currentPassword" type="password" autocomplete="current-password" required>
+            </label>
+            <label class="field"><span class="field-label">新密码</span>
+                <input name="newPassword" type="password" autocomplete="new-password" required placeholder="至少 12 个字符，最多 72 字节">
+            </label>
+            <label class="field"><span class="field-label">确认新密码</span>
+                <input name="confirmPassword" type="password" autocomplete="new-password" required>
+            </label>
+            <p id="passwordError" class="message error is-hidden" role="alert"></p>
+            <div class="modal-card__actions">
+                <button id="cancelPasswordBtn" type="button" class="ghost-button">取消</button>
+                <button id="savePasswordBtn" type="submit" class="primary-button">修改密码</button>
+            </div>
+        </form>
+    </dialog>
 
     <script src="/static/vendor/leaflet/leaflet.js?v=1"></script>
     <script src="/static/script.js?v=76"></script>

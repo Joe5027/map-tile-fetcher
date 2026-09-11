@@ -3134,3 +3134,11 @@ input::placeholder {
         transform: translateY(0);
     }
 }
+.password-dialog {
+    width: min(440px, calc(100% - 32px));
+    max-height: calc(100dvh - 32px);
+    margin: auto;
+    border: 1px solid #d8dee6;
+    overflow-y: auto;
+}
+.password-dialog::backdrop { background: rgba(0, 0, 0, .4); }

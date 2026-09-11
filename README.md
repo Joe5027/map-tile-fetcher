@@ -50,6 +50,8 @@ go run .
 `conf.toml` 和进程环境变量（如 `AUTH_DEFAULT_USERNAME`、`AUTH_DEFAULT_PASSWORD`），
 不会自动加载 `.env`；Docker Compose 和下方 `docker run --env-file .env` 才会注入该文件。
 这些账号配置用于初始化用户，修改配置不会重置数据库中已有同名用户的密码。
+已有用户可在账号菜单修改密码，或由维护者使用离线恢复命令；详见
+[密码修改与离线恢复](docs/password-recovery.md)。
 
 ### Docker 镜像和部署
 
@@ -206,6 +208,9 @@ Source and binary runs read `conf.toml` and process environment variables such a
 `AUTH_DEFAULT_USERNAME` and `AUTH_DEFAULT_PASSWORD`; they do not load `.env` automatically.
 Docker Compose and the `docker run --env-file .env` command below inject that file.
 These settings initialize users; changing them does not reset an existing user's password.
+Existing users can change their password from the account menu. Maintainers can use
+`tiler admin reset-password --database PATH --username NAME` after stopping all runtime
+processes. The command prompts privately, backs up the existing database and revokes sessions.
 
 ### Docker Image And Deployment
 

@@ -300,6 +300,7 @@ func initServer() {
 	protected.Use(authMiddleware())
 	{
 		protected.GET("/auth/me", meHandler)
+		protected.POST("/auth/password", passwordHandler)
 		protected.POST("/tasks", createTask)
 		protected.GET("/config/limits", func(c *gin.Context) {
 			c.JSON(200, gin.H{"maxTiles": maxTaskTiles(), "maxActive": maxActiveTasks(), "defaultWorkers": 3, "minWorkers": 1, "maxWorkers": 50})
@@ -364,8 +365,12 @@ func loginHandler(c *gin.Context) {
 		return
 	}
 
-	session, err := store.createSession(user.ID)
+	session, err := store.createSession(user)
 	if err != nil {
+		if errors.Is(err, errPasswordConflict) {
+			c.JSON(409, gin.H{"error": "credentials changed; log in again"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create session"})
 		return
 	}
