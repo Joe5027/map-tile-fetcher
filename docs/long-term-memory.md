@@ -2,6 +2,19 @@
 
 ## Facts
 
+- 2026-09-11 repair delivery: the ten-defect implementation, baseline failure
+  evidence, current regression results and migration procedures are indexed in
+  `docs/repair-acceptance-2026-09-11.md`. Use that file before repeating audits.
+- Real API tests now build the application, start ordinary worker processes,
+  and verify queue/control/retry/artifact/deletion/restart behavior with isolated
+  SQLite and loopback tile fixtures. UI smoke alone is not the integration proof.
+- Repair commits retained the PR #3 security baseline and added run isolation,
+  recoverable publication, cumulative retries, historical reconciliation,
+  persistent queues, budgets, preview renewal and responsive UI.
+- Remote protection was rechecked on 2026-09-11: PR required, strict latest
+  `Commit Message` and `Admin Region Tiler` checks, admin enforcement enabled,
+  force pushes and branch deletion disabled on `main`.
+
 - This repository is now a single Go Web application under
   `apps/admin-region-tiler`.
 - The retired range downloader was a .NET 6 minimal API plus static frontend for
@@ -35,6 +48,15 @@
   GitHub Actions use the same validation route.
 
 ## Decisions
+
+- Keep `main` as the only long-term branch. Merge the validated PR #3 head and
+  remove `agent/audit-hardening` only after the resulting main CI succeeds.
+- Defaults: 1,000,000 tiles per parent across sources, three active children,
+  paused children retaining their slot, and three requested workers (1-50).
+- Preserve legacy records and artifacts; reconcile explicitly without tile
+  downloads. Missing successful baselines require an explicit full recreation.
+- This delivery excludes production deployment and execution of production
+  data repair. Do not infer production permission from code-delivery approval.
 
 - Keep the first enhancement tranche workspace-local instead of modifying the
   global `.codex` control surface.
@@ -83,6 +105,19 @@
 
 ## Validation
 
+- 2026-09-11: eight portable backend contracts failed on archived `e2cfcdb` and
+  passed on the repaired code. The old renderer accepted a script download URL;
+  old CSS produced a 1080px document at a 390px viewport. Repaired checks passed.
+- Full local release preflight passed, including real API integration,
+  ZIP/MBTiles coordinate checks, rendering safety, 390/768/1440px layouts,
+  16-minute preview renewal, response ordering and 401/re-login polling.
+- `go vet ./...` passed locally. Windows lacks a C compiler for local race
+  instrumentation; Linux CI runs `go test -race ./...` and `go vet ./...`.
+- Linux CI for `677186d` and preceding repair batches passed; the final PR head
+  and resulting main merge must each pass the same checks before branch cleanup.
+- Legacy database copy migration was repeated successfully without changing
+  the source database or queuing downloads. No production database was used.
+
 - `go test ./...` passed in `apps/admin-region-tiler`.
 - `node --check apps/admin-region-tiler/static/script.js` passed.
 - HTTP smoke passed for the Go app on port `18081`: `/`, Leaflet static asset,
@@ -116,6 +151,8 @@
 
 ## Next Action
 
-- Monitor the first GitHub Actions run after pushing this repository; if remote
-  browser dependency installation is slow or flaky, add dependency caching or
-  split UI smoke into a separate workflow job.
+- For this delivery, verify the final PR head checks, merge with the validated
+  bilingual message, wait for main CI, and remove only the fully merged repair
+  branch. Use live GitHub state to determine whether these steps are complete.
+- Before any future release, rerun preflight and verify `main` CI. Plan a
+  separate, explicitly authorized deployment and database backup/copy validation.

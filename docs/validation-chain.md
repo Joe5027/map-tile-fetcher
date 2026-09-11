@@ -65,6 +65,15 @@ node .\scripts\release_preflight.mjs
 The release preflight runs Go tests, frontend syntax checks, UI smoke,
 tracked-file sensitive-value scanning, and tracked generated-file scanning.
 
+The Go suite includes `TestAPILifecycle`, which builds the real app binary and
+exercises HTTP, the scheduler, SQLite and ordinary worker processes against a
+local tile fixture. It does not contact real tile providers. UI smoke still
+intercepts creation payloads; it is not the backend lifecycle proof.
+Preflight also runs rendering-security contracts and responsive/preview/login
+regressions. Linux CI additionally runs `go test -race ./...` and `go vet ./...`.
+Use [repair acceptance](repair-acceptance-2026-09-11.md) for issue mapping,
+baseline red/green commands, legacy migration and artifact coordinate evidence.
+
 For handoff artifacts:
 
 ```powershell

@@ -55,6 +55,19 @@ Out of scope unless the user explicitly changes direction:
 - `worker_process.go`
   - isolated worker execution, run-progress persistence, artifact finalization,
     and failure-record persistence
+- `artifact_lifecycle.go`, `integrity.go`, `reconcile.go`, `disk_*.go`
+  - run-isolated output paths, retryable deletion manifests, cumulative retry
+    baselines, failure resolution, recoverable publication and explicit local
+    historical-output reconciliation
+- `limits.go`, `queue.go`, `enumeration.go`, `failure_stream.go`
+  - parent tile budgets, persistent child execution slots, cancellable geometry
+    enumeration, disk-backed deduplication and bounded retry batches
+- `api_lifecycle_test.go`, `retry_integration_test.go`, `recovery_edges_test.go`
+  - real application/worker processes and local tile fixtures; cumulative
+    ZIP/MBTiles coordinates, migration copies and recovery edge cases
+- `repair_contract_test.go`
+  - portable assertions runnable against both archived pre-repair code and the
+    current app; evidence is indexed in `docs/repair-acceptance-2026-09-11.md`
 - `task.go`
   - tile download engine, output setup, file/MBTiles writing, retry and throttle
     behavior, proxy rotation, request headers, final status, and tile failure
@@ -103,6 +116,8 @@ Important endpoints:
 - protected `DELETE /api/tasks/:id`, `DELETE /api/tasks/:id/purge`
 - protected `GET /api/tasks/:id/download`
 - protected `GET /api/tasks/:id/failures`
+- protected `POST /api/tasks/:id/retry-failures|reconcile|recreate`
+- protected `GET /api/config/limits`
 - protected `GET /api/maps`
 - protected `GET /api/config/tilemaps`
 - protected `GET /api/config/regions`
