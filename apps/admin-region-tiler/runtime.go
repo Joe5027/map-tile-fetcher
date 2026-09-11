@@ -640,7 +640,7 @@ func aggregateGroupStatus(plan *TaskRecord) TaskRecordStatus {
 		return plan.Status
 	}
 
-	var completed, running, paused, failed, cancelled, scheduled int
+	var completed, running, paused, failed, partial, cancelled, scheduled int
 	for _, child := range plan.Children {
 		status := child.Status
 		if child.LastRun != nil {
@@ -656,8 +656,10 @@ func aggregateGroupStatus(plan *TaskRecord) TaskRecordStatus {
 			running++
 		case TaskRecordPaused:
 			paused++
-		case TaskRecordFailed, TaskRecordPartialFailed:
+		case TaskRecordFailed:
 			failed++
+		case TaskRecordPartialFailed:
+			partial++
 		case TaskRecordCancelled:
 			cancelled++
 		default:
@@ -677,7 +679,7 @@ func aggregateGroupStatus(plan *TaskRecord) TaskRecordStatus {
 		return TaskRecordRunning
 	case paused > 0 && running == 0:
 		return TaskRecordPaused
-	case completed+failed+cancelled == total && failed > 0:
+	case completed+failed+partial+cancelled == total && failed+partial+cancelled > 0:
 		return TaskRecordPartialFailed
 	case scheduled == total:
 		return TaskRecordQueued

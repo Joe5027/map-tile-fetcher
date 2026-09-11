@@ -1648,12 +1648,22 @@ func applyGroupSummary(plan *TaskRecord, response *TaskResponse) {
 
 	var totalTiles int64
 	var currentTiles int64
+	response.Integrity = IntegrityState{Status: "complete"}
 
 	for _, child := range plan.Children {
 		childResponse := taskResponseFromRecord(child)
 		response.Children = append(response.Children, childResponse)
 		totalTiles += childResponse.Total
 		currentTiles += childResponse.Current
+		response.Integrity.Expected += childResponse.Integrity.Expected
+		response.Integrity.Available += childResponse.Integrity.Available
+		response.Integrity.Missing += childResponse.Integrity.Missing
+		if childResponse.Integrity.Status != "complete" {
+			response.Integrity.Status = "incomplete"
+			if childResponse.Integrity.Status == "checking" {
+				response.Integrity.Status = "checking"
+			}
+		}
 
 		switch childResponse.Status {
 		case string(TaskCompleted):
@@ -1662,7 +1672,7 @@ func applyGroupSummary(plan *TaskRecord, response *TaskResponse) {
 			response.RunningChildren++
 		case string(TaskPaused):
 			response.PausedChildren++
-		case string(TaskFailed):
+		case string(TaskFailed), string(TaskPartialFailed):
 			response.FailedChildren++
 		case string(TaskCancelled):
 			response.CancelledChildren++
@@ -1671,23 +1681,7 @@ func applyGroupSummary(plan *TaskRecord, response *TaskResponse) {
 
 	response.Total = totalTiles
 	response.Current = currentTiles
-
-	switch {
-	case response.CompletedChildren == response.TotalChildren:
-		response.Status = string(TaskRecordCompleted)
-	case response.CancelledChildren == response.TotalChildren:
-		response.Status = string(TaskRecordCancelled)
-	case response.FailedChildren == response.TotalChildren:
-		response.Status = string(TaskRecordFailed)
-	case response.RunningChildren > 0:
-		response.Status = string(TaskRecordRunning)
-	case response.PausedChildren > 0 && response.RunningChildren == 0:
-		response.Status = string(TaskRecordPaused)
-	case response.CompletedChildren+response.FailedChildren+response.CancelledChildren == response.TotalChildren && response.FailedChildren > 0:
-		response.Status = string(TaskRecordPartialFailed)
-	default:
-		response.Status = string(plan.Status)
-	}
+	response.Status = string(aggregateGroupStatus(plan))
 }
 
 func getMaps(c *gin.Context) {

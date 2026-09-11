@@ -208,6 +208,12 @@ func TestDuplicateFailuresAndMissingBaseline(t *testing.T) {
 	if err != nil || summary.Total != 1 {
 		t.Fatalf("duplicates counted %+v %v", summary, err)
 	}
+	if baseline, err := store.validateRetryBaseline(p); err != nil || baseline != nil {
+		t.Fatalf("all-failed task should retry without a success baseline: %v", err)
+	}
+	if _, err := store.db.Exec(`UPDATE task_runs SET success_count=1 WHERE id='a'`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := store.validateRetryBaseline(p); !errors.Is(err, errMissingBaseline) {
 		t.Fatalf("missing baseline: %v", err)
 	}

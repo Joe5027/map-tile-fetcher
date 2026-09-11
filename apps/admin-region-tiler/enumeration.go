@@ -12,6 +12,9 @@ import (
 )
 
 func walkLayer(ctx context.Context, layer Layer, visit func(maptile.Tile) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if layer.BBox != nil {
 		b := layer.BBox
 		return downloader.WalkBBoxTiles(area.BBox{MinLon: b.MinLon, MinLat: b.MinLat, MaxLon: b.MaxLon, MaxLat: b.MaxLat}, area.ZoomRange{Min: layer.Zoom, Max: layer.Zoom}, func(id downloader.TileID) error {
@@ -52,7 +55,7 @@ func walkLayer(ctx context.Context, layer Layer, visit func(maptile.Tile) error)
 
 func (task *Task) forEachExpected(visit func(TileJob) error) error {
 	ctx := task.ctx
-	if task.currentStatus() == TaskCompleted || task.currentStatus() == TaskPartialFailed {
+	if !task.workerManaged && (task.currentStatus() == TaskCompleted || task.currentStatus() == TaskPartialFailed) {
 		ctx = context.Background()
 	}
 	file, err := os.CreateTemp("", "tiler-enumeration-*.db")
@@ -77,6 +80,9 @@ func (task *Task) forEachExpected(visit func(TileJob) error) error {
 	defer tx.Rollback()
 	for _, layer := range task.Layers {
 		if err := walkLayer(ctx, layer, func(tile maptile.Tile) error {
+			if err := task.waitIfPaused(); err != nil && task.workerManaged {
+				return err
+			}
 			_, err := tx.Exec(`INSERT OR IGNORE INTO jobs VALUES(?,?,?,?)`, tile.Z, tile.X, tile.Y, layer.URL)
 			return err
 		}); err != nil {
@@ -92,6 +98,11 @@ func (task *Task) forEachExpected(visit func(TileJob) error) error {
 	}
 	defer rows.Close()
 	for rows.Next() {
+		if task.workerManaged {
+			if err := task.waitIfPaused(); err != nil {
+				return err
+			}
+		}
 		if err := ctx.Err(); err != nil {
 			return err
 		}

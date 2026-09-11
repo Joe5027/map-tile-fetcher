@@ -65,6 +65,7 @@ type TaskOptions struct {
 }
 
 type Task struct {
+	workerManaged  bool
 	retrySource    func(func(TileJob) error) error
 	failureSink    func(TileFailureRecord) error
 	preserveOutput bool
@@ -504,7 +505,7 @@ func (task *Task) Pause() error {
 	task.mu.Lock()
 	defer task.mu.Unlock()
 
-	if task.Status != TaskRunning {
+	if task.Status != TaskRunning && !(task.workerManaged && (task.Status == TaskPending || task.Status == TaskCompleted || task.Status == TaskPartialFailed)) {
 		return fmt.Errorf("task is not running")
 	}
 
@@ -527,7 +528,7 @@ func (task *Task) Resume() error {
 
 func (task *Task) Cancel() error {
 	task.mu.Lock()
-	if task.Status == TaskCompleted || task.Status == TaskCancelled || task.Status == TaskFailed {
+	if (task.Status == TaskCompleted && !task.workerManaged) || task.Status == TaskCancelled || task.Status == TaskFailed {
 		task.mu.Unlock()
 		return fmt.Errorf("task already finished")
 	}
@@ -588,18 +589,6 @@ func (task *Task) Bound() orb.Bound {
 
 func (task *Task) Center() orb.Point {
 	return task.Bound().Center()
-}
-
-func (task *Task) legacyCenter() orb.Point {
-	layer := task.Layers[len(task.Layers)-1]
-	bound := orb.Bound{Min: orb.Point{1, 1}, Max: orb.Point{-1, -1}}
-	for _, g := range layer.Collection {
-		bound = bound.Union(g.Bound())
-	}
-	for _, tile := range layer.Tiles {
-		bound = bound.Union(tile.Bound())
-	}
-	return bound.Center()
 }
 
 func (task *Task) MetaItems() map[string]string {
@@ -1173,8 +1162,14 @@ func (task *Task) Run() {
 	started := time.Now()
 	task.mu.Lock()
 	task.StartedAt = &started
-	task.Status = TaskRunning
+	if task.Status != TaskPaused && task.Status != TaskCancelled {
+		task.Status = TaskRunning
+	}
 	task.mu.Unlock()
+	if err := task.waitIfPaused(); err != nil {
+		task.finish(TaskCancelled, err)
+		return
+	}
 
 	task.Bar = pb.New64(task.Total).Prefix("Task : ").Postfix("\n")
 	task.Bar.Start()
@@ -1216,7 +1211,7 @@ func (task *Task) Run() {
 		task.fail(closeErr)
 	case task.ctx.Err() != nil:
 		task.fail(errors.New("download stopped after output or persistence failure"))
-	case task.currentCounts().Failure > 0 && task.currentCounts().Success == 0:
+	case task.currentCounts().Failure > 0 && task.currentCounts().Success == 0 && !task.preserveOutput:
 		task.fail(errors.New("task finished with no successful tiles"))
 	case task.currentCounts().Failure > 0:
 		task.finish(TaskPartialFailed, nil)
@@ -1249,7 +1244,9 @@ func (task *Task) finish(status TaskStatus, err error) {
 	task.FinishedAt = &finished
 	task.mu.Unlock()
 	task.pauseCond.Broadcast()
-	task.cancel()
+	if !task.workerManaged || status == TaskFailed || status == TaskCancelled {
+		task.cancel()
+	}
 }
 
 type taskCounts struct {

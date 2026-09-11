@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/zip"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -173,20 +174,33 @@ func (s *SQLiteStore) inspectOutput(plan *TaskRecord, task *Task, run *TaskRunRe
 		return state, err
 	}
 	defer reader.Close()
-	var coverage *sql.Tx
+	coverage := make([]TileJob, 0, 256)
+	flushCoverage := func() error {
+		if len(coverage) == 0 {
+			return nil
+		}
+		return retryOnBusy(func() error {
+			tx, err := s.db.Begin()
+			if err != nil {
+				return err
+			}
+			defer tx.Rollback()
+			for _, job := range coverage {
+				if _, err := tx.Exec(`INSERT OR IGNORE INTO run_coverage(run_id,z,x,y,url) VALUES(?,?,?,?,?)`, run.ID, job.Tile.Z, job.Tile.X, job.Tile.Y, prepareTileURL(job.Tile, job.URL)); err != nil {
+					return err
+				}
+			}
+			if err := tx.Commit(); err != nil {
+				return err
+			}
+			coverage = coverage[:0]
+			return nil
+		})
+	}
 	if recordCoverage {
 		if _, err := s.db.Exec(`DELETE FROM run_coverage WHERE run_id=?`, run.ID); err != nil {
 			return state, err
 		}
-		coverage, err = s.db.Begin()
-		if err != nil {
-			return state, err
-		}
-		defer func() {
-			if coverage != nil {
-				coverage.Rollback()
-			}
-		}()
 	}
 	err = task.forEachExpected(func(job TileJob) error {
 		state.Expected++
@@ -200,12 +214,9 @@ func (s *SQLiteStore) inspectOutput(plan *TaskRecord, task *Task, run *TaskRunRe
 		}
 		state.Available++
 		if recordCoverage {
-			_, err = coverage.Exec(`INSERT OR IGNORE INTO run_coverage(run_id,z,x,y,url) VALUES(?,?,?,?,?)`, run.ID, job.Tile.Z, job.Tile.X, job.Tile.Y, prepareTileURL(job.Tile, job.URL))
-			if err == nil && state.Available%256 == 0 {
-				if err = coverage.Commit(); err != nil {
-					return err
-				}
-				coverage, err = s.db.Begin()
+			coverage = append(coverage, job)
+			if len(coverage) == cap(coverage) {
+				return flushCoverage()
 			}
 		}
 		return err
@@ -213,11 +224,8 @@ func (s *SQLiteStore) inspectOutput(plan *TaskRecord, task *Task, run *TaskRunRe
 	if err != nil {
 		return state, err
 	}
-	if coverage != nil {
-		if err := coverage.Commit(); err != nil {
-			return state, err
-		}
-		coverage = nil
+	if err := flushCoverage(); err != nil {
+		return state, err
 	}
 	if state.Missing == 0 && state.Expected > 0 {
 		state.Status = "complete"
@@ -226,23 +234,41 @@ func (s *SQLiteStore) inspectOutput(plan *TaskRecord, task *Task, run *TaskRunRe
 }
 
 func (s *SQLiteStore) validateRetryBaseline(plan *TaskRecord) (*TaskRunRecord, error) {
-	run, err := s.publishedRun(plan.ID)
-	if err != nil {
-		return nil, errMissingBaseline
-	}
 	task, err := buildTaskFromRecord(plan)
 	if err != nil {
 		return nil, err
 	}
-	reader, err := openTileOutput(plan, run)
-	if err != nil {
-		return nil, err
+	defer task.cancel()
+	return s.validateRetryBaselineWithTask(plan, task)
+}
+
+func (s *SQLiteStore) validateRetryBaselineWithTask(plan *TaskRecord, task *Task) (*TaskRunRecord, error) {
+	run, err := s.publishedRun(plan.ID)
+	var reader *tileOutputReader
+	if err == nil {
+		reader, err = openTileOutput(plan, run)
 	}
-	defer reader.Close()
+	if err != nil {
+		// An all-failed first attempt has no successful baseline to preserve.
+		// Require both zero historical successes and an unresolved event for
+		// every expected coordinate before allowing a retry without a baseline.
+		var successes int64
+		if queryErr := s.db.QueryRow(`SELECT COALESCE(SUM(success_count),0) FROM task_runs WHERE plan_id=?`, plan.ID).Scan(&successes); queryErr != nil {
+			return nil, queryErr
+		}
+		if successes > 0 {
+			return nil, errMissingBaseline
+		}
+		run = nil
+	} else {
+		defer reader.Close()
+	}
 	err = task.forEachExpected(func(job TileJob) error {
-		data, readErr := reader.read(job.Tile)
-		if readErr == nil && validateTileResponse(data, plan.Format) == nil {
-			return nil
+		if reader != nil {
+			data, readErr := reader.read(job.Tile)
+			if readErr == nil && validateTileResponse(data, plan.Format) == nil {
+				return nil
+			}
 		}
 		var count int
 		err := s.db.QueryRow(`SELECT COUNT(*) FROM failures WHERE source_id=? AND z=? AND x=? AND y=? AND url=? AND resolved_at=0`, plan.ID, job.Tile.Z, job.Tile.X, job.Tile.Y, prepareTileURL(job.Tile, job.URL)).Scan(&count)
@@ -261,6 +287,9 @@ func (s *SQLiteStore) validateRetryBaseline(plan *TaskRecord) (*TaskRunRecord, e
 }
 
 func copyRetryBaseline(plan *TaskRecord, task *Task, previous *TaskRunRecord) error {
+	if previous == nil {
+		return task.ctx.Err()
+	}
 	reader, err := openTileOutput(plan, previous)
 	if err != nil {
 		return err
@@ -273,6 +302,9 @@ func copyRetryBaseline(plan *TaskRecord, task *Task, previous *TaskRunRecord) er
 		}
 	} else if reader.directory != "" {
 		err = filepath.Walk(reader.directory, func(path string, info os.FileInfo, err error) error {
+			if err := task.ctx.Err(); err != nil {
+				return err
+			}
 			if err != nil {
 				return err
 			}
@@ -340,7 +372,15 @@ func (s *SQLiteStore) publishRun(run *TaskRunRecord, state IntegrityState) error
 	if _, err := s.db.Exec(`INSERT OR REPLACE INTO pending_publications(run_id,record_json,integrity_json) VALUES(?,?,?)`, run.ID, string(raw), string(integrity)); err != nil {
 		return err
 	}
-	return s.commitPublication(run, state)
+	err = s.commitPublication(run, state)
+	if errors.Is(err, context.Canceled) {
+		run.Status, run.ArtifactStatus, run.ArtifactPath = TaskCancelled, ArtifactNone, ""
+		if _, cleanupErr := s.db.Exec(`DELETE FROM pending_publications WHERE run_id=?`, run.ID); cleanupErr != nil {
+			return cleanupErr
+		}
+		return s.finalizeRun(run)
+	}
+	return err
 }
 
 func (s *SQLiteStore) commitPublication(run *TaskRunRecord, state IntegrityState) error {
@@ -349,10 +389,25 @@ func (s *SQLiteStore) commitPublication(run *TaskRunRecord, state IntegrityState
 		return err
 	}
 	defer tx.Rollback()
-	if err := s.finalizeRunWithExec(tx, run); err != nil {
+	var status string
+	if err := tx.QueryRow(`SELECT status FROM plans WHERE id=?`, run.TaskRecordID).Scan(&status); err != nil {
 		return err
 	}
+	if status == string(TaskRecordCancelled) {
+		return context.Canceled
+	}
 	if _, err := tx.Exec(`UPDATE failures SET resolved_at=?,resolved_run_id=? WHERE source_id=? AND resolved_at=0 AND EXISTS (SELECT 1 FROM run_coverage c WHERE c.run_id=? AND c.z=failures.z AND c.x=failures.x AND c.y=failures.y AND c.url=failures.url)`, time.Now().Unix(), run.ID, run.TaskRecordID, run.ID); err != nil {
+		return err
+	}
+	var unresolved int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM failures WHERE source_id=? AND resolved_at=0`, run.TaskRecordID).Scan(&unresolved); err != nil {
+		return err
+	}
+	if unresolved > 0 && state.Status == "complete" {
+		state.Status, state.Error = "incomplete", "unresolved historical failures remain outside verified coverage"
+		run.Status = TaskPartialFailed
+	}
+	if err := s.finalizeRunWithExec(tx, run); err != nil {
 		return err
 	}
 	if err := saveIntegrity(tx, run.TaskRecordID, state); err != nil {

@@ -17,7 +17,19 @@ func (m *RuntimeManager) enqueue(plan *TaskRecord, trigger string) error {
 			return err
 		}
 	}
-	if _, err := validateTaskBudget(fresh.Levels, len(plans)); err != nil {
+	budgetPlan, sourceCount := fresh, len(plans)
+	if fresh.ParentID != "" {
+		budgetPlan, err = store.getTaskRecordByID(fresh.ParentID)
+		if err != nil {
+			return err
+		}
+		siblings, err := store.listTaskChildrenByParent(fresh.ParentID)
+		if err != nil {
+			return err
+		}
+		sourceCount = len(siblings)
+	}
+	if _, err := validateTaskBudget(budgetPlan.Levels, sourceCount); err != nil {
 		return err
 	}
 	eligible := []*TaskRecord{}

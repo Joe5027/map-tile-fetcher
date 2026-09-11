@@ -174,7 +174,9 @@ func initDB() {
 	}
 
 	dbPath := filepath.Join(defaultDataDir, viper.GetString("app.database"))
-	db, err := sql.Open("sqlite", dbPath)
+	// Apply connection-local settings to every pooled connection, including
+	// connections opened after initialization while workers publish artifacts.
+	db, err := sql.Open("sqlite", dbPath+"?_pragma=busy_timeout(10000)&_txlock=immediate")
 	if err != nil {
 		log.Fatalf("failed to open database: %v", err)
 	}
@@ -1325,12 +1327,17 @@ func (s *SQLiteStore) createRun(run *TaskRunRecord) error {
 }
 
 func (s *SQLiteStore) updateRunProgress(run *TaskRunRecord) error {
+	status := run.Status
+	// A successful fetch is still running until artifact publication commits.
+	if status == TaskCompleted || status == TaskPartialFailed {
+		status = TaskRunning
+	}
 	_, err := s.db.Exec(
 		`UPDATE task_runs
 		    SET status = ?, output_path = ?, total = ?, current = ?, success_count = ?, failure_count = ?,
 		        error_message = ?, started_at = ?, finished_at = ?, artifact_name = ?, artifact_status = ?, updated_at = ?
 		  WHERE id = ?`,
-		string(run.Status),
+		string(status),
 		run.OutputPath,
 		run.Total,
 		run.Current,

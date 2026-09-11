@@ -22,6 +22,7 @@ type workerController struct {
 	taskRecordID string
 	task         *Task
 	stop         chan struct{}
+	done         chan struct{}
 	once         sync.Once
 }
 
@@ -50,6 +51,14 @@ func runWorkerProcess(taskRecordID, runID string) error {
 		_ = failRunBeforeStart(taskRecord, run, err)
 		return err
 	}
+	task.workerManaged = true
+	defer task.cancel()
+	controller := &workerController{taskRecordID: taskRecordID, task: task, stop: make(chan struct{})}
+	if err := controller.sync(); err != nil {
+		return failRunBeforeStart(taskRecord, run, err)
+	}
+	controller.start()
+	defer controller.stopLoop()
 	task.File = run.OutputPath
 	if task.File != "" {
 		if err := os.MkdirAll(filepath.Dir(task.File), directoryPermissions); err != nil {
@@ -57,7 +66,7 @@ func runWorkerProcess(taskRecordID, runID string) error {
 		}
 	}
 	if run.TriggerMode == triggerRetryFailures {
-		previous, err := store.validateRetryBaseline(taskRecord)
+		previous, err := store.validateRetryBaselineWithTask(taskRecord, task)
 		if err != nil {
 			_ = failRunBeforeStart(taskRecord, run, err)
 			return err
@@ -93,12 +102,6 @@ func runWorkerProcess(taskRecordID, runID string) error {
 		return err
 	}
 
-	controller := &workerController{
-		taskRecordID: taskRecordID,
-		task:         task,
-		stop:         make(chan struct{}),
-	}
-
 	done := make(chan struct{})
 	progressDone := make(chan struct{})
 	progressTicker := time.NewTicker(1 * time.Second)
@@ -116,9 +119,7 @@ func runWorkerProcess(taskRecordID, runID string) error {
 		}
 	}()
 
-	controller.start()
 	task.Run()
-	controller.stopLoop()
 	close(done)
 	<-progressDone
 
@@ -130,9 +131,12 @@ func runWorkerProcess(taskRecordID, runID string) error {
 		state, err = store.inspectOutput(taskRecord, task, run, true)
 		if err != nil {
 			run.Status = TaskFailed
+			if errors.Is(err, context.Canceled) {
+				run.Status = TaskCancelled
+			}
 			run.ErrorMessage = err.Error()
 		}
-		if state.Missing > 0 {
+		if err == nil && state.Missing > 0 {
 			run.Status = TaskPartialFailed
 			task.setStatus(TaskPartialFailed)
 		}
@@ -232,8 +236,10 @@ func resolveConfigPath(path string) string {
 }
 
 func (c *workerController) start() {
-	ticker := time.NewTicker(1 * time.Second)
+	c.done = make(chan struct{})
+	ticker := time.NewTicker(100 * time.Millisecond)
 	go func() {
+		defer close(c.done)
 		defer ticker.Stop()
 		for {
 			select {
@@ -252,6 +258,9 @@ func (c *workerController) stopLoop() {
 	c.once.Do(func() {
 		close(c.stop)
 	})
+	if c.done != nil {
+		<-c.done
+	}
 }
 
 func (c *workerController) sync() error {
@@ -271,7 +280,7 @@ func (c *workerController) sync() error {
 
 	switch plan.Status {
 	case TaskRecordPaused:
-		if status == TaskRunning {
+		if status == TaskRunning || status == TaskPending || status == TaskCompleted || status == TaskPartialFailed {
 			return c.task.Pause()
 		}
 	case TaskRecordRunning:
@@ -279,7 +288,7 @@ func (c *workerController) sync() error {
 			return c.task.Resume()
 		}
 	case TaskRecordCancelled:
-		if status != TaskCancelled && status != TaskCompleted && status != TaskFailed {
+		if status != TaskCancelled && status != TaskFailed {
 			return c.task.Cancel()
 		}
 	}
@@ -442,6 +451,9 @@ func finalizeUnexpectedWorkerExit(taskRecord *TaskRecord, run *TaskRunRecord, wa
 func failRunBeforeStart(taskRecord *TaskRecord, run *TaskRunRecord, cause error) error {
 	now := time.Now()
 	run.Status = TaskFailed
+	if errors.Is(cause, context.Canceled) {
+		run.Status = TaskCancelled
+	}
 	run.ErrorMessage = cause.Error()
 	run.FinishedAt = &now
 	if run.StartedAt == nil {
@@ -450,7 +462,7 @@ func failRunBeforeStart(taskRecord *TaskRecord, run *TaskRunRecord, cause error)
 	if err := retryOnBusy(func() error { return store.finalizeRun(run) }); err != nil {
 		return err
 	}
-	return retryOnBusy(func() error { return store.updateTaskRecordStatus(taskRecord.ID, TaskRecordFailed) })
+	return retryOnBusy(func() error { return store.updateTaskRecordStatus(taskRecord.ID, statusToTaskRecordStatus(run.Status)) })
 }
 
 func timePtrOrNow(t *time.Time) *time.Time {
