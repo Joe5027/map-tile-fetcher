@@ -2,6 +2,11 @@
 
 ## Facts
 
+- Maintenance implementation now uses `codex/maintenance-fixes` from `1109e4d`.
+  M1/M2/M7 replace direct region deployment with offline inspection and new,
+  validated bundles. Regression and remaining batch status are tracked in
+  `docs/maintenance-acceptance-2026-09-11.md`; no production or Release actions.
+
 - 2026-09-11 repository cleanup: removed 24 redundant docs, unused package
   scaffolding, unreferenced static files and a generated report. Actual region
   geometry, runtime compatibility tables and active UI/test assets remain.
@@ -165,9 +170,8 @@
 
 ## Next Action
 
-- Use `docs/maintenance-audit-2026-09-11.md` for remaining issues. Start with
-  region maintenance script data preservation and geometry correctness, then
-  existing-user password rotation. Check live GitHub state for any pending
-  cleanup PR before creating a duplicate batch.
+- Continue M3 password rotation, M4 documented region gaps, and M5/M6 build
+  identity and packaging on the maintenance branch. Commit/push each verified
+  batch, merge only after all validation and then verify new main CI.
 - Before any future release, rerun preflight and verify `main` CI. Plan a
   separate, explicitly authorized deployment and database backup/copy validation.

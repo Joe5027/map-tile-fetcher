@@ -70,6 +70,16 @@ jobs:
           npm install -g playwright
           npx playwright install --with-deps chromium
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install isolated region tooling
+        run: |
+          python -m venv .venv-region
+          .venv-region/bin/python -m pip install --require-hashes --only-binary=:all: -r scripts/requirements-region.lock
+          echo "REGION_PYTHON=$PWD/.venv-region/bin/python" >> "$GITHUB_ENV"
+
       - name: Run release preflight
         run: node ./scripts/release_preflight.mjs
 
@@ -77,3 +87,25 @@ jobs:
         run: |
           go test -race ./...
           go vet ./...
+
+  region-tools:
+    name: Region Tools (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    defaults:
+      run:
+        working-directory: apps/admin-region-tiler
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Test locked environment
+        run: |
+          python -m venv .venv-region
+          if [ "$RUNNER_OS" = "Windows" ]; then PY=.venv-region/Scripts/python; else PY=.venv-region/bin/python; fi
+          "$PY" -m pip install --require-hashes --only-binary=:all: -r scripts/requirements-region.lock
+          "$PY" -B -m unittest discover -s scripts -p 'test_region_tools.py' -v

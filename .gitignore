@@ -44,6 +44,9 @@ go.work.sum
 # vendor/
 
 # Logs and caches
+__pycache__/
+*.pyc
+.venv*/
 *.log
 run.stdout.log
 run.stderr.log

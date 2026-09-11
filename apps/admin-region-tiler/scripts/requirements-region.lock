@@ -1,0 +1,7 @@
+# CPython 3.13, Windows amd64 / Linux x86_64; hashes from PyPI release metadata.
+numpy==2.2.6 \
+    --hash=sha256:1bc23a79bfabc5d056d106f9befb8d50c31ced2fbc70eedb8155aec74a45798f \
+    --hash=sha256:b0544343a702fa80c95ad5d3d608ea3599dd54d4632df855e4c8d24eb6ecfa1c
+shapely==2.1.2 \
+    --hash=sha256:7ed1a5bbfb386ee8332713bf7508bc24e32d24b74fc9a7b9f8529a55db9f4ee6 \
+    --hash=sha256:ca2591bff6645c216695bdf1614fca9c82ea1144d4a7591a466fef64f28f0715
