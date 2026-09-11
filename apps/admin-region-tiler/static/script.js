@@ -1758,8 +1758,8 @@ function renderLevelConfigs() {
             <div class="region-row__title">
                 ${icon("layers")}
                 <span>
-                    <strong>${config.label}</strong>
-                    <span>${getRegionHelperText(config)}</span>
+                    <strong>${escapeHTML(config.label)}</strong>
+                    <span>${escapeHTML(getRegionHelperText(config))}</span>
                 </span>
             </div>
             <div class="region-row__grid">
@@ -2567,7 +2567,7 @@ function renderGroupTask(task) {
                     <span class="task-illustration">${icon("layers")}</span>
                     <div class="task-main">
                         <div class="task-main__title">
-                            <h3>${task.name}</h3>
+                            <h3 title="${task.name}">${task.name}</h3>
                             ${renderStatusPill(task.status)}
                             ${riskHint ? renderWarningPill(riskHint.short) : ""}
                         </div>
@@ -2628,7 +2628,7 @@ function renderStandaloneTask(task) {
         name: escapeHTML(task.name),
         errorMessage: escapeHTML(task.errorMessage),
         artifactName: escapeHTML(task.artifactName),
-        downloadUrl: escapeAttribute(task.downloadUrl)
+        downloadUrl: escapeAttribute(managedDownloadURL(task))
     };
     const menuId = `menu-${task.id}`;
     return `
@@ -2641,7 +2641,7 @@ function renderStandaloneTask(task) {
                     <span class="task-illustration">${icon("task")}</span>
                     <div class="task-main">
                         <div class="task-main__title">
-                            <h3>${task.name}</h3>
+                            <h3 title="${task.name}">${task.name}</h3>
                             ${renderStatusPill(task.status)}
                             ${riskHint ? renderWarningPill(riskHint.short) : ""}
                         </div>
@@ -2691,7 +2691,7 @@ function renderStandaloneTask(task) {
 }
 
 function renderStandaloneDetail(task) {
-    const artifactAction = task.artifactStatus === "ready"
+    const artifactAction = task.artifactStatus === "ready" && task.downloadUrl
         ? `<a href="${task.downloadUrl}" class="artifact-link">${icon("download")}<span>下载产物</span></a>`
         : `<span class="artifact-text">产物：${translateArtifactStatus(task.artifactStatus)}</span>`;
     return `
@@ -2719,10 +2719,10 @@ function renderChildTask(task) {
         sourceName: escapeHTML(task.sourceName),
         errorMessage: escapeHTML(task.errorMessage),
         artifactName: escapeHTML(task.artifactName),
-        downloadUrl: escapeAttribute(task.downloadUrl)
+        downloadUrl: escapeAttribute(managedDownloadURL(task))
     };
     const isOpen = expandedChildTasks.has(rawTaskID);
-    const artifactAction = task.artifactStatus === "ready"
+    const artifactAction = task.artifactStatus === "ready" && task.downloadUrl
         ? `<a href="${task.downloadUrl}" class="artifact-link">${icon("download")}<span>下载产物</span></a>`
         : `<span class="artifact-text">产物：${task.artifactStatus === "packing" && task.artifactName ? task.artifactName : translateArtifactStatus(task.artifactStatus)}</span>`;
 
@@ -2733,7 +2733,7 @@ function renderChildTask(task) {
                     <div>
                         <div class="child-task__title">
                             ${icon(childTaskIcon(task), "child-task__icon")}
-                            <strong>${task.sourceName || task.name}</strong>
+                            <strong title="${task.sourceName || task.name}">${task.sourceName || task.name}</strong>
                             ${renderStatusPill(task.status, true)}
                             ${renderArtifactPill(task.artifactStatus)}
                             ${riskHint ? renderWarningPill(riskHint.short) : ""}
@@ -2868,6 +2868,11 @@ function escapeHTML(value) {
 
 function escapeAttribute(value) {
     return escapeHTML(value);
+}
+
+function managedDownloadURL(task) {
+    const expected = `/api/tasks/${encodeURIComponent(String(task.id || ""))}/download`;
+    return task.downloadUrl === expected ? expected : "";
 }
 
 function renderWarningPill(text) {

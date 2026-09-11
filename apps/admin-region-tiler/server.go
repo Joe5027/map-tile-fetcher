@@ -72,22 +72,23 @@ type OutputRequest struct {
 }
 
 type CreateTaskRequest struct {
-	Name         string            `json:"name" binding:"required"`
-	Mode         string            `json:"mode,omitempty"`
-	Area         AreaRequest       `json:"area,omitempty"`
-	Zoom         *ZoomRangeRequest `json:"zoom,omitempty"`
-	SourceName   string            `json:"sourceName,omitempty"`
-	URL          string            `json:"url"`
-	Format       string            `json:"format"`
-	Schema       string            `json:"schema"`
-	Workers      int               `json:"workers"`
-	SavePipe     int               `json:"savePipe"`
-	TimeDelay    int               `json:"timeDelay"`
-	ScheduleMode ScheduleMode      `json:"scheduleMode"`
-	RunAt        string            `json:"runAt"`
-	Levels       []LevelRequest    `json:"levels"`
-	Sources      []SourceRequest   `json:"sources"`
-	Output       OutputRequest     `json:"output,omitempty"`
+	generatedFiles []string
+	Name           string            `json:"name" binding:"required"`
+	Mode           string            `json:"mode,omitempty"`
+	Area           AreaRequest       `json:"area,omitempty"`
+	Zoom           *ZoomRangeRequest `json:"zoom,omitempty"`
+	SourceName     string            `json:"sourceName,omitempty"`
+	URL            string            `json:"url"`
+	Format         string            `json:"format"`
+	Schema         string            `json:"schema"`
+	Workers        int               `json:"workers"`
+	SavePipe       int               `json:"savePipe"`
+	TimeDelay      int               `json:"timeDelay"`
+	ScheduleMode   ScheduleMode      `json:"scheduleMode"`
+	RunAt          string            `json:"runAt"`
+	Levels         []LevelRequest    `json:"levels"`
+	Sources        []SourceRequest   `json:"sources"`
+	Output         OutputRequest     `json:"output,omitempty"`
 }
 
 type TaskAreaLevelResponse struct {
@@ -610,7 +611,7 @@ func createTask(c *gin.Context) {
 	allRecords = append(allRecords, plan)
 	allRecords = append(allRecords, children...)
 	if err := store.createTaskRecords(allRecords...); err != nil {
-		for _, path := range generatedAreaPaths(plan) {
+		for _, path := range plan.generatedFiles {
 			if cleanupErr := removeGeneratedAreaPath(path); cleanupErr != nil {
 				log.Warnf("failed to remove unpersisted generated task area %s: %v", path, cleanupErr)
 			}
@@ -883,6 +884,14 @@ func loadPlanForCurrentUser(c *gin.Context, id string) (*TaskRecord, error) {
 }
 
 func buildTaskRecordsFromRequest(userID int64, req CreateTaskRequest) (*TaskRecord, []*TaskRecord, error) {
+	complete := false
+	defer func() {
+		if !complete {
+			for _, path := range req.generatedFiles {
+				_ = removeGeneratedAreaPath(path)
+			}
+		}
+	}()
 	req.Name = strings.TrimSpace(req.Name)
 
 	if req.Name == "" {
@@ -986,6 +995,8 @@ func buildTaskRecordsFromRequest(userID int64, req CreateTaskRequest) (*TaskReco
 		})
 	}
 
+	parent.generatedFiles = req.generatedFiles
+	complete = true
 	return parent, children, nil
 }
 
@@ -1036,6 +1047,7 @@ func normalizeAreaLevels(req *CreateTaskRequest) error {
 			if err != nil {
 				return err
 			}
+			req.generatedFiles = append(req.generatedFiles, geojsonPath)
 			req.Levels = []LevelRequest{{
 				MinZoom: zoom.Min,
 				MaxZoom: zoom.Max,
@@ -1108,7 +1120,14 @@ func writeGeneratedPolygonGeoJSON(points []CoordinateRequest) (string, error) {
 		return "", err
 	}
 	path := filepath.Join(dir, "range-polygon-"+id+".geojson")
-	if err := os.WriteFile(path, data, filePermissions); err != nil {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, filePermissions)
+	if err != nil {
+		return "", err
+	}
+	_, writeErr := file.Write(data)
+	closeErr := file.Close()
+	if err := errors.Join(writeErr, closeErr); err != nil {
+		_ = os.Remove(path)
 		return "", err
 	}
 	return filepath.ToSlash(path), nil

@@ -85,27 +85,28 @@ type LevelConfig struct {
 }
 
 type TaskRecord struct {
-	ID           string
-	UserID       int64
-	ParentID     string
-	Kind         TaskRecordKind
-	Name         string
-	SourceName   string
-	URL          string
-	Format       string
-	Schema       string
-	Workers      int
-	SavePipe     int
-	TimeDelay    int
-	ScheduleMode ScheduleMode
-	RunAt        time.Time
-	Status       TaskRecordStatus
-	Levels       []LevelConfig
-	LastRunID    string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-	LastRun      *TaskRunRecord
-	Children     []*TaskRecord
+	generatedFiles []string
+	ID             string
+	UserID         int64
+	ParentID       string
+	Kind           TaskRecordKind
+	Name           string
+	SourceName     string
+	URL            string
+	Format         string
+	Schema         string
+	Workers        int
+	SavePipe       int
+	TimeDelay      int
+	ScheduleMode   ScheduleMode
+	RunAt          time.Time
+	Status         TaskRecordStatus
+	Levels         []LevelConfig
+	LastRunID      string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	LastRun        *TaskRunRecord
+	Children       []*TaskRecord
 }
 
 type TaskRunRecord struct {
