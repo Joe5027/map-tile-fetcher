@@ -199,3 +199,32 @@ func TestPurgeGroupRemovesChildOutput(t *testing.T) {
 		t.Fatalf("child output still exists: %v", err)
 	}
 }
+
+func TestPurgeProtectsFileInsideSurvivingLegacyTree(t *testing.T) {
+	useTestStore(t)
+	root := setTestOutput(t)
+	deleted := storedBBoxTask(t, "old-file", "")
+	survivor := storedBBoxTask(t, "old-tree", "")
+	tree := filepath.Join(root, "legacy")
+	if err := os.MkdirAll(tree, 0755); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(tree, "shared.mbtiles")
+	if err := os.WriteFile(file, []byte("legacy bytes"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	for _, run := range []*TaskRunRecord{
+		{ID: "file-run", TaskRecordID: deleted.ID, UserID: 1, Status: TaskCompleted, OutputPath: file},
+		{ID: "tree-run", TaskRecordID: survivor.ID, UserID: 1, Status: TaskCompleted, OutputPath: tree},
+	} {
+		if err := store.createRun(run); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := NewRuntimeManager().Purge(deleted); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(file); err != nil {
+		t.Fatalf("deleted a file belonging to a surviving legacy tree: %v", err)
+	}
+}

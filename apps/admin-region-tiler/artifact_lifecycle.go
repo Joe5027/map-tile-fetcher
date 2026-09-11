@@ -132,7 +132,7 @@ func (m *RuntimeManager) purgeManagedTask(plan *TaskRecord) error {
 				continue
 			}
 			for _, other := range []string{output, artifact} {
-				if other != "" && pathsOverlap(path, other) {
+				if other != "" && (pathsOverlap(path, other) || pathsOverlap(other, path)) {
 					delete(paths, path)
 				}
 			}
@@ -220,7 +220,13 @@ func (m *RuntimeManager) purgeManagedTask(plan *TaskRecord) error {
 			return err
 		}
 	}
-	return store.purgeTaskRecord(plan.ID)
+	if err := store.purgeTaskRecord(plan.ID); err != nil {
+		return err
+	}
+	if fresh.ParentID != "" {
+		return m.refreshParentStatus(fresh.ParentID)
+	}
+	return nil
 }
 
 func pathsOverlap(a, b string) bool {

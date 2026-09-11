@@ -15,6 +15,9 @@ import (
 
 func taskCreationRequest(t *testing.T, req CreateTaskRequest) *httptest.ResponseRecorder {
 	t.Helper()
+	previous := runtimeManager
+	runtimeManager = NewRuntimeManager()
+	defer func() { runtimeManager = previous }()
 	data, err := json.Marshal(req)
 	if err != nil {
 		t.Fatal(err)

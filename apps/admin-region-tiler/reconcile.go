@@ -112,5 +112,8 @@ func (s *SQLiteStore) reconcileRecord(plan *TaskRecord) (IntegrityState, error) 
 	} else {
 		run.Status = TaskPartialFailed
 	}
-	return state, s.commitPublication(run, state)
+	if err := s.commitPublication(run, state); err != nil {
+		return state, err
+	}
+	return s.integrityState(plan.ID), nil
 }

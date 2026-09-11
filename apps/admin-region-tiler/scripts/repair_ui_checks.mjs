@@ -66,7 +66,22 @@ export async function runRepairUIChecks(page) {
   await page.evaluate(async()=>{await Promise.all(Array.from({length:8},()=>loadTasks()));});
   assert.equal(taskRequests,1,"overlapping task refreshes were not coalesced");
   assert.equal(maxActive,1);
-  await page.evaluate(()=>{showLogin();});
-  assert(await page.evaluate(()=>taskPollingTimer===null&&rangeTiandituPreviewTokenId===""),"logout retained polling or preview cache");
-  console.log("Repair UI checks passed: 390/768/1440px, preview ordering, full geometry, expiry, account reset, polling");
+  await page.route("**/api/tasks", route=>route.fulfill({status:401,json:{error:"session expired"}}));
+  await page.evaluate(()=>loadTasks());
+  assert(await page.evaluate(()=>!authenticated&&taskPollingTimer===null&&rangeTiandituPreviewTokenId===""),"401 retained polling or preview cache");
+  await page.unroute("**/api/tasks");
+  let pollRequests=0;
+  await page.route("**/api/tasks",route=>{pollRequests++;return route.fulfill({json:[]});});
+  await page.locator('#loginForm [name="username"]').fill("admin");
+  await page.locator('#loginForm [name="password"]').fill("adminmap");
+  await page.locator('#loginForm button[type="submit"]').click();
+  await page.waitForFunction(()=>authenticated&&taskPollingTimer!==null);
+  await page.waitForFunction(()=>taskLoadPromise===null);
+  pollRequests=0;
+  await page.clock.fastForward(5000);
+  await page.waitForFunction(()=>taskLoadPromise===null);
+  assert.equal(pollRequests,1,"re-login created multiple pollers");
+  await page.evaluate(()=>logout());
+  assert(await page.evaluate(()=>!authenticated&&taskPollingTimer===null),"logout left polling active");
+  console.log("Repair UI checks passed: 390/768/1440px, preview ordering, full geometry, expiry, account reset, 401/re-login, polling");
 }

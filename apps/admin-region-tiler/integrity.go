@@ -455,6 +455,16 @@ func (s *SQLiteStore) recoverPublications() error {
 	}
 	rows.Close()
 	for _, item := range items {
+		var planStatus string
+		if err := s.db.QueryRow(`SELECT status FROM plans WHERE id=?`, item.run.TaskRecordID).Scan(&planStatus); err != nil {
+			return err
+		}
+		if planStatus == string(TaskRecordCancelled) {
+			if err := s.publishRun(&item.run, item.state); err != nil {
+				return err
+			}
+			continue
+		}
 		path, err := ensurePathWithinRoot(item.run.ArtifactPath, viper.GetString("output.directory"), false)
 		if err != nil {
 			return err

@@ -330,10 +330,34 @@ func TestAPILifecycle(t *testing.T) {
 		waitStatus(task.ID, "completed")
 		request("DELETE", "/api/tasks/"+task.ID+"/purge", nil, 200, nil)
 	})
+	t.Run("all_failed_can_retry_without_old_successes", func(t *testing.T) {
+		failAll.Store(true)
+		var task TaskResponse
+		request("POST", "/api/tasks", payload("zip", 1), 201, &task)
+		waitStatus(task.ID, "failed")
+		failAll.Store(false)
+		request("POST", "/api/tasks/"+task.ID+"/retry-failures", nil, 202, nil)
+		complete := waitStatus(task.ID, "completed")
+		if complete.Integrity.Available != 4 {
+			t.Fatalf("all-failed retry: %+v", complete)
+		}
+		request("DELETE", "/api/tasks/"+task.ID+"/purge", nil, 200, nil)
+	})
 	var tasks []TaskResponse
 	request("GET", "/api/tasks", nil, 200, &tasks)
 	if len(tasks) != 0 {
 		t.Fatalf("remaining tasks: %+v", tasks)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(dir, "data", "tasks.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, table := range []string{"plans", "tasks", "task_runs", "task_sources", "failures", "artifacts", "run_coverage", "task_integrity", "pending_publications", "execution_queue", "task_deletions", "deletion_paths"} {
+		var count int
+		if err := db.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&count); err != nil || count != 0 {
+			t.Fatalf("cleanup %s: %d %v", table, count, err)
+		}
 	}
 }
 

@@ -614,6 +614,8 @@ func createTask(c *gin.Context) {
 }
 
 func createTaskFromRequest(c *gin.Context, req CreateTaskRequest) {
+	runtimeManager.operations.Lock()
+	defer runtimeManager.operations.Unlock()
 	user := currentUser(c)
 
 	plan, children, err := buildTaskRecordsFromRequest(user.ID, req)
@@ -640,7 +642,7 @@ func createTaskFromRequest(c *gin.Context, req CreateTaskRequest) {
 		return
 	}
 
-	if err := runtimeManager.StartTaskRecord(plan); err != nil {
+	if err := runtimeManager.enqueue(plan, string(plan.ScheduleMode)); err != nil {
 		log.Errorf("queue task %s: %v", plan.ID, err)
 	}
 
