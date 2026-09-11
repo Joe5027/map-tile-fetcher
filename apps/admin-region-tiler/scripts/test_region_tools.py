@@ -67,7 +67,8 @@ class RegionContracts(unittest.TestCase):
         tools.CANCELLED.clear()
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
-        self.base = pathlib.Path(self.temporary.name)
+        # Hosted Windows runners may expose the temp directory using an 8.3 alias.
+        self.base = pathlib.Path(self.temporary.name).resolve()
         self.root = self.base / "input"
         (self.root / "geojson").mkdir(parents=True)
         self.item = region()
