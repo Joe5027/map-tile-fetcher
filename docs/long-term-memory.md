@@ -2,6 +2,13 @@
 
 ## Facts
 
+- The seven-item maintenance implementation is accepted on clean code commit
+  `6d4d088`: push CI passed all jobs, including Linux race/vet, Windows/Linux
+  locked region environments and native package reproducibility/startup checks.
+  PR #6 carries integration; the acceptance record links immutable run evidence.
+  Five investigated region gaps remain intentionally unavailable under the
+  approved data policy. No production, tags or Release publication was performed.
+
 - M5/M6 add `scripts/build_release.py` for explicit Git snapshots, deterministic
   Windows ZIP/Linux tar.gz packages and a shared CLI/API/UI/Docker build identity.
   No new tags or GitHub Releases are part of this delivery. Native package checks
@@ -185,8 +192,8 @@
 
 ## Next Action
 
-- Complete native package verification and full preflight for M5/M6, then check
-  all PR head jobs and strict protection before merging. Wait for new main CI
-  and remove the temporary branch only after success.
+- For future maintenance, begin with the acceptance record and current GitHub
+  status for PR #6; do not repeat completed implementation or approximate the
+  five documented boundaries. Keep protected main checks and branch cleanup.
 - Before any future release, rerun preflight and verify `main` CI. Plan a
   separate, explicitly authorized deployment and database backup/copy validation.
