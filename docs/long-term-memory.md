@@ -2,6 +2,11 @@
 
 ## Facts
 
+- M5/M6 add `scripts/build_release.py` for explicit Git snapshots, deterministic
+  Windows ZIP/Linux tar.gz packages and a shared CLI/API/UI/Docker build identity.
+  No new tags or GitHub Releases are part of this delivery. Native package checks
+  use fresh directories and a loopback tile service.
+
 - M4 investigated all five catalog gaps. No verified complete WGS84 boundaries
   were obtained; preserve explicit reasons and evidence in
   `docs/region-gap-investigation-2026-09-11.md`. The gap gate rejects new missing
@@ -180,8 +185,8 @@
 
 ## Next Action
 
-- M3 password rotation passed local preflight and vet. Continue M4 documented region gaps and M5/M6 build
-  identity and packaging on the maintenance branch. Commit/push each verified
-  batch, merge only after all validation and then verify new main CI.
+- Complete native package verification and full preflight for M5/M6, then check
+  all PR head jobs and strict protection before merging. Wait for new main CI
+  and remove the temporary branch only after success.
 - Before any future release, rerun preflight and verify `main` CI. Plan a
   separate, explicitly authorized deployment and database backup/copy validation.

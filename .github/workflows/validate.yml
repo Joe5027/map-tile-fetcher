@@ -109,3 +109,42 @@ jobs:
           if [ "$RUNNER_OS" = "Windows" ]; then PY=.venv-region/Scripts/python; else PY=.venv-region/bin/python; fi
           "$PY" -m pip install --require-hashes --only-binary=:all: -r scripts/requirements-region.lock
           "$PY" -B -m unittest discover -s scripts -p 'test_region_tools.py' -v
+
+  packages:
+    name: Native Package (${{ matrix.os }})
+    needs: commit-message
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            target: windows
+            suffix: zip
+          - os: ubuntu-latest
+            target: linux
+            suffix: tar.gz
+    defaults:
+      run:
+        working-directory: apps/admin-region-tiler
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.3"
+          cache-dependency-path: apps/admin-region-tiler/go.sum
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Build twice and verify native package
+        run: |
+          python -B scripts/build_release.py --ref HEAD --target '${{ matrix.target }}' --output-dir ../../dist/package-a
+          python -B scripts/build_release.py --ref HEAD --target '${{ matrix.target }}' --output-dir ../../dist/package-b
+          diff ../../dist/package-a/SHA256SUMS ../../dist/package-b/SHA256SUMS
+          python -B scripts/verify_package.py ../../dist/package-a/*.${{ matrix.suffix }}
+      - name: Verify Docker identity
+        if: runner.os == 'Linux'
+        run: python -B scripts/verify_docker.py

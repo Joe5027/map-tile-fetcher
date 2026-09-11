@@ -9,7 +9,11 @@ RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=1 go build -o tiler .
+ARG VERSION=unknown
+ARG COMMIT=unknown
+ARG BUILT_AT=unknown
+ARG DIRTY=unknown
+RUN CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags "-buildid= -X main.buildVersion=${VERSION} -X main.buildCommit=${COMMIT} -X main.buildTime=${BUILT_AT} -X main.buildDirty=${DIRTY}" -o tiler .
 
 FROM alpine:latest
 

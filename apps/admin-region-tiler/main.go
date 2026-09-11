@@ -17,6 +17,7 @@ import (
 // flag
 var (
 	hf                 bool
+	versionFlag        bool
 	cf                 string
 	workerTaskRecordID string
 	workerRunID        string
@@ -24,6 +25,7 @@ var (
 
 func init() {
 	flag.BoolVar(&hf, "h", false, "this help")
+	flag.BoolVar(&versionFlag, "version", false, "print build identity as JSON without initializing data")
 	flag.StringVar(&cf, "c", "conf.toml", "set config `file`")
 	flag.StringVar(&workerTaskRecordID, "worker-task-record-id", "", "run a child task record in worker mode")
 	flag.StringVar(&workerTaskRecordID, "worker-plan-id", "", "legacy alias for -worker-task-record-id")
@@ -42,9 +44,7 @@ func init() {
 	log.SetLevel(log.DebugLevel)
 }
 func usage() {
-	fmt.Fprintf(os.Stderr, `tiler version: tiler/v0.1.0
-Usage: tiler [-h] [-c filename]
-`)
+	fmt.Fprintf(os.Stderr, "tiler %s\nUsage: tiler [-h] [--version] [-c filename]\n       tiler admin reset-password --database PATH --username NAME\n", buildInfoJSON())
 	flag.PrintDefaults()
 }
 
@@ -66,7 +66,6 @@ func initConf(cfgFile string) {
 		}
 		log.Warnf("read config file(%s) error, details: %s", viper.ConfigFileUsed(), err)
 	}
-	viper.SetDefault("app.version", "v 0.1.0")
 	viper.SetDefault("app.title", "MapCloud Tiler")
 	viper.SetDefault("app.port", "8081")
 	viper.SetDefault("app.database", "tiler.db")
@@ -100,6 +99,10 @@ func main() {
 		return
 	}
 	flag.Parse()
+	if versionFlag {
+		fmt.Println(buildInfoJSON())
+		return
+	}
 	if hf {
 		flag.Usage()
 		return
@@ -109,6 +112,7 @@ func main() {
 		cf = "conf.toml"
 	}
 	initConf(cf)
+	log.Infof("Build: %s", buildInfoJSON())
 
 	// 初始化数据库
 	initDB()

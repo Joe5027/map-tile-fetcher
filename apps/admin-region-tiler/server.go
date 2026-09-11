@@ -296,6 +296,7 @@ func initServer() {
 	})
 
 	r.POST("/api/auth/login", loginHandler)
+	r.GET("/api/version", func(c *gin.Context) { c.JSON(200, currentBuildInfo()) })
 	r.POST("/api/auth/logout", logoutHandler)
 
 	protected := r.Group("/api")

@@ -148,6 +148,11 @@ Compose 会持久化 `data/`、`output/`、`geojson/` 和 `conf.toml`。如果�
 
 ### 发布和安装
 
+当前源码的 Windows/Linux 开发验证包统一由
+[`scripts/build_release.py`](apps/admin-region-tiler/scripts/build_release.py) 生成，
+命令、构建身份及安装验收见 [构建与安装](docs/build-and-install.md)。
+页面、`tiler --version` 和 `/api/version` 显示实际构建版本；本轮不新增发布标签。
+
 - 已发布预览版：[`v0.3.0`](https://github.com/Joe5027/map-tile-fetcher/releases/tag/v0.3.0)（发布说明及下载包）
 - 历史发布说明：[`docs/releases/v0.1.0.md`](docs/releases/v0.1.0.md)
 - 用户手册：[`docs/user-manual-zh.md`](docs/user-manual-zh.md)
@@ -316,6 +321,10 @@ Safe placeholders:
 Real tokens should stay in local `.env`, local config, or your deployment secret manager. Do not commit real tokens to Git.
 
 ### Release And Install
+
+Use [`scripts/build_release.py`](apps/admin-region-tiler/scripts/build_release.py) for
+Windows/Linux verification packages. See [Build and Install](docs/build-and-install.md).
+The UI, `tiler --version` and `/api/version` share the actual build identity.
 
 - Published preview: [`v0.3.0`](https://github.com/Joe5027/map-tile-fetcher/releases/tag/v0.3.0) (release notes and downloads)
 - Historical release notes: [`docs/releases/v0.1.0.md`](docs/releases/v0.1.0.md)

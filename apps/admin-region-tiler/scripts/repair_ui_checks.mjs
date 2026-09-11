@@ -7,6 +7,7 @@ export async function runRepairUIChecks(page) {
   const screenshots=resolve("tmp/repair-ui");
   await mkdir(screenshots,{recursive:true});
   await page.evaluate(()=>stopTaskPolling());
+  await page.evaluate(()=>{document.getElementById("buildVersion").textContent="dev+123456789abc.dirty";});
   const missingState = await page.evaluate(() => {
     const item = missingRegionCatalog.find(item => item.id === "659011");
     const select = document.createElement("select");

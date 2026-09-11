@@ -21,6 +21,9 @@
 
 ## 本地源码启动
 
+构建 Windows/Linux 安装包使用 [统一构建入口](../../docs/build-and-install.md)。
+执行 `tiler --version` 或查询 `/api/version` 可查看当前程序的真实版本和提交。
+
 区域目录检查和独立资源包生成见 [区域维护说明](../../docs/region-maintenance.md)。
 工具不再支持直接部署覆盖，默认只读检查；七项维护状态见
 [维护验收记录](../../docs/maintenance-acceptance-2026-09-11.md)。

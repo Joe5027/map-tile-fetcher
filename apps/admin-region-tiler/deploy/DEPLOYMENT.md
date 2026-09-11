@@ -124,3 +124,12 @@ Docker 的 `.env` 中可以覆盖以下配置；源码或二进制需使用进�
 - 运行、暂停或打包中的任务需要先取消并等待结束。清理失败后可重试。
 - 内置区域文件和仍有其他任务引用的文件受保护；任务生成的区域文件在最后一个引用解除后清理。
 - 升级前的备份、副本验证和历史核对方式见 [修复验收记录](../../../docs/repair-acceptance-2026-09-11.md)。
+
+## 构建及账号维护入口
+
+Windows/Linux 包统一使用 `scripts/build_release.py`，详见仓库
+`docs/build-and-install.md`。可执行文件为 `tiler.exe` / `tiler`，与本目录 systemd 模板一致。
+`tiler --version` 不初始化数据库；旧配置 `app.version` 不覆盖真实构建身份。
+已有用户在账号菜单改密，忘记密码时先停止主服务及全部工作进程，再执行
+`tiler admin reset-password --database /opt/tiler/data/tiler.db --username admin`。
+隐藏终端输入、备份和维护锁规则见 `docs/password-recovery.md`。

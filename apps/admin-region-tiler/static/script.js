@@ -118,8 +118,16 @@ const ADMIN_REGION_PREVIOUS_LEVELS = {
 
 document.addEventListener("DOMContentLoaded", async () => {
     bindEvents();
+    void loadBuildVersion();
     await bootstrap();
 });
+
+async function loadBuildVersion() {
+    const response = await fetchJSON("/api/version", {allowUnauthorized:true});
+    const display = document.getElementById("buildVersion");
+    display.textContent = response.ok ? response.data.version : "unknown";
+    display.title = response.ok ? `${response.data.commit} | ${response.data.builtAt}` : "unknown";
+}
 
 function bindEvents() {
     document.getElementById("openPasswordDialogBtn").addEventListener("click", () => {
