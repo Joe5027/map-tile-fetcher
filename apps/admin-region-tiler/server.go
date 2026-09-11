@@ -135,6 +135,7 @@ type TaskFailureSummaryResponse struct {
 }
 
 type TaskResponse struct {
+	Integrity             IntegrityState             `json:"integrity"`
 	ID                    string                     `json:"id"`
 	ParentID              string                     `json:"parentId,omitempty"`
 	Kind                  string                     `json:"kind"`
@@ -175,17 +176,19 @@ type TaskResponse struct {
 }
 
 type FailureRecordResponse struct {
-	TaskID       string `json:"taskId"`
-	RunID        string `json:"runId"`
-	SourceID     string `json:"sourceId,omitempty"`
-	Z            int    `json:"z"`
-	X            int    `json:"x"`
-	Y            int    `json:"y"`
-	URL          string `json:"url"`
-	ErrorMessage string `json:"errorMessage"`
-	Retryable    bool   `json:"retryable"`
-	Attempt      int    `json:"attempt"`
-	CreatedAt    string `json:"createdAt"`
+	ResolvedAt    int64  `json:"resolvedAt,omitempty"`
+	ResolvedRunID string `json:"resolvedRunId,omitempty"`
+	TaskID        string `json:"taskId"`
+	RunID         string `json:"runId"`
+	SourceID      string `json:"sourceId,omitempty"`
+	Z             int    `json:"z"`
+	X             int    `json:"x"`
+	Y             int    `json:"y"`
+	URL           string `json:"url"`
+	ErrorMessage  string `json:"errorMessage"`
+	Retryable     bool   `json:"retryable"`
+	Attempt       int    `json:"attempt"`
+	CreatedAt     string `json:"createdAt"`
 }
 
 type AuthLoginRequest struct {
@@ -303,6 +306,8 @@ func initServer() {
 		protected.DELETE("/tasks/:id/purge", purgeTask)
 		protected.GET("/tasks/:id/download", downloadTaskArtifact)
 		protected.GET("/tasks/:id/failures", getTaskFailures)
+		protected.POST("/tasks/:id/reconcile", reconcileTask)
+		protected.POST("/tasks/:id/recreate", recreateTask)
 		protected.POST("/tasks/:id/retry-failures", retryTaskFailures)
 
 		protected.GET("/maps", getMaps)
@@ -593,13 +598,16 @@ func currentUser(c *gin.Context) *UserRecord {
 }
 
 func createTask(c *gin.Context) {
-	user := currentUser(c)
-
 	var req CreateTaskRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	createTaskFromRequest(c, req)
+}
+
+func createTaskFromRequest(c *gin.Context, req CreateTaskRequest) {
+	user := currentUser(c)
 
 	plan, children, err := buildTaskRecordsFromRequest(user.ID, req)
 	if err != nil {
@@ -810,7 +818,7 @@ func getTaskFailures(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "task not found"})
 		return
 	}
-	records, err := store.listFailureRecords(plan.ID)
+	records, err := store.listFailureHistory(plan.ID, c.Query("history") == "true")
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load failure records"})
 		return
@@ -818,17 +826,19 @@ func getTaskFailures(c *gin.Context) {
 	response := make([]FailureRecordResponse, 0, len(records))
 	for _, record := range records {
 		response = append(response, FailureRecordResponse{
-			TaskID:       record.TaskID,
-			RunID:        record.RunID,
-			SourceID:     record.SourceID,
-			Z:            record.Z,
-			X:            record.X,
-			Y:            record.Y,
-			URL:          record.URL,
-			ErrorMessage: record.ErrorMessage,
-			Retryable:    record.Retryable,
-			Attempt:      record.Attempt,
-			CreatedAt:    record.CreatedAt.Format(time.RFC3339),
+			ResolvedAt:    record.ResolvedAt,
+			ResolvedRunID: record.ResolvedRunID,
+			TaskID:        record.TaskID,
+			RunID:         record.RunID,
+			SourceID:      record.SourceID,
+			Z:             record.Z,
+			X:             record.X,
+			Y:             record.Y,
+			URL:           record.URL,
+			ErrorMessage:  record.ErrorMessage,
+			Retryable:     record.Retryable,
+			Attempt:       record.Attempt,
+			CreatedAt:     record.CreatedAt.Format(time.RFC3339),
 		})
 	}
 	c.JSON(http.StatusOK, response)
@@ -854,6 +864,10 @@ func retryTaskFailures(c *gin.Context) {
 		return
 	}
 	if err := runtimeManager.RetryFailures(plan); err != nil {
+		if errors.Is(err, errMissingBaseline) {
+			c.JSON(http.StatusConflict, gin.H{"code": "baseline_missing", "error": err.Error()})
+			return
+		}
 		if errors.Is(err, errNoRetryableFailures) {
 			c.JSON(http.StatusConflict, gin.H{"error": "task has no retryable failures"})
 			return
@@ -1347,6 +1361,9 @@ func taskResponseFromRecord(plan *TaskRecord) TaskResponse {
 		RunAt:          plan.RunAt.Format(time.RFC3339),
 		ArtifactStatus: ArtifactNone,
 	}
+	if store != nil {
+		response.Integrity = store.integrityState(plan.ID)
+	}
 
 	minZoom := 100
 	maxZoom := -1
@@ -1370,6 +1387,24 @@ func taskResponseFromRecord(plan *TaskRecord) TaskResponse {
 
 	if plan.Kind == TaskRecordKindGroup {
 		applyGroupSummary(plan, &response)
+		response.Integrity = IntegrityState{Status: "unchecked"}
+		checked := 0
+		for _, child := range response.Children {
+			response.Integrity.Expected += child.Integrity.Expected
+			response.Integrity.Available += child.Integrity.Available
+			response.Integrity.Missing += child.Integrity.Missing
+			if child.Integrity.Status == "complete" {
+				checked++
+			}
+			if child.Integrity.Status == "checking" {
+				response.Integrity.Status = "checking"
+			}
+		}
+		if len(response.Children) > 0 && checked == len(response.Children) {
+			response.Integrity.Status = "complete"
+		} else if response.Integrity.Missing > 0 {
+			response.Integrity.Status = "incomplete"
+		}
 		applyFailureSummary(plan.ID, &response)
 		applyProgressAndArtifact(&response)
 		return response
@@ -1418,13 +1453,10 @@ func applyFailureSummary(planID string, response *TaskResponse) {
 		log.Warnf("failed to load failure summary for task %s: %v", planID, err)
 		return
 	}
-	if summary.Total > response.FailureCount {
-		response.FailureCount = summary.Total
-	}
 	response.RetryableFailureCount = summary.Retryable
 	response.CanRetryFailures = summary.Retryable > 0 && canRetryFailureStatus(TaskRecordStatus(response.Status))
 	response.FailureSummary = TaskFailureSummaryResponse{
-		FailureCount:          response.FailureCount,
+		FailureCount:          summary.Total,
 		RetryableFailureCount: response.RetryableFailureCount,
 		CanRetryFailures:      response.CanRetryFailures,
 	}

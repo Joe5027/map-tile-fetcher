@@ -40,12 +40,13 @@ const maxTileResponseBytes int64 = 12 << 20
 type TaskStatus string
 
 const (
-	TaskPending   TaskStatus = "pending"
-	TaskRunning   TaskStatus = "running"
-	TaskPaused    TaskStatus = "paused"
-	TaskCompleted TaskStatus = "completed"
-	TaskCancelled TaskStatus = "cancelled"
-	TaskFailed    TaskStatus = "failed"
+	TaskPending       TaskStatus = "pending"
+	TaskRunning       TaskStatus = "running"
+	TaskPaused        TaskStatus = "paused"
+	TaskCompleted     TaskStatus = "completed"
+	TaskCancelled     TaskStatus = "cancelled"
+	TaskFailed        TaskStatus = "failed"
+	TaskPartialFailed TaskStatus = "partial_failed"
 )
 
 type TaskOptions struct {
@@ -65,14 +66,15 @@ type TaskOptions struct {
 }
 
 type Task struct {
-	ID          string
-	Name        string
-	Description string
-	File        string
-	Min         int
-	Max         int
-	Layers      []Layer
-	TileMap     TileMap
+	preserveOutput bool
+	ID             string
+	Name           string
+	Description    string
+	File           string
+	Min            int
+	Max            int
+	Layers         []Layer
+	TileMap        TileMap
 
 	Total        int64
 	Current      int64
@@ -627,8 +629,10 @@ func (task *Task) SetupMBTileTables() error {
 	filePath := task.File
 	task.mu.Unlock()
 
-	if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
-		return err
+	if !task.preserveOutput {
+		if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
+			return err
+		}
 	}
 
 	db, err := sql.Open("sqlite", filePath)
@@ -738,8 +742,14 @@ func (task *Task) runSavers() {
 					return
 				}
 				if err := task.saveTile(tile); err != nil {
+					task.recordTileFailure(TileJob{Tile: tile.T, URL: tile.URL}, err, true)
 					task.markProcessed(false, err)
 					log.Errorf("save %v failed: %v", tile.T, err)
+					if errors.Is(err, syscall.ENOSPC) || strings.Contains(strings.ToLower(err.Error()), "disk is full") || strings.Contains(strings.ToLower(err.Error()), "database or disk is full") {
+						task.cancel()
+						task.setError(err)
+						return
+					}
 					continue
 				}
 				task.markProcessed(true, nil)
@@ -768,7 +778,7 @@ func (task *Task) processTile(job TileJob) error {
 		return err
 	}
 
-	td := Tile{T: job.Tile, C: body}
+	td := Tile{T: job.Tile, C: body, URL: job.URL}
 	if task.TileMap.Format == PBF {
 		var buf bytes.Buffer
 		zw := gzip.NewWriter(&buf)
@@ -1200,6 +1210,8 @@ func (task *Task) Run() {
 		task.fail(closeErr)
 	case task.currentCounts().Failure > 0 && task.currentCounts().Success == 0:
 		task.fail(errors.New("task finished with no successful tiles"))
+	case task.currentCounts().Failure > 0:
+		task.finish(TaskPartialFailed, nil)
 	case task.currentStatus() != TaskCancelled:
 		task.finish(TaskCompleted, nil)
 	}

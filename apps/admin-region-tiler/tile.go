@@ -20,8 +20,9 @@ const ZoomMax = 20
 
 // Tile 自定义瓦片存储
 type Tile struct {
-	T maptile.Tile
-	C []byte
+	URL string
+	T   maptile.Tile
+	C   []byte
 }
 
 func (tile Tile) flipY() uint32 {

@@ -123,6 +123,9 @@ func (m *RuntimeManager) startTaskRecordWithTrigger(plan *TaskRecord, triggerMod
 					return err
 				}
 				if summary.Retryable > 0 {
+					if _, err := store.validateRetryBaseline(child); err != nil {
+						return err
+					}
 					eligible = append(eligible, child)
 				}
 			}
@@ -162,6 +165,9 @@ func (m *RuntimeManager) startTaskRecordWithTrigger(plan *TaskRecord, triggerMod
 		}
 		if summary.Retryable == 0 {
 			return errNoRetryableFailures
+		}
+		if _, err := store.validateRetryBaseline(plan); err != nil {
+			return err
 		}
 	}
 
@@ -513,7 +519,7 @@ func buildTaskFromRecord(plan *TaskRecord) (*Task, error) {
 	return buildTaskFromRequest(request)
 }
 
-func zipDirectory(sourceDir, zipPath string, onProgress func(current, total int)) (err error) {
+func zipDirectory(sourceDir, zipPath string, onProgress func(current, total int) error) (err error) {
 	files := make([]string, 0)
 	if err := filepath.Walk(sourceDir, func(path string, info os.FileInfo, walkErr error) error {
 		if walkErr != nil {
@@ -527,7 +533,9 @@ func zipDirectory(sourceDir, zipPath string, onProgress func(current, total int)
 		return err
 	}
 	if onProgress != nil {
-		onProgress(0, len(files))
+		if err := onProgress(0, len(files)); err != nil {
+			return err
+		}
 	}
 	zipFile, err := os.Create(zipPath)
 	if err != nil {
@@ -543,6 +551,7 @@ func zipDirectory(sourceDir, zipPath string, onProgress func(current, total int)
 	}()
 
 	writer := zip.NewWriter(zipFile)
+	defer writer.Close()
 
 	for index, path := range files {
 		_, err := os.Stat(path)
@@ -572,7 +581,9 @@ func zipDirectory(sourceDir, zipPath string, onProgress func(current, total int)
 			return closeErr
 		}
 		if onProgress != nil {
-			onProgress(index+1, len(files))
+			if err := onProgress(index+1, len(files)); err != nil {
+				return err
+			}
 		}
 	}
 	if err := writer.Close(); err != nil {
@@ -591,6 +602,8 @@ func statusToTaskRecordStatus(status TaskStatus) TaskRecordStatus {
 		return TaskRecordCancelled
 	case TaskFailed:
 		return TaskRecordFailed
+	case TaskPartialFailed:
+		return TaskRecordPartialFailed
 	default:
 		return TaskRecordRunning
 	}
@@ -628,7 +641,7 @@ func aggregateGroupStatus(plan *TaskRecord) TaskRecordStatus {
 			running++
 		case TaskRecordPaused:
 			paused++
-		case TaskRecordFailed:
+		case TaskRecordFailed, TaskRecordPartialFailed:
 			failed++
 		case TaskRecordCancelled:
 			cancelled++

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -55,6 +57,15 @@ func runWorkerProcess(taskRecordID, runID string) error {
 		}
 	}
 	if run.TriggerMode == triggerRetryFailures {
+		previous, err := store.validateRetryBaseline(taskRecord)
+		if err != nil {
+			_ = failRunBeforeStart(taskRecord, run, err)
+			return err
+		}
+		if err := copyRetryBaseline(taskRecord, task, previous); err != nil {
+			_ = failRunBeforeStart(taskRecord, run, err)
+			return err
+		}
 		var records []FailureRecord
 		err = retryOnBusy(func() error {
 			var innerErr error
@@ -116,8 +127,24 @@ func runWorkerProcess(taskRecordID, runID string) error {
 		return err
 	}
 
+	state := IntegrityState{Status: "unchecked"}
+	if run.Status == TaskCompleted || run.Status == TaskPartialFailed {
+		state, err = store.inspectOutput(taskRecord, task, run, true)
+		if err != nil {
+			run.Status = TaskFailed
+			run.ErrorMessage = err.Error()
+		}
+		if state.Missing > 0 {
+			run.Status = TaskPartialFailed
+			task.setStatus(TaskPartialFailed)
+		}
+	}
 	if err := prepareArtifactForRun(taskRecord, task, run); err != nil {
 		run.ArtifactStatus = ArtifactFailed
+		run.Status = TaskFailed
+		if errors.Is(err, context.Canceled) {
+			run.Status = TaskCancelled
+		}
 		if run.ErrorMessage == "" {
 			run.ErrorMessage = err.Error()
 		}
@@ -125,7 +152,11 @@ func runWorkerProcess(taskRecordID, runID string) error {
 		run.ArtifactStatus = ArtifactReady
 	}
 
-	if err := retryOnBusy(func() error { return store.finalizeRun(run) }); err != nil {
+	finalize := func() error { return store.finalizeRun(run) }
+	if run.ArtifactStatus == ArtifactReady {
+		finalize = func() error { return store.publishRun(run, state) }
+	}
+	if err := retryOnBusy(finalize); err != nil {
 		return err
 	}
 	if err := retryOnBusy(func() error { return store.updateTaskRecordStatus(taskRecord.ID, statusToTaskRecordStatus(run.Status)) }); err != nil {
@@ -290,7 +321,7 @@ func applyTaskSnapshot(run *TaskRunRecord, task *Task) {
 
 func prepareArtifactForRun(taskRecord *TaskRecord, task *Task, run *TaskRunRecord) error {
 	taskSnapshot := task.snapshot()
-	if taskSnapshot.Status == string(TaskCancelled) || taskSnapshot.Status == string(TaskFailed) {
+	if run.Status == TaskCancelled || run.Status == TaskFailed {
 		return nil
 	}
 	if taskSnapshot.File == "" {
@@ -315,11 +346,19 @@ func prepareArtifactForRun(taskRecord *TaskRecord, task *Task, run *TaskRunRecor
 	zipPath := filepath.Join(artifactDir, "artifact.zip")
 	stagingPath := zipPath + ".partial"
 	defer os.Remove(stagingPath)
-	if err := zipDirectory(taskSnapshot.File, stagingPath, func(current, total int) {
+	if err := zipDirectory(taskSnapshot.File, stagingPath, func(current, total int) error {
+		latest, err := store.getTaskRecordByID(taskRecord.ID)
+		if err != nil {
+			return err
+		}
+		if latest.Status == TaskRecordCancelled {
+			return context.Canceled
+		}
 		run.ArtifactName = fmt.Sprintf("压缩中：%d/%d", current, total)
 		if err := retryOnBusy(func() error { return store.updateRunProgress(run) }); err != nil {
 			log.Warnf("failed to persist archive progress for run %s: %v", run.ID, err)
 		}
+		return nil
 	}); err != nil {
 		return err
 	}
@@ -382,7 +421,7 @@ func finalizeUnexpectedWorkerExit(taskRecord *TaskRecord, run *TaskRunRecord, wa
 	}
 
 	switch refreshed.Status {
-	case TaskCompleted, TaskCancelled, TaskFailed:
+	case TaskCompleted, TaskPartialFailed, TaskCancelled, TaskFailed:
 		return
 	}
 

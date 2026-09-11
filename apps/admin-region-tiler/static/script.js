@@ -2597,6 +2597,8 @@ function renderGroupTask(task) {
                                 <button type="button" data-task-action="cancel" data-task-id="${task.id}" data-task-status="${task.status}">取消全部</button>
                                 ${canRetryFailures(task) ? `<button type="button" data-task-action="retryFailures" data-task-id="${task.id}" data-task-status="${task.status}">重试失败瓦片</button>` : ""}
                                 <button type="button" data-task-action="delete" data-task-id="${task.id}" data-task-status="${task.status}">删除任务</button>
+                                <button type="button" data-task-action="reconcile" data-task-id="${task.id}">核对本地产物</button>
+                                <button type="button" data-task-action="recreate" data-task-id="${task.id}">重新创建完整任务</button>
                             </div>
                         </div>
                         ${icon("chevron-down", "task-chevron")}
@@ -2671,6 +2673,8 @@ function renderStandaloneTask(task) {
                                 <button type="button" data-task-action="cancel" data-task-id="${task.id}" data-task-status="${task.status}">取消任务</button>
                                 ${canRetryFailures(task) ? `<button type="button" data-task-action="retryFailures" data-task-id="${task.id}" data-task-status="${task.status}">重试失败瓦片</button>` : ""}
                                 <button type="button" data-task-action="delete" data-task-id="${task.id}" data-task-status="${task.status}">删除任务</button>
+                                <button type="button" data-task-action="reconcile" data-task-id="${task.id}">核对本地产物</button>
+                                <button type="button" data-task-action="recreate" data-task-id="${task.id}">重新创建完整任务</button>
                             </div>
                         </div>
                         ${icon("chevron-down", "task-chevron")}
@@ -2685,6 +2689,7 @@ function renderStandaloneTask(task) {
                     </div>
                 ` : ""}
                 ${renderStandaloneDetail(task)}
+                ${renderIntegrity(task)}
             </div>
         </details>
     `;
@@ -2762,6 +2767,7 @@ function renderChildTask(task) {
                     </div>
                 ` : ""}
                 <div class="child-task__footer">
+                    ${renderIntegrity(task)}
                     <span class="artifact-text">${task.errorMessage || `开始：${task.startedAt ? formatDate(task.startedAt) : "-"} ｜ 完成：${task.finishedAt ? formatDate(task.finishedAt) : "-"}`}</span>
                     ${artifactAction}
                 </div>
@@ -2873,6 +2879,12 @@ function escapeAttribute(value) {
 function managedDownloadURL(task) {
     const expected = `/api/tasks/${encodeURIComponent(String(task.id || ""))}/download`;
     return task.downloadUrl === expected ? expected : "";
+}
+
+function renderIntegrity(task) {
+    const state = task.integrity || {};
+    const labels = { unchecked: "未核对", checking: "核对中", complete: "完整", incomplete: "存在缺口", interrupted: "核对中断" };
+    return `<span class="artifact-text">累计产物：${labels[state.status] || "未核对"} ${Number(state.available) || 0}/${Number(state.expected) || 0}${state.error ? `；${escapeHTML(state.error)}` : ""}</span>`;
 }
 
 function renderWarningPill(text) {
@@ -2996,6 +3008,14 @@ async function handleTaskAction(action, taskId, status) {
         break;
     case "delete":
         await purgeTask(taskId, status);
+        break;
+    case "reconcile":
+        await mutateTask(`/api/tasks/${encodeURIComponent(taskId)}/reconcile`, "POST");
+        break;
+    case "recreate":
+        if (window.confirm("重新创建将按原范围和地图源发起完整下载，保留旧任务及旧产物。确定继续吗？")) {
+            await mutateTask(`/api/tasks/${encodeURIComponent(taskId)}/recreate`, "POST");
+        }
         break;
     default:
         break;
@@ -3216,6 +3236,10 @@ async function mutateTask(url, method = "PUT", silent = false) {
     const response = await fetchJSON(url, { method });
     if (!response.ok) {
         alert(response.data.error || "任务操作失败");
+        if (response.data.code === "baseline_missing") {
+            const id = url.match(/^\/api\/tasks\/([^/]+)\/retry-failures$/)?.[1];
+            if (id) await handleTaskAction("recreate", decodeURIComponent(id));
+        }
         return;
     }
     if (!silent) {

@@ -131,17 +131,19 @@ type TaskRunRecord struct {
 }
 
 type FailureRecord struct {
-	TaskID       string
-	RunID        string
-	SourceID     string
-	Z            int
-	X            int
-	Y            int
-	URL          string
-	ErrorMessage string
-	Retryable    bool
-	Attempt      int
-	CreatedAt    time.Time
+	ResolvedAt    int64
+	ResolvedRunID string
+	TaskID        string
+	RunID         string
+	SourceID      string
+	Z             int
+	X             int
+	Y             int
+	URL           string
+	ErrorMessage  string
+	Retryable     bool
+	Attempt       int
+	CreatedAt     time.Time
 }
 
 type FailureSummary struct {
@@ -339,6 +341,9 @@ func (s *SQLiteStore) initSchema() error {
 	if err := s.ensureTaskRunColumns(); err != nil {
 		return err
 	}
+	if err := s.initIntegritySchema(); err != nil {
+		return err
+	}
 	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_plans_parent_id ON plans(parent_id);`); err != nil {
 		return err
 	}
@@ -397,6 +402,8 @@ func (s *SQLiteStore) tableColumnSet(table string) (map[string]bool, error) {
 		statement = `PRAGMA table_info(plans)`
 	case "task_runs":
 		statement = `PRAGMA table_info(task_runs)`
+	case "failures":
+		statement = `PRAGMA table_info(failures)`
 	default:
 		return nil, fmt.Errorf("unsupported table for column introspection: %s", table)
 	}
@@ -705,17 +712,27 @@ func (s *SQLiteStore) replaceFailureRecords(run *TaskRunRecord, records []TileFa
 }
 
 func (s *SQLiteStore) listFailureRecords(planID string) ([]FailureRecord, error) {
+	return s.listFailureHistory(planID, false)
+}
+
+func (s *SQLiteStore) listFailureHistory(planID string, history bool) ([]FailureRecord, error) {
 	taskID, sourceID, err := s.failureRecordScope(planID)
 	if err != nil {
 		return nil, err
 	}
-	query := `SELECT task_id, run_id, source_id, z, x, y, url, error_message, retryable, attempt, created_at
+	query := `SELECT task_id, run_id, source_id, z, x, y, url, error_message, retryable, attempt, created_at, resolved_at, resolved_run_id
 	   FROM failures
 	  WHERE task_id = ?`
 	args := []any{taskID}
+	if !history {
+		query += ` AND resolved_at = 0`
+	}
 	if sourceID != "" {
 		query += ` AND source_id = ?`
 		args = append(args, sourceID)
+	}
+	if !history {
+		query += ` GROUP BY source_id,z,x,y,url`
 	}
 	query += ` ORDER BY created_at DESC, id DESC LIMIT 1000`
 
@@ -742,6 +759,8 @@ func (s *SQLiteStore) listFailureRecords(planID string) ([]FailureRecord, error)
 			&retryable,
 			&record.Attempt,
 			&createdAt,
+			&record.ResolvedAt,
+			&record.ResolvedRunID,
 		); err != nil {
 			return nil, err
 		}
@@ -759,13 +778,13 @@ func (s *SQLiteStore) listRetryableFailureRecords(planID string) ([]FailureRecor
 	}
 	query := `SELECT task_id, run_id, source_id, z, x, y, url, error_message, retryable, attempt, created_at
 	   FROM failures
-	  WHERE task_id = ? AND retryable = 1`
+	  WHERE task_id = ? AND retryable = 1 AND resolved_at = 0`
 	args := []any{taskID}
 	if sourceID != "" {
 		query += ` AND source_id = ?`
 		args = append(args, sourceID)
 	}
-	query += ` ORDER BY created_at DESC, id DESC`
+	query += ` GROUP BY source_id,z,x,y,url ORDER BY created_at DESC, id DESC`
 
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
@@ -805,9 +824,9 @@ func (s *SQLiteStore) failureSummary(planID string) (FailureSummary, error) {
 	if err != nil {
 		return FailureSummary{}, err
 	}
-	query := `SELECT COUNT(1), COALESCE(SUM(CASE WHEN retryable = 1 THEN 1 ELSE 0 END), 0)
+	query := `SELECT COUNT(1), COALESCE(SUM(retryable),0) FROM (SELECT MAX(retryable) AS retryable
 	   FROM failures
-	  WHERE task_id = ?`
+	  WHERE task_id = ? AND resolved_at = 0`
 	args := []any{taskID}
 	if sourceID != "" {
 		query += ` AND source_id = ?`
@@ -815,6 +834,7 @@ func (s *SQLiteStore) failureSummary(planID string) (FailureSummary, error) {
 	}
 
 	var summary FailureSummary
+	query += ` GROUP BY source_id,z,x,y,url)`
 	if err := s.db.QueryRow(query, args...).Scan(&summary.Total, &summary.Retryable); err != nil {
 		return FailureSummary{}, err
 	}
@@ -939,11 +959,15 @@ func (s *SQLiteStore) seedDefaultUser() error {
 }
 
 func (s *SQLiteStore) recoverInterruptedTaskRecords() error {
+	if err := s.recoverPublications(); err != nil {
+		return err
+	}
 	now := time.Now().Unix()
 	if _, err := s.db.Exec(
 		`UPDATE task_runs
 		 SET status = ?, error_message = ?, finished_at = ?, updated_at = ?
-		 WHERE status = ?`,
+		 , artifact_status = CASE WHEN artifact_status = 'packing' THEN 'failed' ELSE artifact_status END
+		 WHERE status IN (?, 'paused') OR artifact_status = 'packing'`,
 		string(TaskFailed),
 		"service restarted before task completed",
 		now,
@@ -956,8 +980,8 @@ func (s *SQLiteStore) recoverInterruptedTaskRecords() error {
 	_, err := s.db.Exec(
 		`UPDATE plans
 		 SET status = ?, updated_at = ?
-		 WHERE status = ?`,
-		string(TaskRecordScheduled),
+		 WHERE status IN (?, 'paused')`,
+		string(TaskRecordFailed),
 		now,
 		string(TaskRecordRunning),
 	)
@@ -1321,7 +1345,14 @@ func (s *SQLiteStore) finalizeRun(run *TaskRunRecord) error {
 		return err
 	}
 	defer tx.Rollback()
-	_, err = tx.Exec(
+	if err := s.finalizeRunWithExec(tx, run); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *SQLiteStore) finalizeRunWithExec(execer sqlExecer, run *TaskRunRecord) error {
+	_, err := execer.Exec(
 		`UPDATE task_runs
 		    SET status = ?, output_path = ?, artifact_path = ?, artifact_name = ?, artifact_status = ?,
 		        total = ?, current = ?, success_count = ?, failure_count = ?, error_message = ?,
@@ -1345,10 +1376,7 @@ func (s *SQLiteStore) finalizeRun(run *TaskRunRecord) error {
 	if err != nil {
 		return err
 	}
-	if err := s.upsertArtifactWithExec(tx, run); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return s.upsertArtifactWithExec(execer, run)
 }
 
 func (s *SQLiteStore) getRun(runID string) (*TaskRunRecord, error) {
@@ -1367,6 +1395,14 @@ func (s *SQLiteStore) purgeTaskRecord(planID string) error {
 		return err
 	}
 	defer tx.Rollback()
+	for _, table := range []string{"run_coverage", "pending_publications"} {
+		if _, err := tx.Exec(`DELETE FROM `+table+` WHERE run_id IN (SELECT id FROM task_runs WHERE plan_id IN (SELECT id FROM plans WHERE id = ? OR parent_id = ?))`, planID, planID); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(`DELETE FROM task_integrity WHERE plan_id IN (SELECT id FROM plans WHERE id = ? OR parent_id = ?)`, planID, planID); err != nil {
+		return err
+	}
 
 	if _, err := tx.Exec(`DELETE FROM artifacts WHERE run_id IN (SELECT id FROM task_runs WHERE plan_id IN (SELECT id FROM plans WHERE id = ? OR parent_id = ?))`, planID, planID); err != nil {
 		return err
