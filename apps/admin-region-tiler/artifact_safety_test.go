@@ -228,3 +228,29 @@ func TestPurgeProtectsFileInsideSurvivingLegacyTree(t *testing.T) {
 		t.Fatalf("deleted a file belonging to a surviving legacy tree: %v", err)
 	}
 }
+
+func TestGroupPurgeRemovesChildCleanupManifests(t *testing.T) {
+	useTestStore(t)
+	setTestOutput(t)
+	group := storedBBoxTask(t, "cleanup-group", "")
+	group.Kind = TaskRecordKindGroup
+	if _, err := store.db.Exec(`UPDATE plans SET kind='group' WHERE id=?`, group.ID); err != nil {
+		t.Fatal(err)
+	}
+	child := storedBBoxTask(t, "cleanup-child", group.ID)
+	if _, err := store.db.Exec(`INSERT INTO task_deletions(plan_id) VALUES(?)`, child.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`INSERT INTO deletion_paths(plan_id,path,kind,done) VALUES(?,'already-cleaned','output',1)`, child.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewRuntimeManager().Purge(group); err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range []string{"task_deletions", "deletion_paths"} {
+		var count int
+		if err := store.db.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&count); err != nil || count != 0 {
+			t.Fatalf("orphaned %s: %d %v", table, count, err)
+		}
+	}
+}

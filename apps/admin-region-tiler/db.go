@@ -1437,10 +1437,10 @@ func (s *SQLiteStore) purgeTaskRecord(planID string) error {
 	if _, err := tx.Exec(`DELETE FROM task_runs WHERE plan_id IN (SELECT id FROM plans WHERE id = ? OR parent_id = ?)`, planID, planID); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`DELETE FROM deletion_paths WHERE plan_id = ?`, planID); err != nil {
+	if _, err := tx.Exec(`DELETE FROM deletion_paths WHERE plan_id IN (SELECT id FROM plans WHERE id=? OR parent_id=?)`, planID, planID); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`DELETE FROM task_deletions WHERE plan_id = ?`, planID); err != nil {
+	if _, err := tx.Exec(`DELETE FROM task_deletions WHERE plan_id IN (SELECT id FROM plans WHERE id=? OR parent_id=?)`, planID, planID); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(`DELETE FROM tasks WHERE id = ? OR parent_id = ?`, planID, planID); err != nil {
