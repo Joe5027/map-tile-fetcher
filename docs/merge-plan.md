@@ -44,9 +44,13 @@ Keep `apps/admin-region-tiler` as the base for:
 
 ## Branch Convergence
 
-`main` is the only long-term branch. The full repair delivery uses existing
-PR #3 and `agent/audit-hardening`, with validated bilingual commits per batch.
-Keep strict required checks (`Commit Message`, `Admin Region Tiler`) enabled.
-Merge only the checked PR head with a complete bilingual merge message, wait
-for the resulting `main` CI, then remove the repair branch and synchronize the
-local checkout. Preserve historical CI failures and commit history.
+`main` is the only long-term branch. PR #3 was merged as `8b0933b`; its main CI
+passed and `agent/audit-hardening` was deleted. README follow-up PR #4 was merged
+as `37cfe7c`, with main CI passing and its temporary branch removed.
+
+For future batches, keep strict required checks (`Commit Message`,
+`Admin Region Tiler`) enabled. Merge only the checked PR head with a complete
+bilingual merge message, wait for the resulting `main` CI, then remove that
+temporary branch and synchronize the local checkout. Preserve historical CI
+failures and commit history. Current cleanup findings are tracked in
+[the maintenance audit](maintenance-audit-2026-09-11.md).

@@ -1,3 +1,3 @@
-// Package downloader will own tile enumeration, fetching, retry, throttling,
-// and file or MBTiles writes for unified task runs.
+// Package downloader provides bounding-box tile math shared by validation and
+// enumeration. Fetching and output writes remain in the main application.
 package downloader

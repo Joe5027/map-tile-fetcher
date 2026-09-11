@@ -31,13 +31,12 @@ Out of scope unless the user explicitly changes direction:
     manager, and HTTP server
   - supports worker mode via runtime flags/environment
 - `internal/`
-  - package boundaries for API, auth, config, area selection, planning,
-    downloading, artifacts, and static Web helpers
+  - the two implemented packages shared by the main application
   - `internal/area` validates bbox and region area selectors plus zoom ranges
-  - `internal/planner` normalizes unified task requests before persistence or
-    execution
   - `internal/downloader` contains bbox tile math shared by API validation and
     range UI estimates
+  - task normalization, authentication and artifact management remain in the
+    main package; unused extraction scaffolding has been removed
 - `server.go`
   - Gin routes for login, current user, task CRUD, task control, artifact
     download, failure records, map source config, region catalog, and GeoJSON
@@ -142,8 +141,10 @@ See `docs/range-migration.md` for the historical note.
 - Source-of-truth license: Apache License 2.0 in `LICENSE` and `README.md`.
 - Safe token placeholders include `YOUR_TIANDITU_TOKEN`, `YOUR_MAPBOX_TOKEN`,
   and `YOUR_MAPBOX_SKU`.
-- `adminmap` is a documented development default password; production must use
-  `.env` overrides.
+- `adminmap` is a documented development default password. Configure initial
+  production credentials before the first start through process environment
+  variables or local configuration; Docker injects `.env`. Existing users are
+  not reset by changing initial-user settings.
 - Generated or local-only paths stay out of Git: `.env`, `data/`, `output/`,
   `tiles/`, `bin/`, `obj/`, `publish*/`, logs, binaries, and archives.
 - Browser UI smoke validation uses an optional local or global browser
@@ -163,6 +164,7 @@ See `docs/range-migration.md` for the historical note.
 | `docs/knowledge-graph.md` | Durable relationship graph | When recovering context or avoiding broad re-exploration |
 | `docs/long-term-memory.md` | Handoff-style restart state | Long-running, merge, release, or AI-control work |
 | `docs/automation-guardrails.md` | Read-only recurring review constraints | Automation prompt creation or review |
+| `docs/maintenance-audit-2026-09-11.md` | Cleanup decisions and remaining maintenance issues | Before deleting more files or planning follow-up fixes |
 
 ## Context Loading Order
 

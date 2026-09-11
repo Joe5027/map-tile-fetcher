@@ -11,8 +11,12 @@
 
 ## Docker 部署
 
+首次启动前，复制 `.env.example` 为 `.env` 并在本地编辑
+`AUTH_DEFAULT_USERNAME`、`AUTH_DEFAULT_PASSWORD`，保持登录启用。
+
 ```bash
 cp .env.example .env
+# 编辑 .env 中的初始账号后再启动
 docker compose up -d --build
 ```
 
@@ -36,8 +40,11 @@ useradd -r -s /usr/sbin/nologin tiler
 chown -R tiler:tiler /opt/tiler
 ```
 
-4. 安装 `deploy/systemd/tiler.service`
-5. 执行：
+4. 首次启动前，在本地 `conf.toml` 的 `[auth]` 中设置初始用户名和密码，并限制
+   配置文件读取权限。二进制不会自动读取 `.env`；当前 systemd 示例也未配置
+   `EnvironmentFile`，仅复制 `.env` 不会生效。
+5. 安装 `deploy/systemd/tiler.service`
+6. 执行：
 
 ```bash
 systemctl daemon-reload
@@ -59,20 +66,26 @@ systemctl status tiler
 nginx -t && systemctl reload nginx
 ```
 
-## 首次登录
+## 初始账号
 
 - 用户名：`admin`
 - 密码：`adminmap`
 
-建议上线后第一时间修改默认密码。
+以上仅为开发默认值，部署时需在首次启动前替换。应用没有已实现的改密页面或接口，
+修改 `AUTH_DEFAULT_PASSWORD` 不会重置数据库里已有同名用户的密码；不要通过删除
+数据库来改密，以免丢失任务记录。已有默认账号的处置需单独安排。
 
-`.env` 中可以覆盖：
+Docker 的 `.env` 中可以覆盖以下配置；源码或二进制需使用进程环境变量或
+`conf.toml`（`HOST_PORT` 仅用于 Docker 端口映射）：
 
 - `HOST_PORT`
 - `APP_PORT`
 - `APP_DATABASE`
 - `AUTH_DEFAULT_USERNAME`
 - `AUTH_DEFAULT_PASSWORD`
+- `TASK_MAX_TILES`
+- `TASK_MAX_ACTIVE`
+- `TASK_WORKERS`
 
 ## 数据持久化目录
 
@@ -107,8 +120,7 @@ nginx -t && systemctl reload nginx
 ## 删除任务说明
 
 - `取消` 只改变任务状态，不会删除记录
-- `删除` 会彻底删除：
-  - `plans` 中的任务记录
-  - `task_runs` 中的运行记录
-  - 该任务对应的产物文件与输出目录
-- `删除` 不会删除共享的 `geojson/` 区域文件
+- `删除` 会清理任务记录、历史运行、产物、失败记录和关联元数据；父任务包括全部子任务。
+- 运行、暂停或打包中的任务需要先取消并等待结束。清理失败后可重试。
+- 内置区域文件和仍有其他任务引用的文件受保护；任务生成的区域文件在最后一个引用解除后清理。
+- 升级前的备份、副本验证和历史核对方式见 [修复验收记录](../../../docs/repair-acceptance-2026-09-11.md)。
