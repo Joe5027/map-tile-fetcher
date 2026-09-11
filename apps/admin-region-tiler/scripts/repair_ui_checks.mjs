@@ -1,12 +1,22 @@
 import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
+import { execFileSync } from "node:child_process";
 
 export async function runRepairUIChecks(page) {
   const screenshots=resolve("tmp/repair-ui");
   await mkdir(screenshots,{recursive:true});
   await page.evaluate(()=>stopTaskPolling());
   const task={id:"ui-task",kind:"single",name:'长名称'.repeat(30)+'<img src=x onerror="window.injected=1">',status:"completed",artifactStatus:"ready",downloadUrl:"/api/tasks/ui-task/download",total:4,current:4,successCount:4,integrity:{status:"complete",available:4,expected:4},effectiveWorkers:3,effectiveTimeDelay:80};
+  if (process.env.TILER_REPAIR_BASELINE) {
+    const oldCSS=execFileSync("git",["show",`${process.env.TILER_REPAIR_BASELINE}:apps/admin-region-tiler/static/styles.css`],{encoding:"utf8"});
+    await page.setViewportSize({width:390,height:1000});
+    const style=await page.addStyleTag({content:oldCSS});
+    const oldWidth=await page.evaluate(()=>document.documentElement.scrollWidth);
+    await style.evaluate(node=>node.remove());
+    assert(oldWidth>392,`baseline did not reproduce mobile overflow: ${oldWidth}`);
+    console.log(`Baseline mobile defect reproduced: 390px viewport, ${oldWidth}px document`);
+  }
   for(const width of [390,768,1440]) {
     await page.setViewportSize({width,height:1000});
     for(const mode of ["region","bbox","tasks"]) {
