@@ -35,8 +35,10 @@ go run .
 - 用户名：`admin`
 - 密码：`adminmap`
 
-可信本地环境可设置 `AUTH_ENABLED=false` 免登录。生产部署应保持登录启用，并通过
-`.env` 覆盖默认账号。
+可信本地环境可设置 `AUTH_ENABLED=false` 免登录。首次用于生产前应保持登录启用，
+通过 `conf.toml` 或进程环境变量 `AUTH_DEFAULT_USERNAME`、`AUTH_DEFAULT_PASSWORD`
+设置初始账号。源码和二进制启动不会自动加载 `.env`；下方 Docker Compose 或
+`docker run --env-file .env` 会注入该文件。修改初始账号配置不会重置已有同名用户的密码。
 
 ## Docker 镜像
 

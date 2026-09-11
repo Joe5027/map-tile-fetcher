@@ -19,6 +19,9 @@
 - **行政区划/GeoJSON 下载**：按内置区域目录或 GeoJSON 层级创建下载计划。
 - **多地图源配置**：支持天地图、Mapbox、OSM、Google 样例和自定义瓦片 URL。
 - **任务和产物管理**：独立任务页查看历史、进度、失败记录，并下载 ZIP/MBTiles。
+- **资源限制和排队**：默认每父任务全部图层合计最多 100 万瓦片，同时运行最多 3 个子任务，其余持久排队；暂停任务继续占用执行槽。
+- **完整重试和安全删除**：按任务及运行隔离产物，补齐失败瓦片后发布累计结果，删除时清理任务记录及生成文件。
+- **任务区域预览**：独立展示完整区域、切换层级，自动续期预览凭证；支持移动端创建和任务操作。
 
 ### 适合谁
 
@@ -28,7 +31,7 @@
 
 ### 三分钟启动
 
-源码运行：
+源码运行需要 Go 1.25 或更高版本。在仓库应用目录启动，确保能读取 `conf.toml`、`static/` 和 `geojson/`：
 
 ```powershell
 git clone https://github.com/Joe5027/map-tile-fetcher.git
@@ -43,7 +46,10 @@ go run .
 - 用户名：`admin`
 - 密码：`adminmap`
 
-生产部署前请复制 `.env.example` 为 `.env`，并修改默认账号和密码。
+首次用于生产前，保持登录启用并设置自己的初始账号和密码。源码或二进制启动读取
+`conf.toml` 和进程环境变量（如 `AUTH_DEFAULT_USERNAME`、`AUTH_DEFAULT_PASSWORD`），
+不会自动加载 `.env`；Docker Compose 和下方 `docker run --env-file .env` 才会注入该文件。
+这些账号配置用于初始化用户，修改配置不会重置数据库中已有同名用户的密码。
 
 ### Docker 镜像和部署
 
@@ -90,6 +96,9 @@ Docker 配置项：
 | `APP_DATABASE` | `tiler.db` | SQLite 数据库文件名，保存在 `data/`。 |
 | `AUTH_DEFAULT_USERNAME` | `admin` | 默认登录用户名，生产部署必须修改。 |
 | `AUTH_DEFAULT_PASSWORD` | `adminmap` | 默认登录密码，生产部署必须修改。 |
+| `TASK_MAX_TILES` | `1000000` | 每父任务所有图层累计瓦片预算；区域按包围范围保守估算。 |
+| `TASK_MAX_ACTIVE` | `3` | 同时运行的子任务上限，暂停任务继续占槽，其余排队。 |
+| `TASK_WORKERS` | `3` | 默认请求线程数；用户可选 1～50，受地图来源并发上限约束。 |
 | `TZ` | `Asia/Shanghai` | 容器时区。 |
 
 Compose 会持久化 `data/`、`output/`、`geojson/` 和 `conf.toml`。如果端口被占用，把 `.env` 里的 `HOST_PORT=8081` 改成其他端口，例如 `HOST_PORT=18081`。
@@ -106,7 +115,22 @@ Compose 会持久化 `data/`、`output/`、`geojson/` 和 `conf.toml`。如果�
 
 ![artifact download](docs/assets/artifact-download.png)
 
-`我的任务` Tab 独立展示历史任务、运行状态、进度、失败数和产物入口。任务完成后可以下载 ZIP 文件树或 MBTiles；失败记录会持久化，便于调整并发、请求间隔或代理后重试。
+`我的任务` Tab 展示排队状态、本次运行进度、累计完整度、未解决失败数和产物入口。
+实际线程数取用户设置与来源 `worker_count` 上限的较小值；请求间隔不低于用户设置
+和来源最低间隔，页面显示生效参数。
+
+### 重试、删除和历史任务
+
+- **失败重试**：先复制旧成功结果到新运行，再补齐未解决瓦片，重新生成累计 ZIP/MBTiles。
+  同名任务及重复运行互不覆盖；新产物发布成功前继续提供上一份可用下载，失败或取消不切换入口。
+  重试仍有失败时会显示缺口，不会标为全部成功。
+- **彻底删除**：删除父任务会清理所有子任务、历史运行、产物及关联记录；内置区域文件和仍被
+  其他任务引用的区域文件受保护。运行、暂停或打包中的任务需先取消并等待结束；清理失败可重试。
+- **历史核对**：通过显式核对动作检查本地文件树、ZIP 或 MBTiles，不自动下载瓦片。
+  旧成功瓦片缺失时，失败重试返回 `409 baseline_missing`，需主动选择“重新创建完整任务”。
+
+升级前备份数据库和输出，并先用隔离副本验证。迁移方式、磁盘空间要求和各项回归证据见
+[修复验收记录](docs/repair-acceptance-2026-09-11.md)。
 
 ### 配置地图源
 
@@ -122,12 +146,23 @@ Compose 会持久化 `data/`、`output/`、`geojson/` 和 `conf.toml`。如果�
 
 ### 发布和安装
 
-- GitHub Release：[`v0.1.0`](https://github.com/Joe5027/map-tile-fetcher/releases/tag/v0.1.0)
-- 发布说明：[`docs/releases/v0.1.0.md`](docs/releases/v0.1.0.md)
+- 已发布预览版：[`v0.3.0`](https://github.com/Joe5027/map-tile-fetcher/releases/tag/v0.3.0)（发布说明及下载包）
+- 历史发布说明：[`docs/releases/v0.1.0.md`](docs/releases/v0.1.0.md)
 - 用户手册：[`docs/user-manual-zh.md`](docs/user-manual-zh.md)
 - English manual: [`docs/user-manual.md`](docs/user-manual.md)
 
+本 README 描述当前 `main` 的行为；上述预览版早于本次修复，不包含全部新行为。
+需要本次修复时，请使用当前 `main` 源码运行或构建 Docker 镜像。
+
 如果使用二进制发布包，解压后保持 `conf.toml`、`static/`、`geojson/` 和可执行文件在同一目录，再启动程序。
+
+### 开发验证
+
+在应用目录执行 `go test ./...`、`go vet ./...` 和 `node scripts/release_preflight.mjs`。
+浏览器检查需要 Node.js、Playwright 及 Chromium；命令示例见下方 [Developer Validation](#developer-validation)。
+Go 集成测试贯通真实 API、临时 SQLite、正常工作进程与本地模拟瓦片服务，检查任务控制和最终产物。
+发布预检还覆盖渲染安全、390/768/1440px 页面、预览续期和登录失效后的重新登录；
+Linux CI 额外执行 `go test -race ./...`。详见 [验证链路](docs/validation-chain.md)。
 
 ## English Guide
 
@@ -139,6 +174,9 @@ Map Tile Fetcher is a self-hosted Go Web app for downloading authorized map tile
 - **GeoJSON/admin-region downloads**: create tasks from built-in region catalogs or GeoJSON files.
 - **Configurable map sources**: Tianditu, Mapbox, OSM, Google examples, and custom tile URLs.
 - **Task and artifact management**: view task history, progress, failures, retries, and download ZIP/MBTiles artifacts.
+- **Resource limits and queues**: by default, each parent task has a combined budget of 1,000,000 tiles across all layers. Up to three children run at once; others remain in a persistent queue. Paused children retain their slots.
+- **Cumulative retries and safe deletion**: isolate artifacts by task and run, publish cumulative results after retrying failed tiles, and delete task records together with generated files.
+- **Task area previews**: view complete areas on an independent overlay, switch levels, and renew preview credentials automatically; create and manage tasks on mobile screens.
 
 ### Who It Is For
 
@@ -148,7 +186,7 @@ Map Tile Fetcher is a self-hosted Go Web app for downloading authorized map tile
 
 ### Quick Start
 
-Run from source:
+Source builds require Go 1.25 or later. Start in the application directory so the app can read `conf.toml`, `static/`, and `geojson/`:
 
 ```powershell
 git clone https://github.com/Joe5027/map-tile-fetcher.git
@@ -163,7 +201,11 @@ Development login:
 - Username: `admin`
 - Password: `adminmap`
 
-Before production deployment, copy `.env.example` to `.env` and change the default credentials.
+Before first production use, keep login enabled and set your own initial credentials.
+Source and binary runs read `conf.toml` and process environment variables such as
+`AUTH_DEFAULT_USERNAME` and `AUTH_DEFAULT_PASSWORD`; they do not load `.env` automatically.
+Docker Compose and the `docker run --env-file .env` command below inject that file.
+These settings initialize users; changing them does not reset an existing user's password.
 
 ### Docker Image And Deployment
 
@@ -219,6 +261,9 @@ Docker environment variables:
 | `APP_DATABASE` | `tiler.db` | SQLite database file stored under `data/`. |
 | `AUTH_DEFAULT_USERNAME` | `admin` | Default login username. Change it for production. |
 | `AUTH_DEFAULT_PASSWORD` | `adminmap` | Default login password. Change it for production. |
+| `TASK_MAX_TILES` | `1000000` | Combined tile budget per parent across all layers; regions use a conservative bounding-range estimate. |
+| `TASK_MAX_ACTIVE` | `3` | Maximum running children. Paused children retain slots; others queue. |
+| `TASK_WORKERS` | `3` | Default request concurrency. Users can choose 1-50, subject to the source concurrency cap. |
 | `TZ` | `Asia/Shanghai` | Container timezone. |
 
 Docker Compose persists `data/`, `output/`, `geojson/`, and `conf.toml`. If port `8081` is already in use, change `HOST_PORT=8081` in `.env`, for example to `HOST_PORT=18081`.
@@ -230,6 +275,28 @@ Docker Compose persists `data/`, `output/`, `geojson/`, and `conf.toml`. If port
 3. Enter only tokens for services that you are authorized to use, or choose a custom source that does not need a token.
 4. Set concurrency, request interval, artifact format, and schedule.
 5. After task creation, switch to the `My Tasks` tab to track progress and download artifacts.
+
+The task view separates queue status, current-run progress, cumulative completeness,
+unresolved failures, and published downloads. Effective concurrency is the smaller
+of the requested value and the source's `worker_count` cap. The request interval
+is at least both the user setting and the source minimum; the UI shows the effective values.
+
+### Retries, Deletion, And Legacy Tasks
+
+- **Retry failures**: copy previously successful tiles into a new run, fetch unresolved tiles,
+  then rebuild cumulative ZIP/MBTiles output. Identically named tasks and repeated runs do not
+  overwrite one another. The previous download remains available until publication succeeds;
+  failure or cancellation does not switch it. Remaining failures are reported as gaps.
+- **Delete permanently**: deleting a parent removes its children, historical runs, artifacts,
+  and related records. Built-in area files and files still referenced by other tasks are protected.
+  Cancel running, paused, or packing tasks and wait for them to stop before deletion. Failed cleanup can be retried.
+- **Reconcile legacy output**: explicitly check existing file trees, ZIPs, or MBTiles without
+  downloading tiles. When previously successful tiles are missing, retries return
+  `409 baseline_missing`; use the explicit full-task recreation action to download again.
+
+Back up the database and output before upgrading and validate an isolated copy first.
+See the [repair acceptance record](docs/repair-acceptance-2026-09-11.md) for migration,
+disk-space requirements, and regression evidence.
 
 ### Map Source Configuration
 
@@ -245,23 +312,44 @@ Real tokens should stay in local `.env`, local config, or your deployment secret
 
 ### Release And Install
 
-- GitHub Release: [`v0.1.0`](https://github.com/Joe5027/map-tile-fetcher/releases/tag/v0.1.0)
-- Release notes: [`docs/releases/v0.1.0.md`](docs/releases/v0.1.0.md)
+- Published preview: [`v0.3.0`](https://github.com/Joe5027/map-tile-fetcher/releases/tag/v0.3.0) (release notes and downloads)
+- Historical release notes: [`docs/releases/v0.1.0.md`](docs/releases/v0.1.0.md)
 - Chinese manual: [`docs/user-manual-zh.md`](docs/user-manual-zh.md)
 - English manual: [`docs/user-manual.md`](docs/user-manual.md)
+
+This README describes the current `main` branch. The preview above predates these repairs
+and does not include all current behavior. Run or build a Docker image from current `main`
+to use the repairs.
 
 For binary release packages, keep the executable, `conf.toml`, `static/`, and `geojson/` in the same directory before starting the app.
 
 ### Developer Validation
 
+In addition to Go, browser checks require Node.js, Playwright, and Chromium.
+Install them once if they are not already available:
+
+```powershell
+npm install -g playwright
+npx playwright install chromium
+```
+
+Then run:
+
 ```powershell
 cd apps\admin-region-tiler
 go test ./...
+go vet ./...
 node --check .\static\script.js
 node .\scripts\release_preflight.mjs
 ```
 
-The release preflight runs Go tests, JavaScript checks, browser UI smoke tests, sensitive-value scanning, and tracked generated-file scanning.
+Go integration tests exercise real APIs, temporary SQLite databases, ordinary worker
+processes, and a local tile fixture, including task controls and final artifact checks.
+The release preflight also runs JavaScript checks, rendering-security contracts,
+browser smoke and regressions at 390/768/1440px, preview renewal, re-login after session
+expiry, sensitive-value scanning, and tracked generated-file scanning.
+Linux CI additionally runs `go test -race ./...` and `go vet ./...`.
+See the [validation chain](docs/validation-chain.md) for the full workflow.
 
 ## Repository Notes
 
