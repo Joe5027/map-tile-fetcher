@@ -14,7 +14,7 @@ func TestDefaultTianDiTuPolicyUsesServerSideHeaders(t *testing.T) {
 	if !policy.RotateHosts {
 		t.Fatal("expected TianDiTu host rotation to stay enabled")
 	}
-	if policy.WorkerCount != 1 {
-		t.Fatalf("expected TianDiTu worker count to stay conservative, got %d", policy.WorkerCount)
+	if policy.WorkerCount != minimumSubtaskWorkers {
+		t.Fatalf("expected TianDiTu worker count to use the subtask minimum, got %d", policy.WorkerCount)
 	}
 }

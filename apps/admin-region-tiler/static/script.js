@@ -23,27 +23,38 @@ let rangeBaseLayerRenderToken = 0;
 let rangeTiandituPreviewTokenValue = "";
 let rangeTiandituPreviewTokenId = "";
 let rangeTiandituPreviewTokenPromise = null;
+let previewTokenExpiresAt = 0;
+let previewTokenRefreshTimer = null;
+let previewTokenGeneration = 0;
+let previewRecoveryUsed = false;
 let adminRegionMap = null;
 let adminRegionBaseLayer = null;
 let adminRegionLabelLayer = null;
 let adminRegionLayerGroup = null;
 let adminRegionSelectedLayer = null;
+let taskAreaPreviewLayer = null;
+let taskPreviewSequence = 0;
+let taskPreviewAbort = null;
+let taskPreviewTask = null;
 let adminRegionLevel = "province";
 let adminRegionRenderToken = 0;
 let adminRegionBaseLayerRenderToken = 0;
 let adminRegionMapInitRetries = 0;
 let adminRegionPendingFocusRegionId = "";
 let rangeMapInitRetries = 0;
-let activeWorkspaceTab = "create";
 let currentTaskFilter = "all";
 let cachedTasks = [];
+let taskPollingTimer = null;
+let taskLoadPromise = null;
+let taskLoadGeneration = 0;
+let authenticated = false;
 const expandedProviders = new Set();
 const expandedGroupTasks = new Set();
 const expandedChildTasks = new Set();
 const selectedTaskIds = new Set();
 const adminRegionGeoJSONCache = new Map();
 const WEB_MERCATOR_MAX_LAT = 85.05112878;
-const HORIZONTAL_DRAG_LIMIT_LNG = 360000;
+const HORIZONTAL_DRAG_LIMIT_LNG = 180;
 const MAP_LATITUDE_BOUNDS = [
     [-WEB_MERCATOR_MAX_LAT, -HORIZONTAL_DRAG_LIMIT_LNG],
     [WEB_MERCATOR_MAX_LAT, HORIZONTAL_DRAG_LIMIT_LNG]
@@ -78,7 +89,7 @@ const RANGE_LAYER_NAMES = {
 };
 
 const RANGE_TASK_DEFAULTS = {
-    workers: 8,
+    workers: 3,
     savePipe: 2,
     timeDelay: 50
 };
@@ -111,6 +122,9 @@ document.addEventListener("DOMContentLoaded", async () => {
 });
 
 function bindEvents() {
+    document.getElementById("taskPreviewLevel").addEventListener("change",(event)=>{
+        if(taskPreviewTask) void previewTaskArea(taskPreviewTask,Number(event.target.value));
+    });
     document.getElementById("loginForm").addEventListener("submit", login);
     document.getElementById("logoutBtn").addEventListener("click", logout);
     document.getElementById("accountMenuBtn").addEventListener("click", (event) => {
@@ -315,6 +329,14 @@ function bindEvents() {
             );
             return;
         }
+
+        const taskCard = event.target.closest("details[data-group-task-id]");
+        if (taskCard && !event.target.closest(".task-select, a, button")) {
+            const task = cachedTasks.find((item) => item.id === taskCard.dataset.groupTaskId);
+            if (task) {
+                void previewTaskArea(task);
+            }
+        }
     });
 
     document.addEventListener("click", () => {
@@ -347,30 +369,60 @@ async function bootstrap() {
 
     showApp(me.data);
     applySavedCredentialsToTaskForm();
-    await Promise.all([loadTilemaps(), loadRegionCatalog()]);
+    await Promise.all([loadTilemaps(), loadRegionCatalog(), loadTaskLimits()]);
     initDefaultLevelConfigs();
     renderLevelConfigs();
     setTaskMode(taskMode);
     syncScheduleControls();
     updateRangeEstimate();
     await loadTasks();
-    window.setInterval(loadTasks, 5000);
+    startTaskPolling();
+}
+
+async function loadTaskLimits() {
+    const response = await fetchJSON("/api/config/limits");
+    if (!response.ok) return;
+    const input = document.querySelector('[name="workers"]');
+    input.min = response.data.minWorkers;
+    input.max = response.data.maxWorkers;
+    RANGE_TASK_DEFAULTS.workers = response.data.defaultWorkers;
 }
 
 function showLogin() {
+    authenticated = false;
+    taskLoadGeneration++;
+    resetPreviewCredentials();
+    clearTaskPreview();
+    stopTaskPolling();
     document.getElementById("loginView").classList.remove("is-hidden");
     document.getElementById("appView").classList.add("is-hidden");
 }
 
 function showApp(user) {
+    authenticated = true;
+    taskLoadGeneration++;
+    taskLoadPromise = null;
     document.getElementById("currentUsername").textContent = user.username;
     document.getElementById("loginView").classList.add("is-hidden");
     document.getElementById("appView").classList.remove("is-hidden");
 }
 
-function setWorkspaceTab(tab) {
-    activeWorkspaceTab = "create";
+function startTaskPolling() {
+    stopTaskPolling();
+    if (!authenticated) return;
+    taskPollingTimer = window.setInterval(() => {
+        void loadTasks();
+    }, 5000);
+}
 
+function stopTaskPolling() {
+    if (taskPollingTimer !== null) {
+        window.clearInterval(taskPollingTimer);
+        taskPollingTimer = null;
+    }
+}
+
+function setWorkspaceTab(tab) {
     document.querySelectorAll("[data-workspace-tab]").forEach((button) => {
         const active = button.dataset.workspaceTab === (tab === "tasks" ? "tasks" : "create");
         button.classList.toggle("is-active", active);
@@ -401,6 +453,7 @@ function setWorkspaceTab(tab) {
 }
 
 function setTaskMode(mode) {
+    if(mode !== "tasks") clearTaskPreview();
     taskMode = mode === "tasks" ? "tasks" : mode === "bbox" ? "bbox" : "region";
     if (taskMode !== "tasks") {
         activeMapMode = taskMode;
@@ -552,6 +605,7 @@ function writeSavedCredentials(credentials) {
 }
 
 function applyCredentialsToTaskForm(credentials) {
+    resetPreviewCredentials();
     const inputs = getCredentialInputs();
     Object.entries(inputs).forEach(([key, input]) => {
         if (!input) {
@@ -670,9 +724,6 @@ function validateSourceCredentials(sources, credentials) {
 }
 
 function initAdminRegionMap() {
-    if (taskMode !== "region") {
-        return;
-    }
     if (adminRegionMap) {
         // The map may have been created before the asynchronous region catalog finished loading.
         if (hasRenderableAdminRegionOptions(adminRegionLevel)) {
@@ -750,6 +801,7 @@ async function updateAdminRegionBaseLayer() {
         maxZoom
     });
     adminRegionBaseLayer.on("tileerror", () => {
+        if(source.startsWith("tdt-")) void recoverPreviewCredentials(credentials.tiandituToken);
         if (hint && source.startsWith("tdt-")) {
             hint.textContent = "天地图预览瓦片加载失败，请检查 Token 权限";
         }
@@ -762,6 +814,7 @@ async function updateAdminRegionBaseLayer() {
             opacity: 1
         });
         adminRegionLabelLayer.on("tileerror", () => {
+            void recoverPreviewCredentials(credentials.tiandituToken);
             if (hint) {
                 hint.textContent = "天地图标注加载失败，请检查 Token 权限";
             }
@@ -923,6 +976,7 @@ function previousAdminRegionLevel(level) {
 }
 
 function handleAdminRegionMapClick(event) {
+    if(taskMode === "tasks") return;
     const target = event.originalEvent && event.originalEvent.target;
     const regionElement = target && target.closest ? target.closest("[data-admin-region-id]") : null;
     const region = regionElement ? getRegionByID(regionElement.dataset.adminRegionId) : null;
@@ -1242,6 +1296,7 @@ async function updateRangeBaseLayer() {
         maxZoom
     });
     rangeBaseLayer.on("tileerror", () => {
+        if(source.startsWith("tdt-")) void recoverPreviewCredentials(credentials.tiandituToken);
         if (hint && source.startsWith("tdt-")) {
             hint.textContent = "天地图预览瓦片加载失败，请检查 Token 权限";
         }
@@ -1255,6 +1310,7 @@ async function updateRangeBaseLayer() {
             opacity: 1
         });
         rangeLabelLayer.on("tileerror", () => {
+            void recoverPreviewCredentials(credentials.tiandituToken);
             if (hint) {
                 hint.textContent = "天地图标注加载失败，请检查 Token 权限";
             }
@@ -1271,7 +1327,13 @@ async function ensureTiandituPreviewToken(token) {
     if (!hasUsableCredential(normalized, "YOUR_TIANDITU_TOKEN")) {
         return "";
     }
-    if (rangeTiandituPreviewTokenValue === normalized && rangeTiandituPreviewTokenId) {
+    if(rangeTiandituPreviewTokenValue && rangeTiandituPreviewTokenValue !== normalized) {
+        previewTokenGeneration++;
+        window.clearTimeout(previewTokenRefreshTimer);
+        rangeTiandituPreviewTokenPromise=null;
+        previewRecoveryUsed=false;
+    }
+    if (rangeTiandituPreviewTokenValue === normalized && rangeTiandituPreviewTokenId && Date.now() < previewTokenExpiresAt - 60000) {
         return rangeTiandituPreviewTokenId;
     }
     if (rangeTiandituPreviewTokenPromise && rangeTiandituPreviewTokenValue === normalized) {
@@ -1280,23 +1342,58 @@ async function ensureTiandituPreviewToken(token) {
 
     rangeTiandituPreviewTokenValue = normalized;
     rangeTiandituPreviewTokenId = "";
+    const generation = previewTokenGeneration;
     rangeTiandituPreviewTokenPromise = fetchJSON("/api/tile-preview/tianditu-token", {
         method: "POST",
         body: JSON.stringify({ token: normalized })
     }).then((response) => {
-        if (!response.ok || !response.data.id) {
+        if (!response.ok || !response.data.id || generation !== previewTokenGeneration || normalized !== rangeTiandituPreviewTokenValue) {
             return "";
         }
         rangeTiandituPreviewTokenId = String(response.data.id);
+        previewTokenExpiresAt = Date.parse(response.data.expiresAt) || Date.now();
+        window.clearTimeout(previewTokenRefreshTimer);
+        previewTokenRefreshTimer = window.setTimeout(async () => {
+            if(generation !== previewTokenGeneration || !authenticated) return;
+            previewRecoveryUsed = false;
+            await ensureTiandituPreviewToken(normalized);
+            await Promise.all([updateRangeBaseLayer(),updateAdminRegionBaseLayer()]);
+        },Math.max(1000,previewTokenExpiresAt - Date.now() - 60000));
         return rangeTiandituPreviewTokenId;
     }).finally(() => {
-        rangeTiandituPreviewTokenPromise = null;
+        if(generation === previewTokenGeneration) rangeTiandituPreviewTokenPromise = null;
     });
 
     return rangeTiandituPreviewTokenPromise;
 }
 
+function resetPreviewCredentials() {
+    previewTokenGeneration++;
+    rangeBaseLayerRenderToken++;
+    adminRegionBaseLayerRenderToken++;
+    window.clearTimeout(previewTokenRefreshTimer);
+    previewTokenRefreshTimer = null;
+    previewTokenExpiresAt = 0;
+    rangeTiandituPreviewTokenId = "";
+    rangeTiandituPreviewTokenValue = "";
+    rangeTiandituPreviewTokenPromise = null;
+    previewRecoveryUsed = false;
+    for(const layer of [rangeBaseLayer,rangeLabelLayer,adminRegionBaseLayer,adminRegionLabelLayer]) layer?.remove();
+    rangeBaseLayer = rangeLabelLayer = adminRegionBaseLayer = adminRegionLabelLayer = null;
+}
+
+async function recoverPreviewCredentials(token) {
+    if(previewRecoveryUsed || !authenticated) return;
+    previewRecoveryUsed = true;
+    rangeTiandituPreviewTokenId = "";
+    previewTokenExpiresAt = 0;
+    if(await ensureTiandituPreviewToken(token)) {
+        await Promise.all([updateRangeBaseLayer(),updateAdminRegionBaseLayer()]);
+    }
+}
+
 function handleRangeMapClick(latlng) {
+    if(taskMode === "tasks") return;
     document.getElementById("rangeClickCoord").textContent = formatLngLat(latlng);
     if (rangeDrawMode === "polygon") {
         handleRangePolygonClick(latlng);
@@ -1632,6 +1729,7 @@ async function login(event) {
 
 async function logout() {
     await fetchJSON("/api/auth/logout", { method: "POST", allowUnauthorized: true });
+    stopTaskPolling();
     showLogin();
 }
 
@@ -1738,8 +1836,8 @@ function renderLevelConfigs() {
             <div class="region-row__title">
                 ${icon("layers")}
                 <span>
-                    <strong>${config.label}</strong>
-                    <span>${getRegionHelperText(config)}</span>
+                    <strong>${escapeHTML(config.label)}</strong>
+                    <span>${escapeHTML(getRegionHelperText(config))}</span>
                 </span>
             </div>
             <div class="region-row__grid">
@@ -1864,7 +1962,7 @@ function renderRegionOptions(config) {
     }
 
     return config.options
-        .map((item) => `<option value="${item.id}" ${item.id === config.selectedRegionId ? "selected" : ""}>${item.name}</option>`)
+        .map((item) => `<option value="${escapeAttribute(item.id)}" ${item.id === config.selectedRegionId ? "selected" : ""}>${escapeHTML(item.name)}</option>`)
         .join("");
 }
 
@@ -1892,9 +1990,16 @@ function renderTilemapSelector() {
 }
 
 function renderProviderCard(group) {
-    const selected = selectedProvider === group.id;
-    const expanded = expandedProviders.has(group.id);
+    const rawGroupID = String(group.id ?? "");
+    const selected = selectedProvider === rawGroupID;
+    const expanded = expandedProviders.has(rawGroupID);
     const selectedCount = group.items.filter((item) => selectedSourceIds.has(String(item.id))).length;
+    group = {
+        ...group,
+        id: escapeAttribute(rawGroupID),
+        name: escapeHTML(group.name),
+        description: escapeHTML(group.description)
+    };
     return `
         <div class="source-card ${selected ? "is-active" : ""}">
             <button type="button" class="source-card__selector" data-provider-select="${group.id}">
@@ -1933,6 +2038,18 @@ function renderProviderCard(group) {
 
 function renderTilemapOption(tilemap) {
     const checked = selectedSourceIds.has(String(tilemap.id));
+    const sourceFormat = escapeHTML(String(getTaskTilemapFormat(tilemap)).toUpperCase());
+    const sourceHost = escapeHTML(formatTilemapHost(tilemap.url));
+    const minZoom = Number.isFinite(Number(tilemap.min_zoom)) ? Number(tilemap.min_zoom) : 0;
+    const maxZoom = Number.isFinite(Number(tilemap.max_zoom)) ? Number(tilemap.max_zoom) : 0;
+    tilemap = {
+        ...tilemap,
+        id: escapeAttribute(tilemap.id),
+        name: escapeHTML(tilemap.name),
+        min_zoom: minZoom,
+        max_zoom: maxZoom,
+        schema: escapeHTML(String(tilemap.schema || ""))
+    };
     return `
         <label class="source-option" onclick="event.stopPropagation()">
             <input class="tilemap-source-option" type="checkbox" value="${tilemap.id}" ${checked ? "checked" : ""}>
@@ -1943,11 +2060,11 @@ function renderTilemapOption(tilemap) {
                         ${icon(childTaskIcon({ sourceName: tilemap.name }), "source-option__icon")}
                         <strong>${tilemap.name}</strong>
                     </span>
-                    <span>${String(getTaskTilemapFormat(tilemap)).toUpperCase()}</span>
+                    <span>${sourceFormat}</span>
                 </span>
                 <span class="source-option__meta">
                     <span>${tilemap.min_zoom}-${tilemap.max_zoom}级</span>
-                    <span>${formatTilemapHost(tilemap.url)}</span>
+                    <span>${sourceHost}</span>
                     <span>${tilemap.schema.toUpperCase()}</span>
                 </span>
             </span>
@@ -2162,7 +2279,22 @@ function getRangePolygonRequest() {
     }));
 }
 
+function validateTaskName(name) {
+    const normalized = String(name || "").trim();
+    if (!normalized) {
+        return "任务名称不能为空。";
+    }
+    if (Array.from(normalized).length > 80) {
+        return "任务名称不能超过 80 个字符。";
+    }
+    return "";
+}
+
 function validateRangeRequest(request) {
+    const nameError = validateTaskName(document.getElementById("taskForm")?.elements.name?.value);
+    if (nameError) {
+        return nameError;
+    }
     if (!hasUsableCredential(request.credentials.tiandituToken, "YOUR_TIANDITU_TOKEN")) {
         return "请输入真实的天地图 Token。";
     }
@@ -2298,6 +2430,12 @@ async function createTask(event) {
         return;
     }
 
+    const nameError = validateTaskName(formData.get("name"));
+    if (nameError) {
+        showMessage("taskError", nameError);
+        return;
+    }
+
     const provider = getSelectedProviderGroup();
     if (!provider) {
         showMessage("taskError", "请选择地图源。");
@@ -2422,15 +2560,28 @@ async function createTask(event) {
 }
 
 async function loadTasks() {
+    if(taskLoadPromise) return taskLoadPromise;
+    const generation = taskLoadGeneration;
+    const pending = loadTasksOnce(generation).finally(()=>{if(taskLoadPromise === pending) taskLoadPromise=null;});
+    taskLoadPromise = pending;
+    return pending;
+}
+
+async function loadTasksOnce(generation) {
+    showMessage("taskListMessage","加载中...");
     const response = await fetchJSON("/api/tasks", { allowUnauthorized: true });
+    if(generation !== taskLoadGeneration) return;
     if (!response.ok) {
         if (response.status === 401) {
             showLogin();
+        } else {
+            showMessage("taskListMessage",response.status === 0 ? "网络连接失败，等待重试。" : "任务加载失败，等待重试。");
         }
         return;
     }
 
     cachedTasks = Array.isArray(response.data) ? response.data : [];
+    hideMessage("taskListMessage");
     cleanupSelections(cachedTasks);
     updateWorkspaceTaskCount(cachedTasks);
     renderTaskStats(cachedTasks);
@@ -2451,7 +2602,7 @@ function renderTaskStats(tasks) {
     const stats = [
         { id: "all", label: "全部任务", count: counts.all },
         { id: "running", label: "运行中", count: counts.running },
-        { id: "scheduled", label: "计划中", count: counts.scheduled + counts.pending },
+        { id: "scheduled", label: "等待中", count: counts.scheduled + counts.pending + counts.queued },
         { id: "completed", label: "已完成", count: counts.completed },
         { id: "failed", label: "失败", count: counts.failed + counts.partial_failed },
         { id: "paused", label: "已暂停", count: counts.paused }
@@ -2492,7 +2643,9 @@ function renderGroupTask(task) {
     const children = Array.isArray(task.children) ? task.children : [];
     const progress = toPercent(task.progress);
     const riskHint = summarizeTaskRisk(task, children);
-    const isOpen = expandedGroupTasks.has(task.id);
+    const rawTaskID = String(task.id || "");
+    task = { ...task, id: escapeAttribute(rawTaskID), name: escapeHTML(task.name) };
+    const isOpen = expandedGroupTasks.has(rawTaskID);
     const menuId = `menu-${task.id}`;
 
     return `
@@ -2505,7 +2658,7 @@ function renderGroupTask(task) {
                     <span class="task-illustration">${icon("layers")}</span>
                     <div class="task-main">
                         <div class="task-main__title">
-                            <h3>${task.name}</h3>
+                            <h3 title="${task.name}">${task.name}</h3>
                             ${renderStatusPill(task.status)}
                             ${riskHint ? renderWarningPill(riskHint.short) : ""}
                         </div>
@@ -2525,7 +2678,7 @@ function renderGroupTask(task) {
                         </div>
                     </div>
                     <div class="task-actions">
-                        <div class="task-menu" onclick="event.stopPropagation()">
+                        <div class="task-menu">
                             <button type="button" class="icon-mini-button" data-task-menu-toggle="${menuId}" aria-label="更多操作">
                                 ${icon("more")}
                             </button>
@@ -2535,6 +2688,8 @@ function renderGroupTask(task) {
                                 <button type="button" data-task-action="cancel" data-task-id="${task.id}" data-task-status="${task.status}">取消全部</button>
                                 ${canRetryFailures(task) ? `<button type="button" data-task-action="retryFailures" data-task-id="${task.id}" data-task-status="${task.status}">重试失败瓦片</button>` : ""}
                                 <button type="button" data-task-action="delete" data-task-id="${task.id}" data-task-status="${task.status}">删除任务</button>
+                                <button type="button" data-task-action="reconcile" data-task-id="${task.id}">核对本地产物</button>
+                                <button type="button" data-task-action="recreate" data-task-id="${task.id}">重新创建完整任务</button>
                             </div>
                         </div>
                         ${icon("chevron-down", "task-chevron")}
@@ -2542,6 +2697,7 @@ function renderGroupTask(task) {
                 </div>
             </summary>
             <div class="task-card__content">
+                <p class="task-full-name">${task.name}</p>
                 ${riskHint ? `
                     <div class="task-risk-banner">
                         ${icon("warning")}
@@ -2559,9 +2715,18 @@ function renderGroupTask(task) {
 function renderStandaloneTask(task) {
     const progress = toPercent(task.progress);
     const riskHint = detectTaskRisk(task);
+    const rawTaskID = String(task.id || "");
+    task = {
+        ...task,
+        id: escapeAttribute(rawTaskID),
+        name: escapeHTML(task.name),
+        errorMessage: escapeHTML(task.errorMessage),
+        artifactName: escapeHTML(task.artifactName),
+        downloadUrl: escapeAttribute(managedDownloadURL(task))
+    };
     const menuId = `menu-${task.id}`;
     return `
-        <details class="task-card" data-group-task-id="${task.id}" ${expandedGroupTasks.has(task.id) ? "open" : ""}>
+        <details class="task-card" data-group-task-id="${task.id}" ${expandedGroupTasks.has(rawTaskID) ? "open" : ""}>
             <summary>
                 <div class="task-card__summary">
                     <label class="task-check" onclick="event.stopPropagation()">
@@ -2570,7 +2735,7 @@ function renderStandaloneTask(task) {
                     <span class="task-illustration">${icon("task")}</span>
                     <div class="task-main">
                         <div class="task-main__title">
-                            <h3>${task.name}</h3>
+                            <h3 title="${task.name}">${task.name}</h3>
                             ${renderStatusPill(task.status)}
                             ${riskHint ? renderWarningPill(riskHint.short) : ""}
                         </div>
@@ -2590,7 +2755,7 @@ function renderStandaloneTask(task) {
                         </div>
                     </div>
                     <div class="task-actions">
-                        <div class="task-menu" onclick="event.stopPropagation()">
+                        <div class="task-menu">
                             <button type="button" class="icon-mini-button" data-task-menu-toggle="${menuId}" aria-label="更多操作">
                                 ${icon("more")}
                             </button>
@@ -2600,6 +2765,8 @@ function renderStandaloneTask(task) {
                                 <button type="button" data-task-action="cancel" data-task-id="${task.id}" data-task-status="${task.status}">取消任务</button>
                                 ${canRetryFailures(task) ? `<button type="button" data-task-action="retryFailures" data-task-id="${task.id}" data-task-status="${task.status}">重试失败瓦片</button>` : ""}
                                 <button type="button" data-task-action="delete" data-task-id="${task.id}" data-task-status="${task.status}">删除任务</button>
+                                <button type="button" data-task-action="reconcile" data-task-id="${task.id}">核对本地产物</button>
+                                <button type="button" data-task-action="recreate" data-task-id="${task.id}">重新创建完整任务</button>
                             </div>
                         </div>
                         ${icon("chevron-down", "task-chevron")}
@@ -2607,6 +2774,7 @@ function renderStandaloneTask(task) {
                 </div>
             </summary>
             <div class="task-card__content">
+                <p class="task-full-name">${task.name}</p>
                 ${riskHint ? `
                     <div class="task-risk-banner">
                         ${icon("warning")}
@@ -2614,13 +2782,14 @@ function renderStandaloneTask(task) {
                     </div>
                 ` : ""}
                 ${renderStandaloneDetail(task)}
+                ${renderIntegrity(task)}
             </div>
         </details>
     `;
 }
 
 function renderStandaloneDetail(task) {
-    const artifactAction = task.artifactStatus === "ready"
+    const artifactAction = task.artifactStatus === "ready" && task.downloadUrl
         ? `<a href="${task.downloadUrl}" class="artifact-link">${icon("download")}<span>下载产物</span></a>`
         : `<span class="artifact-text">产物：${translateArtifactStatus(task.artifactStatus)}</span>`;
     return `
@@ -2640,10 +2809,20 @@ function renderStandaloneDetail(task) {
 function renderChildTask(task) {
     const progress = toPercent(task.progress);
     const riskHint = detectTaskRisk(task);
-    const isOpen = expandedChildTasks.has(task.id);
-    const artifactAction = task.artifactStatus === "ready"
+    const rawTaskID = String(task.id || "");
+    task = {
+        ...task,
+        id: escapeAttribute(rawTaskID),
+        name: escapeHTML(task.name),
+        sourceName: escapeHTML(task.sourceName),
+        errorMessage: escapeHTML(task.errorMessage),
+        artifactName: escapeHTML(task.artifactName),
+        downloadUrl: escapeAttribute(managedDownloadURL(task))
+    };
+    const isOpen = expandedChildTasks.has(rawTaskID);
+    const artifactAction = task.artifactStatus === "ready" && task.downloadUrl
         ? `<a href="${task.downloadUrl}" class="artifact-link">${icon("download")}<span>下载产物</span></a>`
-        : `<span class="artifact-text">产物：${translateArtifactStatus(task.artifactStatus)}</span>`;
+        : `<span class="artifact-text">产物：${task.artifactStatus === "packing" && task.artifactName ? task.artifactName : translateArtifactStatus(task.artifactStatus)}</span>`;
 
     return `
         <details class="child-task" data-child-task-id="${task.id}" ${isOpen ? "open" : ""}>
@@ -2652,7 +2831,7 @@ function renderChildTask(task) {
                     <div>
                         <div class="child-task__title">
                             ${icon(childTaskIcon(task), "child-task__icon")}
-                            <strong>${task.sourceName || task.name}</strong>
+                            <strong title="${task.sourceName || task.name}">${task.sourceName || task.name}</strong>
                             ${renderStatusPill(task.status, true)}
                             ${renderArtifactPill(task.artifactStatus)}
                             ${riskHint ? renderWarningPill(riskHint.short) : ""}
@@ -2681,6 +2860,7 @@ function renderChildTask(task) {
                     </div>
                 ` : ""}
                 <div class="child-task__footer">
+                    ${renderIntegrity(task)}
                     <span class="artifact-text">${task.errorMessage || `开始：${task.startedAt ? formatDate(task.startedAt) : "-"} ｜ 完成：${task.finishedAt ? formatDate(task.finishedAt) : "-"}`}</span>
                     ${artifactAction}
                 </div>
@@ -2709,8 +2889,90 @@ function renderArtifactPill(status) {
     return `<span class="artifact-pill">产物：${translateArtifactStatus(status)}</span>`;
 }
 
+function clearTaskPreview() {
+    taskPreviewSequence++;
+    taskPreviewAbort?.abort();
+    taskPreviewAbort=null;
+    taskAreaPreviewLayer?.remove();
+    taskAreaPreviewLayer=null;
+    taskPreviewTask=null;
+    document.getElementById("taskPreviewControls")?.classList.add("is-hidden");
+}
+
+async function previewTaskArea(task, level) {
+    clearTaskPreview();
+    const sequence=taskPreviewSequence;
+    taskPreviewTask=task;
+    taskPreviewAbort=new AbortController();
+    activeMapMode=task?.area?.bbox ? "bbox" : "region";
+    setTaskMode("tasks");
+    document.getElementById("taskPreviewControls").classList.remove("is-hidden");
+    const status=document.getElementById("taskPreviewStatus");
+    status.textContent=`${task.name || "任务"}：加载范围中...`;
+    const query=Number.isInteger(level) ? `?level=${level}` : "";
+    const response=await fetchJSON(`/api/tasks/${encodeURIComponent(task.id)}/area${query}`,{signal:taskPreviewAbort.signal});
+    if(sequence!==taskPreviewSequence || taskMode!=="tasks") return;
+    const map=activeMapMode==="bbox" ? rangeMap : adminRegionMap;
+    if(!response.ok || !map || !window.L) {
+        status.textContent=response.status===0 ? "范围网络请求失败" : "任务范围加载失败";
+        return;
+    }
+    const features=Array.isArray(response.data.features) ? response.data.features : [];
+    if(features.length===0){status.textContent="该层级没有范围数据";return;}
+    const select=document.getElementById("taskPreviewLevel");
+    select.replaceChildren();
+    for(const entry of response.data.levels || []) {
+        const option=document.createElement("option");
+        option.value=entry.index;
+        option.textContent=`${Number(entry.minZoom)}-${Number(entry.maxZoom)} 级`;
+        option.selected=entry.index===response.data.selectedLevel;
+        select.append(option);
+    }
+    taskAreaPreviewLayer=L.geoJSON(response.data,{interactive:false,style:{color:"#2563eb",weight:3,fillColor:"#2563eb",fillOpacity:0.14}}).addTo(map);
+    const bounds=taskAreaPreviewLayer.getBounds();
+    if(bounds.isValid()) map.fitBounds(bounds.pad(0.12),{padding:[26,26],maxZoom:17});
+    status.textContent=`${task.name || "任务"}：${features.length} 个区域`;
+}
+
+function showTaskBBoxOnMap(bbox) {
+    if (!rangeMap || !window.L) {
+        return;
+    }
+    taskAreaPreviewLayer?.remove();
+    const bounds = L.latLngBounds([bbox.minLat, bbox.minLon], [bbox.maxLat, bbox.maxLon]);
+    taskAreaPreviewLayer = L.rectangle(bounds, {
+        color: "#2563eb", weight: 3, dashArray: "6 6", fillColor: "#2563eb", fillOpacity: 0.14
+    }).addTo(rangeMap);
+    rangeMap.fitBounds(bounds.pad(0.2), { padding: [26, 26], maxZoom: 17 });
+}
+
+function escapeHTML(value) {
+    return String(value ?? "").replace(/[&<>'"]/g, (character) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        "'": "&#39;",
+        "\"": "&quot;"
+    }[character]));
+}
+
+function escapeAttribute(value) {
+    return escapeHTML(value);
+}
+
+function managedDownloadURL(task) {
+    const expected = `/api/tasks/${encodeURIComponent(String(task.id || ""))}/download`;
+    return task.downloadUrl === expected ? expected : "";
+}
+
+function renderIntegrity(task) {
+    const state = task.integrity || {};
+    const labels = { unchecked: "未核对", checking: "核对中", complete: "完整", incomplete: "存在缺口", interrupted: "核对中断" };
+    return `<span class="artifact-text">累计产物：${labels[state.status] || "未核对"} ${Number(state.available) || 0}/${Number(state.expected) || 0}${state.error ? `；${escapeHTML(state.error)}` : ""}<br>生效线程：${Number(task.effectiveWorkers) || 0}；间隔：${Number(task.effectiveTimeDelay) || 0} ms${task.queue?.state === "queued" ? `；排队位置：${Number(task.queue.position) || 0}` : ""}</span>`;
+}
+
 function renderWarningPill(text) {
-    return `<span class="warning-pill">${text}</span>`;
+    return `<span class="warning-pill">${escapeHTML(text)}</span>`;
 }
 
 function countTasks(tasks) {
@@ -2718,6 +2980,7 @@ function countTasks(tasks) {
         all: tasks.length,
         scheduled: 0,
         pending: 0,
+        queued: 0,
         running: 0,
         paused: 0,
         completed: 0,
@@ -2738,7 +3001,7 @@ function applyTaskFilter(tasks) {
         return tasks;
     }
     if (currentTaskFilter === "scheduled") {
-        return tasks.filter((task) => task.status === "scheduled" || task.status === "pending");
+        return tasks.filter((task) => task.status === "scheduled" || task.status === "queued" || task.status === "pending");
     }
     if (currentTaskFilter === "failed") {
         return tasks.filter((task) => task.status === "failed" || task.status === "partial_failed");
@@ -2831,6 +3094,14 @@ async function handleTaskAction(action, taskId, status) {
     case "delete":
         await purgeTask(taskId, status);
         break;
+    case "reconcile":
+        await mutateTask(`/api/tasks/${encodeURIComponent(taskId)}/reconcile`, "POST");
+        break;
+    case "recreate":
+        if (window.confirm("重新创建将按原范围和地图源发起完整下载，保留旧任务及旧产物。确定继续吗？")) {
+            await mutateTask(`/api/tasks/${encodeURIComponent(taskId)}/recreate`, "POST");
+        }
+        break;
     default:
         break;
     }
@@ -2872,7 +3143,7 @@ async function handleBulkAction(action) {
                 return;
             }
         }
-        if (!window.confirm("确定删除已选任务吗？删除后任务记录将不可恢复，但已下载文件不会自动删除。")) {
+        if (!window.confirm("确定删除已选任务及其全部子任务、历史下载文件、ZIP/MBTiles 和失败记录吗？此操作不可恢复。共享区域文件会保留至最后一个引用删除。")) {
             return;
         }
         await runBulkMutation(
@@ -3033,7 +3304,7 @@ async function purgeTask(id, status, silent = false) {
     if (!canDelete(status)) {
         return;
     }
-    if (!silent && !window.confirm("确定删除该任务吗？删除后任务记录将不可恢复，但已下载文件不会自动删除。")) {
+    if (!silent && !window.confirm("确定删除该任务及其全部子任务、历史下载文件、ZIP/MBTiles 和失败记录吗？此操作不可恢复。共享区域文件会保留至最后一个引用删除。")) {
         return;
     }
     await mutateTask(`/api/tasks/${id}/purge`, "DELETE", silent);
@@ -3050,6 +3321,10 @@ async function mutateTask(url, method = "PUT", silent = false) {
     const response = await fetchJSON(url, { method });
     if (!response.ok) {
         alert(response.data.error || "任务操作失败");
+        if (response.data.code === "baseline_missing") {
+            const id = url.match(/^\/api\/tasks\/([^/]+)\/retry-failures$/)?.[1];
+            if (id) await handleTaskAction("recreate", decodeURIComponent(id));
+        }
         return;
     }
     if (!silent) {
@@ -3058,35 +3333,42 @@ async function mutateTask(url, method = "PUT", silent = false) {
 }
 
 async function fetchJSON(url, options = {}) {
+    const generation = taskLoadGeneration;
     const config = {
         method: options.method || "GET",
         headers: { "Content-Type": "application/json" },
         credentials: "same-origin"
     };
+    if(options.signal) config.signal = options.signal;
 
     if (options.body) {
         config.body = options.body;
     }
 
-    const response = await fetch(url, config);
-    let data = {};
     try {
-        data = await response.json();
+        const response = await fetch(url, config);
+        let data = {};
+        try {
+            data = await response.json();
+        } catch (_error) {
+            data = {};
+        }
+
+        if (response.status === 401 && !options.allowUnauthorized && generation === taskLoadGeneration) {
+            showLogin();
+        }
+
+        return { ok: response.ok, status: response.status, data };
     } catch (_error) {
-        data = {};
+        return { ok: false, status: 0, data: { error: "网络请求失败，请检查本地服务是否正在运行。" } };
     }
-
-    if (response.status === 401 && !options.allowUnauthorized) {
-        showLogin();
-    }
-
-    return { ok: response.ok, status: response.status, data };
 }
 
 function translateStatus(status) {
     const map = {
         scheduled: "计划中",
         pending: "等待中",
+        queued: "排队中",
         running: "运行中",
         paused: "已暂停",
         completed: "已完成",
@@ -3116,7 +3398,7 @@ function canResume(status) {
 }
 
 function canCancel(status) {
-    return status === "scheduled" || status === "pending" || status === "running" || status === "paused";
+    return status === "scheduled" || status === "queued" || status === "pending" || status === "running" || status === "paused";
 }
 
 function canDelete(status) {

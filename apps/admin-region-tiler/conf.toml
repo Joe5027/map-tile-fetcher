@@ -9,6 +9,9 @@
 [task]
 	#number of fetchers
 	workers = 3
+	# Parent budget includes every selected source; paused children retain a slot.
+	max_tiles = 1000000
+	max_active = 3
 	#number of savers
 	savepipe = 1
 	#min request interval, a speed limit, unit millisecond
@@ -32,6 +35,12 @@
 	enabled = true
 	default_username = "admin"
 	default_password = "adminmap"
+	# Set AUTH_COOKIE_SECURE=true behind HTTPS (for example, behind the supplied Nginx proxy).
+	cookie_secure = false
+
+# Optional comma-separated browser origins for cross-origin API use. Leave unset for same-origin deployment.
+# [cors]
+# allow_origins = "https://tiles.example.com"
 
 # Optional per-source fetch policies.
 # Match by host_contains and/or source_name_contains, then override fetch behavior.
@@ -59,7 +68,7 @@
   name = "tianditu-range-balanced"
   host_contains = "tianditu.gov.cn"
   source_name_contains = "天地图"
-  worker_count = 8
+  worker_count = 20
   base_delay_ms = 50
   time_jitter_ms = 0
   max_retries = 0

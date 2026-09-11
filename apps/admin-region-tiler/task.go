@@ -23,7 +23,6 @@ import (
 
 	"github.com/paulmach/orb"
 	"github.com/paulmach/orb/maptile"
-	"github.com/paulmach/orb/maptile/tilecover"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 	"github.com/teris-io/shortid"
@@ -34,16 +33,19 @@ import (
 )
 
 const MBTileVersion = "1.2"
+const minimumSubtaskWorkers = 1
+const maxTileResponseBytes int64 = 12 << 20
 
 type TaskStatus string
 
 const (
-	TaskPending   TaskStatus = "pending"
-	TaskRunning   TaskStatus = "running"
-	TaskPaused    TaskStatus = "paused"
-	TaskCompleted TaskStatus = "completed"
-	TaskCancelled TaskStatus = "cancelled"
-	TaskFailed    TaskStatus = "failed"
+	TaskPending       TaskStatus = "pending"
+	TaskRunning       TaskStatus = "running"
+	TaskPaused        TaskStatus = "paused"
+	TaskCompleted     TaskStatus = "completed"
+	TaskCancelled     TaskStatus = "cancelled"
+	TaskFailed        TaskStatus = "failed"
+	TaskPartialFailed TaskStatus = "partial_failed"
 )
 
 type TaskOptions struct {
@@ -63,14 +65,18 @@ type TaskOptions struct {
 }
 
 type Task struct {
-	ID          string
-	Name        string
-	Description string
-	File        string
-	Min         int
-	Max         int
-	Layers      []Layer
-	TileMap     TileMap
+	workerManaged  bool
+	retrySource    func(func(TileJob) error) error
+	failureSink    func(TileFailureRecord) error
+	preserveOutput bool
+	ID             string
+	Name           string
+	Description    string
+	File           string
+	Min            int
+	Max            int
+	Layers         []Layer
+	TileMap        TileMap
 
 	Total        int64
 	Current      int64
@@ -154,7 +160,13 @@ func NewTask(layers []Layer, m TileMap, opts TaskOptions) *Task {
 		return nil
 	}
 
-	id, _ := shortid.Generate()
+	id, err := shortid.Generate()
+	if err != nil {
+		// This ID is only a transient output suffix; retain a unique fallback so a
+		// rare entropy failure does not make concurrent tasks share a directory.
+		id = fmt.Sprintf("task-%d", time.Now().UnixNano())
+		log.Warnf("generate transient task id: %v", err)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 
 	task := &Task{
@@ -167,7 +179,7 @@ func NewTask(layers []Layer, m TileMap, opts TaskOptions) *Task {
 		TileMap:        m,
 		Status:         TaskPending,
 		CreatedAt:      time.Now(),
-		workerCount:    maxInt(opts.WorkerCount, 1),
+		workerCount:    effectiveWorkers(opts.WorkerCount, opts.Policy),
 		savePipeSize:   maxInt(opts.SavePipeSize, 1),
 		timeDelay:      maxInt(opts.TimeDelay, 0),
 		timeJitter:     maxInt(opts.TimeJitter, 0),
@@ -187,19 +199,21 @@ func NewTask(layers []Layer, m TileMap, opts TaskOptions) *Task {
 	}
 
 	if task.policy.BaseDelaySet || task.policy.BaseDelayMS > 0 {
-		task.timeDelay = maxInt(task.policy.BaseDelayMS, 0)
+		task.timeDelay = maxInt(task.policy.BaseDelayMS, task.timeDelay)
 	}
 	if task.policy.TimeJitterSet || task.policy.TimeJitterMS > 0 {
 		task.timeJitter = maxInt(task.policy.TimeJitterMS, 0)
-	}
-	if task.policy.WorkerCount > 0 {
-		task.workerCount = maxInt(task.policy.WorkerCount, 1)
 	}
 	if task.policy.MaxRetriesSet {
 		task.maxRetries = maxInt(task.policy.MaxRetries, 0)
 	}
 	if task.policy.RetryPassesSet {
 		task.retryPasses = maxInt(task.policy.RetryPasses, 0)
+	}
+	// SQLite uses one writer. Keeping a single saver for MBTiles avoids avoidable
+	// lock contention when a user selects a larger save pipeline in the UI.
+	if strings.EqualFold(task.outformat, "mbtiles") {
+		task.savePipeSize = 1
 	}
 
 	task.pauseCond = sync.NewCond(&task.mu)
@@ -212,8 +226,8 @@ func NewTask(layers []Layer, m TileMap, opts TaskOptions) *Task {
 		}
 		if len(layers[i].Tiles) > 0 {
 			layers[i].Count = int64(len(layers[i].Tiles))
-		} else {
-			layers[i].Count = tilecover.CollectionCount(layers[i].Collection, maptile.Zoom(layers[i].Zoom))
+		} else if layers[i].BBox == nil {
+			layers[i].Count, _ = boundBudget(layers[i].Collection.Bound(), layers[i].Zoom, layers[i].Zoom)
 		}
 		task.Total += layers[i].Count
 	}
@@ -262,14 +276,19 @@ func buildTaskFromRequest(req CreateTaskRequest) (*Task, error) {
 
 		if isBBoxLevel(level) {
 			for z := level.MinZoom; z <= level.MaxZoom; z++ {
-				tiles, err := bboxTilesForLevel(level, z)
+				b := level.BBox
+				if b == nil {
+					return nil, errors.New("bbox level requires bbox")
+				}
+				count, err := downloader.CountBBoxTiles(area.BBox{MinLon: b.MinLon, MinLat: b.MinLat, MaxLon: b.MaxLon, MaxLat: b.MaxLat}, area.ZoomRange{Min: z, Max: z})
 				if err != nil {
 					return nil, err
 				}
 				layers = append(layers, Layer{
 					URL:   levelURL,
 					Zoom:  z,
-					Tiles: tiles,
+					BBox:  b,
+					Count: count,
 				})
 			}
 			if level.MinZoom < minZoom {
@@ -281,7 +300,11 @@ func buildTaskFromRequest(req CreateTaskRequest) (*Task, error) {
 			continue
 		}
 
-		collection, err := loadCollection(level.Geojson)
+		geojsonPath, err := resolveManagedTaskGeoJSONPath(level.Geojson)
+		if err != nil {
+			return nil, err
+		}
+		collection, err := loadCollection(geojsonPath)
 		if err != nil {
 			return nil, err
 		}
@@ -482,7 +505,7 @@ func (task *Task) Pause() error {
 	task.mu.Lock()
 	defer task.mu.Unlock()
 
-	if task.Status != TaskRunning {
+	if task.Status != TaskRunning && !(task.workerManaged && (task.Status == TaskPending || task.Status == TaskCompleted || task.Status == TaskPartialFailed)) {
 		return fmt.Errorf("task is not running")
 	}
 
@@ -505,7 +528,7 @@ func (task *Task) Resume() error {
 
 func (task *Task) Cancel() error {
 	task.mu.Lock()
-	if task.Status == TaskCompleted || task.Status == TaskCancelled || task.Status == TaskFailed {
+	if (task.Status == TaskCompleted && !task.workerManaged) || task.Status == TaskCancelled || task.Status == TaskFailed {
 		task.mu.Unlock()
 		return fmt.Errorf("task already finished")
 	}
@@ -550,6 +573,10 @@ func (task *Task) markProcessed(success bool, err error) {
 func (task *Task) Bound() orb.Bound {
 	bound := orb.Bound{Min: orb.Point{1, 1}, Max: orb.Point{-1, -1}}
 	for _, layer := range task.Layers {
+		if layer.BBox != nil {
+			b := layer.BBox
+			bound = bound.Union(orb.Bound{Min: orb.Point{b.MinLon, b.MinLat}, Max: orb.Point{b.MaxLon, b.MaxLat}})
+		}
 		for _, g := range layer.Collection {
 			bound = bound.Union(g.Bound())
 		}
@@ -561,15 +588,7 @@ func (task *Task) Bound() orb.Bound {
 }
 
 func (task *Task) Center() orb.Point {
-	layer := task.Layers[len(task.Layers)-1]
-	bound := orb.Bound{Min: orb.Point{1, 1}, Max: orb.Point{-1, -1}}
-	for _, g := range layer.Collection {
-		bound = bound.Union(g.Bound())
-	}
-	for _, tile := range layer.Tiles {
-		bound = bound.Union(tile.Bound())
-	}
-	return bound.Center()
+	return task.Bound().Center()
 }
 
 func (task *Task) MetaItems() map[string]string {
@@ -594,17 +613,29 @@ func (task *Task) MetaItems() map[string]string {
 }
 
 func (task *Task) SetupMBTileTables() error {
+	task.mu.Lock()
 	if task.File == "" {
 		outdir := viper.GetString("output.directory")
-		if err := os.MkdirAll(outdir, os.ModePerm); err != nil {
+		if err := os.MkdirAll(outdir, directoryPermissions); err != nil {
+			task.mu.Unlock()
 			return err
 		}
-		task.File = filepath.Join(outdir, fmt.Sprintf("%s-z%d-%d.%s.mbtiles", task.Name, task.Min, task.Max, task.ID))
+		name := safeFilePart(task.Name)
+		if name == "" {
+			name = "task"
+		}
+		task.File = filepath.Join(outdir, fmt.Sprintf("%s-z%d-%d.%s.mbtiles", name, task.Min, task.Max, task.ID))
+	}
+	filePath := task.File
+	task.mu.Unlock()
+
+	if !task.preserveOutput {
+		if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
+			return err
+		}
 	}
 
-	_ = os.Remove(task.File)
-
-	db, err := sql.Open("sqlite", task.File)
+	db, err := sql.Open("sqlite", filePath)
 	if err != nil {
 		return err
 	}
@@ -634,7 +665,9 @@ func (task *Task) SetupMBTileTables() error {
 		}
 	}
 
+	task.mu.Lock()
 	task.db = db
+	task.mu.Unlock()
 	return nil
 }
 
@@ -643,26 +676,35 @@ func (task *Task) setupOutput() error {
 		return task.SetupMBTileTables()
 	}
 
+	task.mu.Lock()
 	if task.File == "" {
 		outdir := viper.GetString("output.directory")
-		task.File = filepath.Join(outdir, fmt.Sprintf("%s-z%d-%d.%s", task.Name, task.Min, task.Max, task.ID))
+		name := safeFilePart(task.Name)
+		if name == "" {
+			name = "task"
+		}
+		task.File = filepath.Join(outdir, fmt.Sprintf("%s-z%d-%d.%s", name, task.Min, task.Max, task.ID))
 	}
+	filePath := task.File
+	task.mu.Unlock()
 
-	return os.MkdirAll(task.File, os.ModePerm)
+	return os.MkdirAll(filePath, directoryPermissions)
 }
 
 func (task *Task) closeOutput() error {
-	if task.db == nil {
+	task.mu.Lock()
+	db := task.db
+	task.db = nil
+	task.mu.Unlock()
+	if db == nil {
 		return nil
 	}
 
-	if err := optimizeDatabase(task.db); err != nil {
+	if err := optimizeDatabase(db); err != nil {
 		log.Warnf("optimize mbtiles failed for task %s: %v", task.ID, err)
 	}
 
-	err := task.db.Close()
-	task.db = nil
-	return err
+	return db.Close()
 }
 
 func (task *Task) runFetchers() {
@@ -674,16 +716,22 @@ func (task *Task) runFetchers() {
 				if err := task.waitIfPaused(); err != nil {
 					return
 				}
-				if err := task.processTile(job); err != nil {
+				for {
+					err := task.processTile(job)
+					if err == nil {
+						break
+					}
 					if errors.Is(err, context.Canceled) {
 						return
 					}
-					if task.scheduleRetry(job, err) {
-						task.recordTileFailure(job, err, true)
+					retryable := isRetryable(err)
+					if retryable && job.Pass < task.retryPasses {
+						job.Pass++
 						continue
 					}
-					task.recordTileFailure(job, err, false)
+					task.recordTileFailure(job, err, retryable)
 					task.markProcessed(false, err)
+					break
 				}
 			}
 		}()
@@ -700,8 +748,14 @@ func (task *Task) runSavers() {
 					return
 				}
 				if err := task.saveTile(tile); err != nil {
+					task.recordTileFailure(TileJob{Tile: tile.T, URL: tile.URL}, err, true)
 					task.markProcessed(false, err)
 					log.Errorf("save %v failed: %v", tile.T, err)
+					if errors.Is(err, syscall.ENOSPC) || strings.Contains(strings.ToLower(err.Error()), "disk is full") || strings.Contains(strings.ToLower(err.Error()), "database or disk is full") {
+						task.cancel()
+						task.setError(err)
+						return
+					}
 					continue
 				}
 				task.markProcessed(true, nil)
@@ -721,8 +775,6 @@ func (task *Task) processTile(job TileJob) error {
 		return err
 	}
 
-	task.recordSuccess()
-
 	if err := validateTileResponse(body, task.TileMap.Format); err != nil {
 		return err
 	}
@@ -732,7 +784,7 @@ func (task *Task) processTile(job TileJob) error {
 		return err
 	}
 
-	td := Tile{T: job.Tile, C: body}
+	td := Tile{T: job.Tile, C: body, URL: job.URL}
 	if task.TileMap.Format == PBF {
 		var buf bytes.Buffer
 		zw := gzip.NewWriter(&buf)
@@ -745,6 +797,8 @@ func (task *Task) processTile(job TileJob) error {
 		}
 		td.C = buf.Bytes()
 	}
+
+	task.recordSuccess()
 
 	select {
 	case <-task.ctx.Done():
@@ -827,6 +881,15 @@ func (task *Task) recordTileFailure(job TileJob, err error, retryable bool) {
 		CreatedAt:    time.Now(),
 	}
 	task.failureMu.Lock()
+	if task.failureSink != nil {
+		err := task.failureSink(record)
+		task.failureMu.Unlock()
+		if err != nil {
+			task.setError(err)
+			task.cancel()
+		}
+		return
+	}
 	task.failureRecords = append(task.failureRecords, record)
 	task.failureMu.Unlock()
 }
@@ -963,7 +1026,7 @@ func (task *Task) fetchTile(mt maptile.Tile, url string) ([]byte, error) {
 		if err != nil {
 			lastErr = err
 		} else {
-			body, readErr := io.ReadAll(resp.Body)
+			body, readErr := readLimitedResponseBody(resp.Body, maxTileResponseBytes)
 			_ = resp.Body.Close()
 			if readErr != nil {
 				lastErr = readErr
@@ -998,37 +1061,31 @@ func (task *Task) saveTile(tile Tile) error {
 	return saveToFiles(tile, task)
 }
 
+func readLimitedResponseBody(reader io.Reader, limit int64) ([]byte, error) {
+	if limit <= 0 {
+		return nil, errors.New("response body limit must be positive")
+	}
+	body, err := io.ReadAll(io.LimitReader(reader, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(body)) > limit {
+		return nil, fmt.Errorf("tile response exceeds %d bytes", limit)
+	}
+	return body, nil
+}
+
 func (task *Task) enqueueTiles() error {
+	if task.retrySource != nil {
+		bar := pb.New64(task.Total)
+		return task.retrySource(func(job TileJob) error { return task.enqueueLayerTile(job.Tile, job.URL, bar) })
+	}
 	if len(task.explicitJobs) > 0 {
 		return task.enqueueExplicitJobs()
 	}
 
-	for _, layer := range task.Layers {
-		if err := task.waitIfPaused(); err != nil {
-			return err
-		}
-
-		bar := pb.New64(layer.Count).Prefix(fmt.Sprintf("Zoom %d : ", layer.Zoom)).Postfix("\n")
-		bar.Start()
-
-		if len(layer.Tiles) > 0 {
-			if err := task.enqueueLayerTileSlice(layer, bar); err != nil {
-				return err
-			}
-		} else {
-			tilelist := make(chan maptile.Tile, task.bufSize)
-			go tilecover.CollectionChannel(layer.Collection, maptile.Zoom(layer.Zoom), tilelist)
-			for tile := range tilelist {
-				if err := task.enqueueLayerTile(tile, layer.URL, bar); err != nil {
-					return err
-				}
-			}
-		}
-
-		bar.FinishPrint(fmt.Sprintf("Task %s Zoom %d queued", task.ID, layer.Zoom))
-	}
-
-	return nil
+	bar := pb.New64(task.Total)
+	return task.forEachExpected(func(job TileJob) error { return task.enqueueLayerTile(job.Tile, job.URL, bar) })
 }
 
 func (task *Task) enqueueLayerTileSlice(layer Layer, bar *pb.ProgressBar) error {
@@ -1105,8 +1162,14 @@ func (task *Task) Run() {
 	started := time.Now()
 	task.mu.Lock()
 	task.StartedAt = &started
-	task.Status = TaskRunning
+	if task.Status != TaskPaused && task.Status != TaskCancelled {
+		task.Status = TaskRunning
+	}
 	task.mu.Unlock()
+	if err := task.waitIfPaused(); err != nil {
+		task.finish(TaskCancelled, err)
+		return
+	}
 
 	task.Bar = pb.New64(task.Total).Prefix("Task : ").Postfix("\n")
 	task.Bar.Start()
@@ -1140,15 +1203,19 @@ func (task *Task) Run() {
 	switch {
 	case errors.Is(enqueueErr, context.Canceled):
 		task.finish(TaskCancelled, nil)
-	case task.Status == TaskCancelled:
+	case task.currentStatus() == TaskCancelled:
 		task.finish(TaskCancelled, nil)
 	case enqueueErr != nil:
 		task.fail(enqueueErr)
 	case closeErr != nil:
 		task.fail(closeErr)
-	case task.FailureCount > 0 && task.SuccessCount == 0:
+	case task.ctx.Err() != nil:
+		task.fail(errors.New("download stopped after output or persistence failure"))
+	case task.currentCounts().Failure > 0 && task.currentCounts().Success == 0 && !task.preserveOutput:
 		task.fail(errors.New("task finished with no successful tiles"))
-	case task.Status != TaskCancelled:
+	case task.currentCounts().Failure > 0:
+		task.finish(TaskPartialFailed, nil)
+	case task.currentStatus() != TaskCancelled:
 		task.finish(TaskCompleted, nil)
 	}
 }
@@ -1177,7 +1244,26 @@ func (task *Task) finish(status TaskStatus, err error) {
 	task.FinishedAt = &finished
 	task.mu.Unlock()
 	task.pauseCond.Broadcast()
-	task.cancel()
+	if !task.workerManaged || status == TaskFailed || status == TaskCancelled {
+		task.cancel()
+	}
+}
+
+type taskCounts struct {
+	Success int64
+	Failure int64
+}
+
+func (task *Task) currentStatus() TaskStatus {
+	task.mu.RLock()
+	defer task.mu.RUnlock()
+	return task.Status
+}
+
+func (task *Task) currentCounts() taskCounts {
+	task.mu.RLock()
+	defer task.mu.RUnlock()
+	return taskCounts{Success: task.SuccessCount, Failure: task.FailureCount}
 }
 
 func prepareTileURL(t maptile.Tile, url string) string {

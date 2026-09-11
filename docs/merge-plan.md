@@ -36,7 +36,17 @@ Keep `apps/admin-region-tiler` as the base for:
 
 - Continue reducing old `plans` naming in favor of `tasks` only after migration
   compatibility is no longer needed.
-- Improve failure retry UX on top of the persisted failure records.
+- Keep cumulative retry artifacts, explicit reconciliation and source budgets
+  covered by the real API lifecycle suite and repair acceptance contracts.
 - Keep browser UI smoke and release preflight running in CI before release.
 - Keep real service tokens out of Git and keep runtime outputs in ignored
   filesystem paths.
+
+## Branch Convergence
+
+`main` is the only long-term branch. The full repair delivery uses existing
+PR #3 and `agent/audit-hardening`, with validated bilingual commits per batch.
+Keep strict required checks (`Commit Message`, `Admin Region Tiler`) enabled.
+Merge only the checked PR head with a complete bilingual merge message, wait
+for the resulting `main` CI, then remove the repair branch and synchronize the
+local checkout. Preserve historical CI failures and commit history.

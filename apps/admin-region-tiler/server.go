@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math"
 	"net/http"
 	urlpkg "net/url"
@@ -14,9 +13,11 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"github.com/paulmach/orb"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 	"github.com/teris-io/shortid"
@@ -72,22 +73,23 @@ type OutputRequest struct {
 }
 
 type CreateTaskRequest struct {
-	Name         string            `json:"name" binding:"required"`
-	Mode         string            `json:"mode,omitempty"`
-	Area         AreaRequest       `json:"area,omitempty"`
-	Zoom         *ZoomRangeRequest `json:"zoom,omitempty"`
-	SourceName   string            `json:"sourceName,omitempty"`
-	URL          string            `json:"url"`
-	Format       string            `json:"format"`
-	Schema       string            `json:"schema"`
-	Workers      int               `json:"workers"`
-	SavePipe     int               `json:"savePipe"`
-	TimeDelay    int               `json:"timeDelay"`
-	ScheduleMode ScheduleMode      `json:"scheduleMode"`
-	RunAt        string            `json:"runAt"`
-	Levels       []LevelRequest    `json:"levels"`
-	Sources      []SourceRequest   `json:"sources"`
-	Output       OutputRequest     `json:"output,omitempty"`
+	generatedFiles []string
+	Name           string            `json:"name" binding:"required"`
+	Mode           string            `json:"mode,omitempty"`
+	Area           AreaRequest       `json:"area,omitempty"`
+	Zoom           *ZoomRangeRequest `json:"zoom,omitempty"`
+	SourceName     string            `json:"sourceName,omitempty"`
+	URL            string            `json:"url"`
+	Format         string            `json:"format"`
+	Schema         string            `json:"schema"`
+	Workers        int               `json:"workers"`
+	SavePipe       int               `json:"savePipe"`
+	TimeDelay      int               `json:"timeDelay"`
+	ScheduleMode   ScheduleMode      `json:"scheduleMode"`
+	RunAt          string            `json:"runAt"`
+	Levels         []LevelRequest    `json:"levels"`
+	Sources        []SourceRequest   `json:"sources"`
+	Output         OutputRequest     `json:"output,omitempty"`
 }
 
 type TaskAreaLevelResponse struct {
@@ -134,6 +136,10 @@ type TaskFailureSummaryResponse struct {
 }
 
 type TaskResponse struct {
+	Queue                 QueueState                 `json:"queue"`
+	EffectiveWorkers      int                        `json:"effectiveWorkers"`
+	EffectiveTimeDelay    int                        `json:"effectiveTimeDelay"`
+	Integrity             IntegrityState             `json:"integrity"`
 	ID                    string                     `json:"id"`
 	ParentID              string                     `json:"parentId,omitempty"`
 	Kind                  string                     `json:"kind"`
@@ -174,17 +180,19 @@ type TaskResponse struct {
 }
 
 type FailureRecordResponse struct {
-	TaskID       string `json:"taskId"`
-	RunID        string `json:"runId"`
-	SourceID     string `json:"sourceId,omitempty"`
-	Z            int    `json:"z"`
-	X            int    `json:"x"`
-	Y            int    `json:"y"`
-	URL          string `json:"url"`
-	ErrorMessage string `json:"errorMessage"`
-	Retryable    bool   `json:"retryable"`
-	Attempt      int    `json:"attempt"`
-	CreatedAt    string `json:"createdAt"`
+	ResolvedAt    int64  `json:"resolvedAt,omitempty"`
+	ResolvedRunID string `json:"resolvedRunId,omitempty"`
+	TaskID        string `json:"taskId"`
+	RunID         string `json:"runId"`
+	SourceID      string `json:"sourceId,omitempty"`
+	Z             int    `json:"z"`
+	X             int    `json:"x"`
+	Y             int    `json:"y"`
+	URL           string `json:"url"`
+	ErrorMessage  string `json:"errorMessage"`
+	Retryable     bool   `json:"retryable"`
+	Attempt       int    `json:"attempt"`
+	CreatedAt     string `json:"createdAt"`
 }
 
 type AuthLoginRequest struct {
@@ -234,6 +242,12 @@ type cachedRegionGeoJSON struct {
 	Content []byte
 }
 
+type previewToken struct {
+	Token     string
+	UserID    int64
+	ExpiresAt time.Time
+}
+
 type regionCatalogCacheState struct {
 	sync.RWMutex
 	Loaded    bool
@@ -246,6 +260,8 @@ type regionCatalogCacheState struct {
 }
 
 const regionCatalogCacheTTL = 10 * time.Second
+const previewTokenTTL = 15 * time.Minute
+const maxPreviewTileBytes int64 = 8 << 20
 
 var (
 	errRegionNotFound       = errors.New("region not found")
@@ -256,8 +272,9 @@ var (
 	}
 	tiandituPreviewTokens = struct {
 		sync.RWMutex
-		values map[string]string
-	}{values: make(map[string]string)}
+		values map[string]previewToken
+	}{values: make(map[string]previewToken)}
+	previewHTTPClient = newTileHTTPClient(20*time.Second, "")
 )
 
 func initServer() {
@@ -267,14 +284,9 @@ func initServer() {
 
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
-	r.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"*"},
-		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Accept"},
-		ExposeHeaders:    []string{"Content-Length", "Content-Disposition"},
-		AllowCredentials: true,
-		MaxAge:           12 * time.Hour,
-	}))
+	if config := configuredCORS(); config != nil {
+		r.Use(cors.New(*config))
+	}
 
 	r.Static("/static", "./static")
 	r.GET("/", func(c *gin.Context) {
@@ -289,14 +301,20 @@ func initServer() {
 	{
 		protected.GET("/auth/me", meHandler)
 		protected.POST("/tasks", createTask)
+		protected.GET("/config/limits", func(c *gin.Context) {
+			c.JSON(200, gin.H{"maxTiles": maxTaskTiles(), "maxActive": maxActiveTasks(), "defaultWorkers": 3, "minWorkers": 1, "maxWorkers": 50})
+		})
 		protected.GET("/tasks", listTasks)
 		protected.GET("/tasks/:id", getTask)
+		protected.GET("/tasks/:id/area", getTaskArea)
 		protected.PUT("/tasks/:id/pause", pauseTask)
 		protected.PUT("/tasks/:id/resume", resumeTask)
 		protected.DELETE("/tasks/:id", cancelTask)
 		protected.DELETE("/tasks/:id/purge", purgeTask)
 		protected.GET("/tasks/:id/download", downloadTaskArtifact)
 		protected.GET("/tasks/:id/failures", getTaskFailures)
+		protected.POST("/tasks/:id/reconcile", reconcileTask)
+		protected.POST("/tasks/:id/recreate", recreateTask)
 		protected.POST("/tasks/:id/retry-failures", retryTaskFailures)
 
 		protected.GET("/maps", getMaps)
@@ -352,7 +370,7 @@ func loginHandler(c *gin.Context) {
 		return
 	}
 
-	c.SetCookie(sessionCookie, session.Token, int(sessionMaxAge.Seconds()), "/", "", false, true)
+	setSessionCookie(c, session.Token, int(sessionMaxAge.Seconds()))
 	c.JSON(http.StatusOK, gin.H{"id": user.ID, "username": user.Username})
 }
 
@@ -365,7 +383,7 @@ func logoutHandler(c *gin.Context) {
 	if token != "" {
 		_ = store.deleteSession(token)
 	}
-	c.SetCookie(sessionCookie, "", -1, "/", "", false, true)
+	setSessionCookie(c, "", -1)
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
@@ -418,7 +436,50 @@ func authEnabled() bool {
 	return viper.GetBool("auth.enabled")
 }
 
+func configuredCORS() *cors.Config {
+	rawOrigins := strings.TrimSpace(viper.GetString("cors.allow_origins"))
+	if rawOrigins == "" {
+		return nil
+	}
+	origins := make([]string, 0)
+	for _, origin := range strings.Split(rawOrigins, ",") {
+		origin = strings.TrimSpace(origin)
+		if origin == "" {
+			continue
+		}
+		if origin == "*" {
+			log.Warn("ignoring wildcard CORS origin while credential cookies are enabled")
+			continue
+		}
+		origins = append(origins, origin)
+	}
+	if len(origins) == 0 {
+		return nil
+	}
+	return &cors.Config{
+		AllowOrigins:     origins,
+		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Accept"},
+		ExposeHeaders:    []string{"Content-Length", "Content-Disposition"},
+		AllowCredentials: true,
+		MaxAge:           12 * time.Hour,
+	}
+}
+
+func setSessionCookie(c *gin.Context, value string, maxAge int) {
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     sessionCookie,
+		Value:    value,
+		Path:     "/",
+		MaxAge:   maxAge,
+		HttpOnly: true,
+		Secure:   viper.GetBool("auth.cookie_secure"),
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
 func registerTiandituPreviewToken(c *gin.Context) {
+	user := currentUser(c)
 	var req TiandituPreviewTokenRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -435,26 +496,37 @@ func registerTiandituPreviewToken(c *gin.Context) {
 		return
 	}
 
-	id, err := shortid.Generate()
+	id, err := newToken()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create preview token"})
 		return
 	}
 
+	now := time.Now()
 	tiandituPreviewTokens.Lock()
-	tiandituPreviewTokens.values[id] = token
+	for tokenID, value := range tiandituPreviewTokens.values {
+		if !value.ExpiresAt.After(now) {
+			delete(tiandituPreviewTokens.values, tokenID)
+		}
+	}
+	tiandituPreviewTokens.values[id] = previewToken{Token: token, UserID: user.ID, ExpiresAt: now.Add(previewTokenTTL)}
 	tiandituPreviewTokens.Unlock()
 
-	c.JSON(http.StatusOK, gin.H{"id": id})
+	c.JSON(http.StatusOK, gin.H{"id": id, "expiresAt": now.Add(previewTokenTTL).Format(time.RFC3339)})
 }
 
 func proxyTiandituPreviewTile(c *gin.Context) {
+	user := currentUser(c)
 	tokenID := strings.TrimSpace(c.Param("tokenID"))
 	layer := strings.TrimSpace(c.Param("layer"))
 	z, zErr := strconv.Atoi(strings.TrimSuffix(c.Param("z"), ".png"))
 	x, xErr := strconv.Atoi(strings.TrimSuffix(c.Param("x"), ".png"))
 	y, yErr := strconv.Atoi(strings.TrimSuffix(c.Param("y"), ".png"))
-	if tokenID == "" || zErr != nil || xErr != nil || yErr != nil || z < 0 || z > 18 || x < 0 || y < 0 {
+	maxCoordinate := 0
+	if zErr == nil && z >= 0 && z <= 18 {
+		maxCoordinate = (1 << z) - 1
+	}
+	if tokenID == "" || zErr != nil || xErr != nil || yErr != nil || z < 0 || z > 18 || x < 0 || y < 0 || x > maxCoordinate || y > maxCoordinate {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid tile request"})
 		return
 	}
@@ -474,16 +546,22 @@ func proxyTiandituPreviewTile(c *gin.Context) {
 		return
 	}
 
+	now := time.Now()
 	tiandituPreviewTokens.RLock()
-	token := tiandituPreviewTokens.values[tokenID]
+	stored, exists := tiandituPreviewTokens.values[tokenID]
 	tiandituPreviewTokens.RUnlock()
-	if token == "" {
+	if !exists || stored.UserID != user.ID || !stored.ExpiresAt.After(now) {
+		if exists && !stored.ExpiresAt.After(now) {
+			tiandituPreviewTokens.Lock()
+			delete(tiandituPreviewTokens.values, tokenID)
+			tiandituPreviewTokens.Unlock()
+		}
 		c.JSON(http.StatusNotFound, gin.H{"error": "preview token not found"})
 		return
 	}
 
 	shard := (x + y + z) % 8
-	tileURL := fmt.Sprintf("https://t%d.tianditu.gov.cn/DataServer?T=%s&x=%d&y=%d&l=%d&tk=%s", shard, tileLayer, x, y, z, urlpkg.QueryEscape(token))
+	tileURL := fmt.Sprintf("https://t%d.tianditu.gov.cn/DataServer?T=%s&x=%d&y=%d&l=%d&tk=%s", shard, tileLayer, x, y, z, urlpkg.QueryEscape(stored.Token))
 	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, tileURL, nil)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create upstream request"})
@@ -492,21 +570,24 @@ func proxyTiandituPreviewTile(c *gin.Context) {
 	req.Close = true
 	req.Header.Set("User-Agent", "Go-http-client/1.1")
 
-	client := newTileHTTPClient(20*time.Second, "")
-	resp, err := client.Do(req)
+	resp, err := previewHTTPClient.Do(req)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "failed to fetch tianditu tile"})
 		return
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := readLimitedResponseBody(resp.Body, maxPreviewTileBytes)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "failed to read tianditu tile"})
 		return
 	}
 	if resp.StatusCode != http.StatusOK {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "tianditu tile request failed", "status": resp.StatusCode})
+		return
+	}
+	if err := validateTileResponse(body, PNG); err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "tianditu tile response is invalid"})
 		return
 	}
 
@@ -524,33 +605,45 @@ func currentUser(c *gin.Context) *UserRecord {
 }
 
 func createTask(c *gin.Context) {
-	user := currentUser(c)
-
 	var req CreateTaskRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	createTaskFromRequest(c, req)
+}
+
+func createTaskFromRequest(c *gin.Context, req CreateTaskRequest) {
+	runtimeManager.operations.Lock()
+	defer runtimeManager.operations.Unlock()
+	user := currentUser(c)
 
 	plan, children, err := buildTaskRecordsFromRequest(user.ID, req)
 	if err != nil {
+		var budget *TileBudgetError
+		if errors.As(err, &budget) {
+			c.JSON(400, gin.H{"code": "tile_budget_exceeded", "estimatedTiles": budget.Estimated, "limit": budget.Limit, "conservative": budget.Conservative, "error": budget.Error()})
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	if err := store.createTaskRecord(plan); err != nil {
+	allRecords := make([]*TaskRecord, 0, len(children)+1)
+	allRecords = append(allRecords, plan)
+	allRecords = append(allRecords, children...)
+	if err := store.createTaskRecords(allRecords...); err != nil {
+		for _, path := range plan.generatedFiles {
+			if cleanupErr := removeGeneratedAreaPath(path); cleanupErr != nil {
+				log.Warnf("failed to remove unpersisted generated task area %s: %v", path, cleanupErr)
+			}
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to store task"})
 		return
 	}
-	for _, child := range children {
-		if err := store.createTaskRecord(child); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to store child task"})
-			return
-		}
-	}
 
-	if plan.RunAt.Before(time.Now().Add(2 * time.Second)) {
-		_ = runtimeManager.StartTaskRecord(plan)
+	if err := runtimeManager.enqueue(plan, string(plan.ScheduleMode)); err != nil {
+		log.Errorf("queue task %s: %v", plan.ID, err)
 	}
 
 	refreshed, err := store.getTaskRecordForUser(user.ID, plan.ID)
@@ -669,11 +762,86 @@ func downloadTaskArtifact(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "task not found"})
 		return
 	}
-	if plan.LastRun == nil || plan.LastRun.ArtifactStatus != ArtifactReady || plan.LastRun.ArtifactPath == "" {
+	published, err := store.publishedRun(plan.ID)
+	if err != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "artifact is not ready"})
 		return
 	}
-	c.FileAttachment(plan.LastRun.ArtifactPath, plan.LastRun.ArtifactName)
+	artifactPath, err := ensurePathWithinRoot(published.ArtifactPath, viper.GetString("output.directory"), false)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "artifact is unavailable"})
+		return
+	}
+	info, err := os.Stat(artifactPath)
+	if err != nil || info.IsDir() {
+		c.JSON(http.StatusNotFound, gin.H{"error": "artifact is unavailable"})
+		return
+	}
+	name := filepath.Base(strings.TrimSpace(published.ArtifactName))
+	if name == "." || name == string(filepath.Separator) || name == "" {
+		name = filepath.Base(artifactPath)
+	}
+	c.FileAttachment(artifactPath, name)
+}
+
+func getTaskArea(c *gin.Context) {
+	plan, err := loadPlanForCurrentUser(c, c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "task not found"})
+		return
+	}
+	var selected *LevelConfig
+	selectedIndex := -1
+	levels := make([]gin.H, 0, len(plan.Levels))
+	for index := range plan.Levels {
+		level := &plan.Levels[index]
+		levels = append(levels, gin.H{"index": index, "minZoom": level.MinZoom, "maxZoom": level.MaxZoom})
+		if selected == nil || level.MaxZoom > selected.MaxZoom {
+			selected = level
+			selectedIndex = index
+		}
+	}
+	if raw, exists := c.GetQuery("level"); exists {
+		index, err := strconv.Atoi(raw)
+		if err != nil || index < 0 || index >= len(plan.Levels) {
+			c.JSON(400, gin.H{"error": "invalid task area level"})
+			return
+		}
+		selected = &plan.Levels[index]
+		selectedIndex = index
+	}
+	if selected == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "task has no GeoJSON area"})
+		return
+	}
+	if selected.BBox != nil {
+		b := selected.BBox
+		c.JSON(200, gin.H{"type": "FeatureCollection", "levels": levels, "selectedLevel": selectedIndex, "features": []gin.H{{"type": "Feature", "properties": gin.H{}, "geometry": gin.H{"type": "Polygon", "coordinates": [][][]float64{{{b.MinLon, b.MinLat}, {b.MaxLon, b.MinLat}, {b.MaxLon, b.MaxLat}, {b.MinLon, b.MaxLat}, {b.MinLon, b.MinLat}}}}}}})
+		return
+	}
+	path, err := resolveManagedTaskGeoJSONPath(selected.Geojson)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read task area"})
+		return
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read task area"})
+		return
+	}
+	var collection struct {
+		Type     string            `json:"type"`
+		Features []json.RawMessage `json:"features"`
+	}
+	if err := json.Unmarshal(data, &collection); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to parse task area"})
+		return
+	}
+	features := collection.Features
+	if collection.Type != "FeatureCollection" {
+		features = []json.RawMessage{json.RawMessage(data)}
+	}
+	c.JSON(http.StatusOK, gin.H{"type": "FeatureCollection", "features": features, "levels": levels, "selectedLevel": selectedIndex})
 }
 
 func getTaskFailures(c *gin.Context) {
@@ -682,7 +850,7 @@ func getTaskFailures(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "task not found"})
 		return
 	}
-	records, err := store.listFailureRecords(plan.ID)
+	records, err := store.listFailureHistory(plan.ID, c.Query("history") == "true")
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load failure records"})
 		return
@@ -690,17 +858,19 @@ func getTaskFailures(c *gin.Context) {
 	response := make([]FailureRecordResponse, 0, len(records))
 	for _, record := range records {
 		response = append(response, FailureRecordResponse{
-			TaskID:       record.TaskID,
-			RunID:        record.RunID,
-			SourceID:     record.SourceID,
-			Z:            record.Z,
-			X:            record.X,
-			Y:            record.Y,
-			URL:          record.URL,
-			ErrorMessage: record.ErrorMessage,
-			Retryable:    record.Retryable,
-			Attempt:      record.Attempt,
-			CreatedAt:    record.CreatedAt.Format(time.RFC3339),
+			ResolvedAt:    record.ResolvedAt,
+			ResolvedRunID: record.ResolvedRunID,
+			TaskID:        record.TaskID,
+			RunID:         record.RunID,
+			SourceID:      record.SourceID,
+			Z:             record.Z,
+			X:             record.X,
+			Y:             record.Y,
+			URL:           record.URL,
+			ErrorMessage:  record.ErrorMessage,
+			Retryable:     record.Retryable,
+			Attempt:       record.Attempt,
+			CreatedAt:     record.CreatedAt.Format(time.RFC3339),
 		})
 	}
 	c.JSON(http.StatusOK, response)
@@ -726,6 +896,10 @@ func retryTaskFailures(c *gin.Context) {
 		return
 	}
 	if err := runtimeManager.RetryFailures(plan); err != nil {
+		if errors.Is(err, errMissingBaseline) {
+			c.JSON(http.StatusConflict, gin.H{"code": "baseline_missing", "error": err.Error()})
+			return
+		}
 		if errors.Is(err, errNoRetryableFailures) {
 			c.JSON(http.StatusConflict, gin.H{"error": "task has no retryable failures"})
 			return
@@ -756,10 +930,27 @@ func loadPlanForCurrentUser(c *gin.Context, id string) (*TaskRecord, error) {
 }
 
 func buildTaskRecordsFromRequest(userID int64, req CreateTaskRequest) (*TaskRecord, []*TaskRecord, error) {
+	complete := false
+	defer func() {
+		if !complete {
+			for _, path := range req.generatedFiles {
+				_ = removeGeneratedAreaPath(path)
+			}
+		}
+	}()
 	req.Name = strings.TrimSpace(req.Name)
 
 	if req.Name == "" {
 		return nil, nil, errors.New("name is required")
+	}
+	if utf8.RuneCountInString(req.Name) > 80 {
+		return nil, nil, errors.New("name must be 80 characters or fewer")
+	}
+	if req.Workers < 0 || req.Workers > 50 {
+		return nil, nil, errors.New("workers must be between 1 and 50")
+	}
+	if req.TimeDelay < 0 {
+		return nil, nil, errors.New("timeDelay must not be negative")
 	}
 
 	mode := req.ScheduleMode
@@ -786,6 +977,24 @@ func buildTaskRecordsFromRequest(userID int64, req CreateTaskRequest) (*TaskReco
 	if err != nil {
 		return nil, nil, err
 	}
+	if len(req.Area.Polygon) > 0 && req.Zoom != nil {
+		points, err := normalizePolygonCoordinates(req.Area.Polygon)
+		if err != nil {
+			return nil, nil, err
+		}
+		bound := orb.Bound{Min: orb.Point{points[0].Lon, points[0].Lat}, Max: orb.Point{points[0].Lon, points[0].Lat}}
+		for _, p := range points {
+			bound = bound.Extend(orb.Point{p.Lon, p.Lat})
+		}
+		n, err := boundBudget(bound, req.Zoom.Min, req.Zoom.Max)
+		if err != nil {
+			return nil, nil, err
+		}
+		n *= int64(len(sources))
+		if n > maxTaskTiles() {
+			return nil, nil, &TileBudgetError{Estimated: n, Limit: maxTaskTiles(), Conservative: true}
+		}
+	}
 	outputFormat, err := normalizeOutputFormat(req.Output.Format)
 	if err != nil {
 		return nil, nil, err
@@ -809,7 +1018,13 @@ func buildTaskRecordsFromRequest(userID int64, req CreateTaskRequest) (*TaskReco
 		levels = append(levels, normalized)
 	}
 
-	groupID, _ := shortid.Generate()
+	if _, err := validateTaskBudget(levels, len(sources)); err != nil {
+		return nil, nil, err
+	}
+	groupID, err := shortid.Generate()
+	if err != nil {
+		return nil, nil, fmt.Errorf("generate task group id: %w", err)
+	}
 	parent := &TaskRecord{
 		ID:           groupID,
 		UserID:       userID,
@@ -818,7 +1033,7 @@ func buildTaskRecordsFromRequest(userID int64, req CreateTaskRequest) (*TaskReco
 		URL:          sources[0].URL,
 		Format:       sources[0].Format,
 		Schema:       sources[0].Schema,
-		Workers:      firstPositive(req.Workers, viper.GetInt("task.workers")),
+		Workers:      effectiveWorkers(req.Workers, FetchPolicy{}),
 		SavePipe:     firstPositive(req.SavePipe, viper.GetInt("task.savepipe")),
 		TimeDelay:    maxInt(req.TimeDelay, 0),
 		ScheduleMode: mode,
@@ -829,7 +1044,10 @@ func buildTaskRecordsFromRequest(userID int64, req CreateTaskRequest) (*TaskReco
 
 	children := make([]*TaskRecord, 0, len(sources))
 	for _, source := range sources {
-		id, _ := shortid.Generate()
+		id, err := shortid.Generate()
+		if err != nil {
+			return nil, nil, fmt.Errorf("generate child task id: %w", err)
+		}
 		children = append(children, &TaskRecord{
 			ID:           id,
 			UserID:       userID,
@@ -850,6 +1068,8 @@ func buildTaskRecordsFromRequest(userID int64, req CreateTaskRequest) (*TaskReco
 		})
 	}
 
+	parent.generatedFiles = req.generatedFiles
+	complete = true
 	return parent, children, nil
 }
 
@@ -900,6 +1120,7 @@ func normalizeAreaLevels(req *CreateTaskRequest) error {
 			if err != nil {
 				return err
 			}
+			req.generatedFiles = append(req.generatedFiles, geojsonPath)
 			req.Levels = []LevelRequest{{
 				MinZoom: zoom.Min,
 				MaxZoom: zoom.Max,
@@ -968,11 +1189,18 @@ func writeGeneratedPolygonGeoJSON(points []CoordinateRequest) (string, error) {
 	}
 
 	dir := filepath.Join("data", "generated-areas")
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, directoryPermissions); err != nil {
 		return "", err
 	}
 	path := filepath.Join(dir, "range-polygon-"+id+".geojson")
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, filePermissions)
+	if err != nil {
+		return "", err
+	}
+	_, writeErr := file.Write(data)
+	closeErr := file.Close()
+	if err := errors.Join(writeErr, closeErr); err != nil {
+		_ = os.Remove(path)
 		return "", err
 	}
 	return filepath.ToSlash(path), nil
@@ -1022,13 +1250,14 @@ func formatFloat6(value float64) string {
 func normalizeSources(req CreateTaskRequest) ([]SourceRequest, error) {
 	sources := make([]SourceRequest, 0, len(req.Sources))
 	for _, source := range req.Sources {
-		source.URL = strings.TrimSpace(source.URL)
+		var err error
+		source.URL, err = normalizeTileSourceURL(source.URL)
+		if err != nil {
+			return nil, err
+		}
 		source.Format = strings.ToLower(strings.TrimSpace(source.Format))
 		source.Schema = strings.ToLower(strings.TrimSpace(source.Schema))
 		source.Name = strings.TrimSpace(source.Name)
-		if source.URL == "" {
-			return nil, errors.New("source url is required")
-		}
 		if !isSupportedFormat(source.Format) {
 			return nil, errors.New("unsupported source format")
 		}
@@ -1051,9 +1280,11 @@ func normalizeSources(req CreateTaskRequest) ([]SourceRequest, error) {
 			Format: strings.ToLower(strings.TrimSpace(req.Format)),
 			Schema: strings.ToLower(strings.TrimSpace(req.Schema)),
 		}
-		if legacy.URL == "" {
-			return nil, errors.New("at least one source is required")
+		normalizedURL, err := normalizeTileSourceURL(legacy.URL)
+		if err != nil {
+			return nil, err
 		}
+		legacy.URL = normalizedURL
 		if !isSupportedFormat(legacy.Format) {
 			return nil, errors.New("unsupported output format")
 		}
@@ -1069,12 +1300,32 @@ func normalizeSources(req CreateTaskRequest) ([]SourceRequest, error) {
 	return sources, nil
 }
 
+func normalizeTileSourceURL(raw string) (string, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return "", errors.New("source url is required")
+	}
+	parsed, err := urlpkg.Parse(value)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return "", errors.New("source url must be an absolute http or https URL")
+	}
+	return value, nil
+}
+
 func normalizeLevelConfig(level LevelRequest) (LevelConfig, error) {
 	if level.MinZoom < ZoomMin || level.MaxZoom > ZoomMax {
 		return LevelConfig{}, errors.New("zoom level out of supported range")
 	}
 	if level.MinZoom > level.MaxZoom {
 		return LevelConfig{}, errors.New("minZoom cannot be greater than maxZoom")
+	}
+	levelURL := strings.TrimSpace(level.URL)
+	if levelURL != "" {
+		var err error
+		levelURL, err = normalizeTileSourceURL(levelURL)
+		if err != nil {
+			return LevelConfig{}, err
+		}
 	}
 
 	mode := strings.ToLower(strings.TrimSpace(level.Mode))
@@ -1100,7 +1351,7 @@ func normalizeLevelConfig(level LevelRequest) (LevelConfig, error) {
 		return LevelConfig{
 			MinZoom: level.MinZoom,
 			MaxZoom: level.MaxZoom,
-			URL:     strings.TrimSpace(level.URL),
+			URL:     levelURL,
 			Mode:    string(area.ModeBBox),
 			BBox:    &bbox,
 		}, nil
@@ -1110,8 +1361,7 @@ func normalizeLevelConfig(level LevelRequest) (LevelConfig, error) {
 	if path == "" {
 		return LevelConfig{}, errors.New("geojson is required")
 	}
-
-	resolved, err := resolveGeoJSONPath(path)
+	resolved, err := resolveManagedTaskGeoJSONPath(path)
 	if err != nil {
 		return LevelConfig{}, err
 	}
@@ -1119,7 +1369,7 @@ func normalizeLevelConfig(level LevelRequest) (LevelConfig, error) {
 		MinZoom: level.MinZoom,
 		MaxZoom: level.MaxZoom,
 		Geojson: resolved,
-		URL:     strings.TrimSpace(level.URL),
+		URL:     levelURL,
 	}, nil
 }
 
@@ -1170,6 +1420,13 @@ func taskResponseFromRecord(plan *TaskRecord) TaskResponse {
 		RunAt:          plan.RunAt.Format(time.RFC3339),
 		ArtifactStatus: ArtifactNone,
 	}
+	if store != nil {
+		response.Integrity = store.integrityState(plan.ID)
+		response.Queue = store.queueState(plan.ID)
+	}
+	policy := defaultFetchPolicy(plan.URL, plan.SourceName)
+	response.EffectiveWorkers = effectiveWorkers(plan.Workers, policy)
+	response.EffectiveTimeDelay = maxInt(plan.TimeDelay, policy.BaseDelayMS)
 
 	minZoom := 100
 	maxZoom := -1
@@ -1193,6 +1450,24 @@ func taskResponseFromRecord(plan *TaskRecord) TaskResponse {
 
 	if plan.Kind == TaskRecordKindGroup {
 		applyGroupSummary(plan, &response)
+		response.Integrity = IntegrityState{Status: "unchecked"}
+		checked := 0
+		for _, child := range response.Children {
+			response.Integrity.Expected += child.Integrity.Expected
+			response.Integrity.Available += child.Integrity.Available
+			response.Integrity.Missing += child.Integrity.Missing
+			if child.Integrity.Status == "complete" {
+				checked++
+			}
+			if child.Integrity.Status == "checking" {
+				response.Integrity.Status = "checking"
+			}
+		}
+		if len(response.Children) > 0 && checked == len(response.Children) {
+			response.Integrity.Status = "complete"
+		} else if response.Integrity.Missing > 0 {
+			response.Integrity.Status = "incomplete"
+		}
 		applyFailureSummary(plan.ID, &response)
 		applyProgressAndArtifact(&response)
 		return response
@@ -1220,6 +1495,13 @@ func taskResponseFromRecord(plan *TaskRecord) TaskResponse {
 		}
 	}
 
+	if store != nil {
+		if published, err := store.publishedRun(plan.ID); err == nil {
+			response.ArtifactStatus = ArtifactReady
+			response.ArtifactName = published.ArtifactName
+			response.DownloadURL = "/api/tasks/" + plan.ID + "/download"
+		}
+	}
 	applyFailureSummary(plan.ID, &response)
 	applyProgressAndArtifact(&response)
 	return response
@@ -1234,13 +1516,10 @@ func applyFailureSummary(planID string, response *TaskResponse) {
 		log.Warnf("failed to load failure summary for task %s: %v", planID, err)
 		return
 	}
-	if summary.Total > response.FailureCount {
-		response.FailureCount = summary.Total
-	}
 	response.RetryableFailureCount = summary.Retryable
 	response.CanRetryFailures = summary.Retryable > 0 && canRetryFailureStatus(TaskRecordStatus(response.Status))
 	response.FailureSummary = TaskFailureSummaryResponse{
-		FailureCount:          response.FailureCount,
+		FailureCount:          summary.Total,
 		RetryableFailureCount: response.RetryableFailureCount,
 		CanRetryFailures:      response.CanRetryFailures,
 	}
@@ -1325,6 +1604,9 @@ func taskSourceFromRecord(plan *TaskRecord) TaskSourceResponse {
 }
 
 func effectiveTaskRecordStatusForResponse(plan *TaskRecord, run *TaskRunRecord) TaskStatus {
+	if plan.Status == TaskRecordQueued {
+		return TaskStatus(TaskRecordQueued)
+	}
 	if run == nil {
 		switch plan.Status {
 		case TaskRecordPaused:
@@ -1368,12 +1650,22 @@ func applyGroupSummary(plan *TaskRecord, response *TaskResponse) {
 
 	var totalTiles int64
 	var currentTiles int64
+	response.Integrity = IntegrityState{Status: "complete"}
 
 	for _, child := range plan.Children {
 		childResponse := taskResponseFromRecord(child)
 		response.Children = append(response.Children, childResponse)
 		totalTiles += childResponse.Total
 		currentTiles += childResponse.Current
+		response.Integrity.Expected += childResponse.Integrity.Expected
+		response.Integrity.Available += childResponse.Integrity.Available
+		response.Integrity.Missing += childResponse.Integrity.Missing
+		if childResponse.Integrity.Status != "complete" {
+			response.Integrity.Status = "incomplete"
+			if childResponse.Integrity.Status == "checking" {
+				response.Integrity.Status = "checking"
+			}
+		}
 
 		switch childResponse.Status {
 		case string(TaskCompleted):
@@ -1382,7 +1674,7 @@ func applyGroupSummary(plan *TaskRecord, response *TaskResponse) {
 			response.RunningChildren++
 		case string(TaskPaused):
 			response.PausedChildren++
-		case string(TaskFailed):
+		case string(TaskFailed), string(TaskPartialFailed):
 			response.FailedChildren++
 		case string(TaskCancelled):
 			response.CancelledChildren++
@@ -1391,28 +1683,11 @@ func applyGroupSummary(plan *TaskRecord, response *TaskResponse) {
 
 	response.Total = totalTiles
 	response.Current = currentTiles
-
-	switch {
-	case response.CompletedChildren == response.TotalChildren:
-		response.Status = string(TaskRecordCompleted)
-	case response.CancelledChildren == response.TotalChildren:
-		response.Status = string(TaskRecordCancelled)
-	case response.FailedChildren == response.TotalChildren:
-		response.Status = string(TaskRecordFailed)
-	case response.RunningChildren > 0:
-		response.Status = string(TaskRecordRunning)
-	case response.PausedChildren > 0 && response.RunningChildren == 0:
-		response.Status = string(TaskRecordPaused)
-	case response.CompletedChildren+response.FailedChildren+response.CancelledChildren == response.TotalChildren && response.FailedChildren > 0:
-		response.Status = string(TaskRecordPartialFailed)
-	default:
-		response.Status = string(plan.Status)
-	}
+	response.Status = string(aggregateGroupStatus(plan))
 }
 
 func getMaps(c *gin.Context) {
-	maps := GetTileMapList()
-	c.JSON(http.StatusOK, maps)
+	getConfiguredMaps(c)
 }
 
 func getConfiguredMaps(c *gin.Context) {

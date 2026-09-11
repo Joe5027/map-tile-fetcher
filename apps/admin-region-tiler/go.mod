@@ -12,6 +12,7 @@ require (
 	github.com/sirupsen/logrus v1.6.0
 	github.com/spf13/viper v1.7.1
 	github.com/teris-io/shortid v0.0.0-20220617161101-71ec9f2aa569
+	golang.org/x/crypto v0.48.0
 	gopkg.in/cheggaaa/pb.v1 v1.0.28
 )
 
@@ -176,7 +177,6 @@ require (
 	go.uber.org/multierr v1.1.0 // indirect
 	go.uber.org/zap v1.10.0 // indirect
 	golang.org/x/arch v0.3.0 // indirect
-	golang.org/x/crypto v0.48.0 // indirect
 	golang.org/x/exp v0.0.0-20251023183803-a4bb9ffd2546 // indirect
 	golang.org/x/image v0.0.0-20190802002840-cff245a6509b // indirect
 	golang.org/x/lint v0.0.0-20190930215403-16217165b5de // indirect

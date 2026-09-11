@@ -140,7 +140,7 @@ func defaultFetchPolicy(url string, sourceName string) FetchPolicy {
 		policy.Name = "tianditu"
 		policy.UserAgent = ""
 		policy.RotateHosts = true
-		policy.WorkerCount = 1
+		policy.WorkerCount = minimumSubtaskWorkers
 		policy.BaseDelayMS = 120
 		policy.TimeJitterMS = 120
 		policy.MaxRetries = 0

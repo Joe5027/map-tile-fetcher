@@ -15,6 +15,9 @@
 - 支持 ZIP 文件树和 MBTiles 两种产物。
 - 支持失败记录持久化、失败瓦片重试、暂停、恢复、取消和彻底删除。
 - `geojson/` 可作为持久化区域资源目录，新增区域文件无需重建镜像。
+- 默认每父任务全部图层合计最多 100 万瓦片，同时运行最多 3 个子任务，其余持久排队。
+- 失败重试发布累计完整 ZIP/MBTiles；历史核对只读本地输出，缺失旧成功瓦片时需显式重新创建。
+- 配置、迁移和十类问题验证见 [修复验收记录](../../docs/repair-acceptance-2026-09-11.md)。
 
 ## 本地源码启动
 
@@ -96,6 +99,9 @@ Linux/macOS 使用同样参数时，把挂载路径写成 `"$PWD/data:/app/data"
 | `APP_DATABASE` | `tiler.db` | SQLite 数据库文件名，保存在 `data/`。 |
 | `AUTH_DEFAULT_USERNAME` | `admin` | 默认登录用户名。 |
 | `AUTH_DEFAULT_PASSWORD` | `adminmap` | 默认登录密码。 |
+| `TASK_MAX_TILES` | `1000000` | 父任务所有图层累计预算。 |
+| `TASK_MAX_ACTIVE` | `3` | 同时运行的子任务上限，暂停继续占槽。 |
+| `TASK_WORKERS` | `3` | 默认请求线程，用户可选 1～50，受来源上限约束。 |
 
 生产部署至少要修改 `AUTH_DEFAULT_USERNAME` 和 `AUTH_DEFAULT_PASSWORD`。真实地图服务
 token 不要写入 Git，可保存在本地配置、环境变量或部署平台密钥管理中。

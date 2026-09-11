@@ -49,6 +49,27 @@ func CountBBoxTiles(box area.BBox, zoom area.ZoomRange) (int64, error) {
 	return count, nil
 }
 
+func WalkBBoxTiles(box area.BBox, zoom area.ZoomRange, visit func(TileID) error) error {
+	if err := box.Validate(); err != nil {
+		return err
+	}
+	if err := zoom.Validate(); err != nil {
+		return err
+	}
+	for z := zoom.Min; z <= zoom.Max; z++ {
+		leftTop := tileForLonLat(box.MinLon, box.MaxLat, z)
+		rightBottom := tileForLonLat(box.MaxLon, box.MinLat, z)
+		for x := leftTop.X; x <= rightBottom.X; x++ {
+			for y := leftTop.Y; y <= rightBottom.Y; y++ {
+				if err := visit(TileID{Z: z, X: x, Y: y}); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
 func tileForLonLat(lon, lat float64, z int) TileID {
 	n := math.Pow(2, float64(z))
 	x := int(math.Floor((lon + 180.0) / 360.0 * n))

@@ -32,7 +32,10 @@ The **Service Credentials** section is shared by both download modes.
 - **Mapbox SKU** replaces `YOUR_MAPBOX_SKU` when supplied; when left empty, the
   placeholder SKU query parameter is removed from the request URL.
 
-Credentials are submitted only with the task creation payload. Do not commit
+Credentials are submitted for task creation and preview registration. Task
+source URLs are retained in the private control database. Preview registration
+renews 60 seconds before expiry; logout and credential changes clear its cache.
+Do not commit
 real tokens, `.env` files, runtime databases, downloaded tiles, or generated
 archives to Git.
 
@@ -79,7 +82,12 @@ Each task supports:
 - **Immediate**: starts after creation.
 - **Once**: starts at the selected local date and time.
 
-Scheduled tasks appear as `scheduled` or `pending` until their run time is due.
+Immediate, scheduled and retry runs share a durable queue (`queued`). The default
+limit is three running children; paused children retain their slot. Queued work
+survives restart, while interrupted downloads are not automatically repeated.
+The parent budget is 1,000,000 tiles across all selected sources. Geometry uses
+a conservative bounding estimate. Workers default to 3 and accept 1-50, capped
+by the source policy; effective delay is at least the source minimum.
 
 ## 6. Output Formats
 
@@ -106,8 +114,12 @@ Available actions depend on task state:
 - Download artifacts when artifact status is ready.
 - Retry failed tiles when retryable failure records exist.
 
-Deleting a task removes task records and generated task artifacts. Shared
-GeoJSON resources are protected from deletion.
+Deleting a parent removes children, historical runs, generated artifacts,
+failures and associated metadata. Cancel active or paused tasks and wait for
+completion first. Built-in GeoJSON is never removed; generated regions remain
+until their final reference is released. Failed cleanup retains a retryable
+manifest. Task/run IDs isolate actual paths, so display names cannot overwrite
+other runs. Downloads retain the last published artifact until publication succeeds.
 
 ## 8. Failure Records And Retry
 
@@ -115,7 +127,16 @@ When tile downloads fail, retryable failures are persisted and can be viewed
 through the task response and failure endpoint.
 
 Use **Retry Failed Tiles** from the task action menu when available. The retry
-run reuses failure records and does not recreate the full task.
+run copies the previous usable output and fills unresolved retryable coordinates,
+then publishes a complete cumulative ZIP/MBTiles. Historical events are retained;
+resolved events leave current failure counts. Per-run progress and cumulative
+integrity are separate. Copying requires baseline size plus a 1 GiB free-space
+reserve; later writes can still exhaust space and fail without replacing the old artifact.
+
+Use the task menu's local reconciliation action to verify historical output
+without downloading. Missing old successful tiles return `409 baseline_missing`;
+explicitly recreate a complete task to download again. Retry never silently
+expands into a full download. See [repair acceptance and migration notes](repair-acceptance-2026-09-11.md).
 
 Common failure categories:
 

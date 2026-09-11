@@ -72,3 +72,8 @@ jobs:
 
       - name: Run release preflight
         run: node ./scripts/release_preflight.mjs
+
+      - name: Race and vet checks
+        run: |
+          go test -race ./...
+          go vet ./...

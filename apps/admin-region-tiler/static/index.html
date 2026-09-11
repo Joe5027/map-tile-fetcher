@@ -7,7 +7,7 @@
     <meta name="description" content="创建任务并批量下载地图图片。">
     <link rel="icon" type="image/svg+xml" href="/static/assets/favicon/favicon.svg?v=1">
     <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css?v=1">
-    <link rel="stylesheet" href="/static/styles.css?v=75">
+    <link rel="stylesheet" href="/static/styles.css?v=76">
 </head>
 <body>
     <div class="page-shell">
@@ -130,13 +130,7 @@
                                     <section class="parameter-grid">
                                         <label class="field">
                                             <span class="field-label">下载线程</span>
-                                            <select name="workers">
-                                                <option value="1">1</option>
-                                                <option value="2">2</option>
-                                                <option value="3" selected>3</option>
-                                                <option value="4">4</option>
-                                                <option value="5">5</option>
-                                            </select>
+                                            <input type="number" name="workers" min="1" max="50" value="3">
                                         </label>
                                         <label class="field">
                                             <span class="field-label">保存线程</span>
@@ -230,11 +224,11 @@
                                 </label>
                                 <label class="field">
                                     <span class="field-label">最小级别</span>
-                                    <input type="number" name="rangeMinZoom" min="0" max="20" step="1" value="10">
+                                    <input type="number" name="rangeMinZoom" min="0" max="20" step="1" value="1">
                                 </label>
                                 <label class="field">
                                     <span class="field-label">最大级别</span>
-                                    <input type="number" name="rangeMaxZoom" min="0" max="20" step="1" value="12">
+                                    <input type="number" name="rangeMaxZoom" min="0" max="20" step="1" value="18">
                                 </label>
                             </div>
 
@@ -265,9 +259,8 @@
                                             <h3>我的任务</h3>
                                             <p>查看历史任务、运行状态、失败记录和下载产物</p>
                                         </div>
-                                        <button id="refreshBtn" type="button" class="ghost-button ghost-button--compact">
+                                        <button id="refreshBtn" type="button" class="icon-button" aria-label="刷新任务" title="刷新任务">
                                             <img src="/static/assets/icons/refresh.svg" alt="">
-                                            <span>刷新</span>
                                         </button>
                                     </div>
 
@@ -292,6 +285,7 @@
                                         </div>
                                     </div>
 
+                                    <p id="taskListMessage" class="message is-hidden" role="status"></p>
                                     <div id="taskList" class="task-list">
                                         <div class="task-skeleton">
                                             <div class="task-skeleton__line task-skeleton__line--lg"></div>
@@ -321,6 +315,10 @@
                             </div>
 
                             <div class="task-right-column">
+                                <div id="taskPreviewControls" class="task-preview-controls is-hidden">
+                                    <span id="taskPreviewStatus" role="status"></span>
+                                    <label>任务层级 <select id="taskPreviewLevel" aria-label="任务预览层级"></select></label>
+                                </div>
                                 <section id="rangePreviewPanel" class="range-preview-panel is-hidden">
                                     <div id="rangeMapCard" class="range-map-card">
                                         <div class="range-map-toolbar">
@@ -429,6 +427,6 @@
     </div>
 
     <script src="/static/vendor/leaflet/leaflet.js?v=1"></script>
-    <script src="/static/script.js?v=75"></script>
+    <script src="/static/script.js?v=76"></script>
 </body>
 </html>

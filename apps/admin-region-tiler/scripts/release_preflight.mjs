@@ -20,6 +20,16 @@ const checks = [
     args: ["--check", "./scripts/smoke_ui.mjs"],
   },
   {
+    label: "Rendering safety contracts",
+    command: "node",
+    args: ["./scripts/security_ui_test.mjs"],
+  },
+  {
+    label: "Repair UI script syntax",
+    command: "node",
+    args: ["--check", "./scripts/repair_ui_checks.mjs"],
+  },
+  {
     label: "Browser UI smoke",
     command: "node",
     args: ["./scripts/smoke_ui.mjs"],

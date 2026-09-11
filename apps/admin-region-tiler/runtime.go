@@ -12,6 +12,7 @@ import (
 	"time"
 
 	log "github.com/sirupsen/logrus"
+	"github.com/spf13/viper"
 	"github.com/teris-io/shortid"
 )
 
@@ -22,14 +23,16 @@ type ActiveRun struct {
 }
 
 type RuntimeManager struct {
-	mu     sync.RWMutex
-	active map[string]*ActiveRun
+	operations sync.Mutex
+	mu         sync.RWMutex
+	active     map[string]*ActiveRun
 }
 
 type Scheduler struct {
-	manager *RuntimeManager
-	ticker  *time.Ticker
-	stop    chan struct{}
+	manager  *RuntimeManager
+	ticker   *time.Ticker
+	stop     chan struct{}
+	stopOnce sync.Once
 }
 
 var runtimeManager *RuntimeManager
@@ -68,7 +71,9 @@ func (s *Scheduler) Start() {
 }
 
 func (s *Scheduler) Stop() {
-	close(s.stop)
+	s.stopOnce.Do(func() {
+		close(s.stop)
+	})
 }
 
 func (s *Scheduler) dispatchDueTaskRecords() {
@@ -82,19 +87,29 @@ func (s *Scheduler) dispatchDueTaskRecords() {
 			log.Errorf("failed to start plan %s: %v", plan.ID, err)
 		}
 	}
+	s.manager.operations.Lock()
+	_ = s.manager.dispatchQueued()
+	s.manager.operations.Unlock()
 }
 
 var errTaskAlreadyActive = errors.New("task already active")
 
 func (m *RuntimeManager) StartTaskRecord(plan *TaskRecord) error {
-	return m.startTaskRecordWithTrigger(plan, string(plan.ScheduleMode))
+	m.operations.Lock()
+	defer m.operations.Unlock()
+	return m.enqueue(plan, string(plan.ScheduleMode))
 }
 
 func (m *RuntimeManager) RetryFailures(plan *TaskRecord) error {
-	return m.startTaskRecordWithTrigger(plan, triggerRetryFailures)
+	m.operations.Lock()
+	defer m.operations.Unlock()
+	return m.enqueue(plan, triggerRetryFailures)
 }
 
 func (m *RuntimeManager) startTaskRecordWithTrigger(plan *TaskRecord, triggerMode string) error {
+	if err := store.checkNotDeleting(plan.ID); err != nil {
+		return err
+	}
 	if plan.Kind == TaskRecordKindGroup {
 		children, err := store.listTaskChildrenByParent(plan.ID)
 		if err != nil {
@@ -111,6 +126,9 @@ func (m *RuntimeManager) startTaskRecordWithTrigger(plan *TaskRecord, triggerMod
 					return err
 				}
 				if summary.Retryable > 0 {
+					if _, err := store.validateRetryBaseline(child); err != nil {
+						return err
+					}
 					eligible = append(eligible, child)
 				}
 			}
@@ -151,6 +169,9 @@ func (m *RuntimeManager) startTaskRecordWithTrigger(plan *TaskRecord, triggerMod
 		if summary.Retryable == 0 {
 			return errNoRetryableFailures
 		}
+		if _, err := store.validateRetryBaseline(plan); err != nil {
+			return err
+		}
 	}
 
 	m.mu.Lock()
@@ -158,7 +179,19 @@ func (m *RuntimeManager) startTaskRecordWithTrigger(plan *TaskRecord, triggerMod
 		m.mu.Unlock()
 		return errTaskAlreadyActive
 	}
+	// Reserve the task before doing database or process work so manual actions
+	// and scheduler ticks cannot launch the same child twice.
+	m.active[plan.ID] = &ActiveRun{Plan: plan}
 	m.mu.Unlock()
+	started := false
+	defer func() {
+		if started {
+			return
+		}
+		m.mu.Lock()
+		delete(m.active, plan.ID)
+		m.mu.Unlock()
+	}()
 
 	task, err := buildTaskFromRecord(plan)
 	if err != nil {
@@ -166,7 +199,10 @@ func (m *RuntimeManager) startTaskRecordWithTrigger(plan *TaskRecord, triggerMod
 		return err
 	}
 
-	runID, _ := shortid.Generate()
+	runID, err := shortid.Generate()
+	if err != nil {
+		return err
+	}
 	now := time.Now()
 	run := &TaskRunRecord{
 		ID:             runID,
@@ -178,11 +214,20 @@ func (m *RuntimeManager) startTaskRecordWithTrigger(plan *TaskRecord, triggerMod
 		StartedAt:      &now,
 		Total:          task.Total,
 	}
+	runDir, err := managedRunDirectory(plan, run.ID)
+	if err != nil {
+		return err
+	}
+	run.OutputPath = filepath.Join(runDir, "tiles")
+	if task.outformat == "mbtiles" {
+		run.OutputPath = filepath.Join(runDir, "tiles.mbtiles")
+	}
 
 	if err := store.createRun(run); err != nil {
 		return err
 	}
 	if err := store.markTaskRecordRunning(plan.ID, runID); err != nil {
+		_ = failRunBeforeStart(plan, run, err)
 		return err
 	}
 
@@ -196,6 +241,7 @@ func (m *RuntimeManager) startTaskRecordWithTrigger(plan *TaskRecord, triggerMod
 	m.mu.Lock()
 	m.active[plan.ID] = active
 	m.mu.Unlock()
+	started = true
 
 	go m.monitorWorker(active)
 	return nil
@@ -215,9 +261,13 @@ func (m *RuntimeManager) monitorWorker(active *ActiveRun) {
 		}
 	}
 
+	m.operations.Lock()
+	defer m.operations.Unlock()
+	_, _ = store.db.Exec(`DELETE FROM execution_queue WHERE plan_id=?`, active.Plan.ID)
 	m.mu.Lock()
 	delete(m.active, active.Plan.ID)
 	m.mu.Unlock()
+	_ = m.dispatchQueued()
 }
 
 func (m *RuntimeManager) Pause(planID string) error {
@@ -304,7 +354,12 @@ func (m *RuntimeManager) Cancel(plan *TaskRecord) error {
 		return store.updateTaskRecordStatus(plan.ID, TaskRecordCancelled)
 	}
 
-	if plan.Status == TaskRecordScheduled {
+	if plan.Status == TaskRecordScheduled || plan.Status == TaskRecordQueued {
+		m.operations.Lock()
+		defer m.operations.Unlock()
+		if _, err := store.db.Exec(`DELETE FROM execution_queue WHERE plan_id=?`, plan.ID); err != nil {
+			return err
+		}
 		return store.updateTaskRecordStatus(plan.ID, TaskRecordCancelled)
 	}
 
@@ -331,35 +386,9 @@ func (m *RuntimeManager) Cancel(plan *TaskRecord) error {
 }
 
 func (m *RuntimeManager) Purge(plan *TaskRecord) error {
-	if plan.Kind == TaskRecordKindGroup {
-		children, err := store.listTaskChildrenByParent(plan.ID)
-		if err != nil {
-			return err
-		}
-		for _, child := range children {
-			if _, childErr := m.getActive(child.ID); childErr == nil {
-				return errors.New("运行中或已暂停的下载不能直接删除，请先取消该下载。")
-			}
-		}
-	}
-
-	if _, err := m.getActive(plan.ID); err == nil {
-		return errors.New("运行中或已暂停的下载不能直接删除，请先取消该下载。")
-	}
-
-	runs, err := store.listRunsByTaskRecord(plan.ID)
-	if err != nil {
-		return err
-	}
-
-	paths := collectTaskPaths(runs)
-	for _, path := range paths {
-		if err := removeTaskPath(path); err != nil {
-			return err
-		}
-	}
-
-	return store.purgeTaskRecord(plan.ID)
+	m.operations.Lock()
+	defer m.operations.Unlock()
+	return m.purgeManagedTask(plan)
 }
 
 func (m *RuntimeManager) getActive(planID string) (*ActiveRun, error) {
@@ -397,10 +426,9 @@ func removeTaskPath(path string) error {
 		return nil
 	}
 
-	clean := filepath.Clean(path)
-	geojsonRoot := filepath.Clean("geojson")
-	if clean == geojsonRoot || strings.HasPrefix(clean, geojsonRoot+string(os.PathSeparator)) {
-		return errors.New("refusing to delete shared geojson resources")
+	clean, err := ensurePathWithinRoot(path, viper.GetString("output.directory"), false)
+	if err != nil {
+		return err
 	}
 
 	if _, err := os.Stat(clean); err != nil {
@@ -411,6 +439,77 @@ func removeTaskPath(path string) error {
 	}
 
 	return os.RemoveAll(clean)
+}
+
+func generatedAreaPaths(plan *TaskRecord) []string {
+	if plan == nil {
+		return nil
+	}
+	paths := make([]string, 0)
+	seen := make(map[string]struct{})
+	for _, level := range plan.Levels {
+		path := strings.TrimSpace(level.Geojson)
+		if path == "" {
+			continue
+		}
+		clean, err := ensurePathWithinRoot(path, filepath.Join(defaultDataDir, "generated-areas"), false)
+		if err != nil || !strings.EqualFold(filepath.Ext(clean), ".geojson") {
+			continue
+		}
+		if _, exists := seen[clean]; exists {
+			continue
+		}
+		seen[clean] = struct{}{}
+		paths = append(paths, clean)
+	}
+	return paths
+}
+
+func removeGeneratedAreaPath(path string) error {
+	clean, err := ensurePathWithinRoot(path, filepath.Join(defaultDataDir, "generated-areas"), false)
+	if err != nil {
+		return err
+	}
+	if !strings.EqualFold(filepath.Ext(clean), ".geojson") {
+		return errors.New("refusing to delete non-GeoJSON generated area")
+	}
+	if err := os.Remove(clean); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+func ensurePathWithinRoot(path string, root string, allowRoot bool) (string, error) {
+	if strings.TrimSpace(path) == "" || strings.TrimSpace(root) == "" {
+		return "", errors.New("path and root are required")
+	}
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	pathAbs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	relative, err := filepath.Rel(rootAbs, pathAbs)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(os.PathSeparator)) || (!allowRoot && relative == ".") {
+		return "", errors.New("refusing to access a path outside the managed directory")
+	}
+	// Check every existing ancestor, including the configured root. Lexical
+	// containment alone does not prevent deletion through a directory symlink.
+	for current := pathAbs; ; current = filepath.Dir(current) {
+		info, statErr := os.Lstat(current)
+		if statErr != nil && !os.IsNotExist(statErr) {
+			return "", statErr
+		}
+		if statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+			return "", errors.New("managed paths must not contain symbolic links")
+		}
+		if filepath.Dir(current) == current {
+			break
+		}
+	}
+	return pathAbs, nil
 }
 
 func buildTaskFromRecord(plan *TaskRecord) (*Task, error) {
@@ -432,24 +531,45 @@ func buildTaskFromRecord(plan *TaskRecord) (*Task, error) {
 	return buildTaskFromRequest(request)
 }
 
-func zipDirectory(sourceDir, zipPath string) error {
+func zipDirectory(sourceDir, zipPath string, onProgress func(current, total int) error) (err error) {
+	files := make([]string, 0)
+	if err := filepath.Walk(sourceDir, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if info.Mode().IsRegular() {
+			files = append(files, path)
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if onProgress != nil {
+		if err := onProgress(0, len(files)); err != nil {
+			return err
+		}
+	}
 	zipFile, err := os.Create(zipPath)
 	if err != nil {
 		return err
 	}
-	defer zipFile.Close()
+	defer func() {
+		if closeErr := zipFile.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+		if err != nil {
+			_ = os.Remove(zipPath)
+		}
+	}()
 
 	writer := zip.NewWriter(zipFile)
 	defer writer.Close()
 
-	return filepath.Walk(sourceDir, func(path string, info os.FileInfo, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
+	for index, path := range files {
+		_, err := os.Stat(path)
+		if err != nil {
+			return err
 		}
-		if info.IsDir() {
-			return nil
-		}
-
 		relative, err := filepath.Rel(sourceDir, path)
 		if err != nil {
 			return err
@@ -469,8 +589,19 @@ func zipDirectory(sourceDir, zipPath string) error {
 		if err != nil {
 			return err
 		}
-		return closeErr
-	})
+		if closeErr != nil {
+			return closeErr
+		}
+		if onProgress != nil {
+			if err := onProgress(index+1, len(files)); err != nil {
+				return err
+			}
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return err
+	}
+	return nil
 }
 
 func statusToTaskRecordStatus(status TaskStatus) TaskRecordStatus {
@@ -483,6 +614,8 @@ func statusToTaskRecordStatus(status TaskStatus) TaskRecordStatus {
 		return TaskRecordCancelled
 	case TaskFailed:
 		return TaskRecordFailed
+	case TaskPartialFailed:
+		return TaskRecordPartialFailed
 	default:
 		return TaskRecordRunning
 	}
@@ -507,11 +640,14 @@ func aggregateGroupStatus(plan *TaskRecord) TaskRecordStatus {
 		return plan.Status
 	}
 
-	var completed, running, paused, failed, cancelled, scheduled int
+	var completed, running, paused, failed, partial, cancelled, scheduled int
 	for _, child := range plan.Children {
 		status := child.Status
 		if child.LastRun != nil {
 			status = statusToTaskRecordStatus(child.LastRun.Status)
+		}
+		if child.Status == TaskRecordQueued {
+			status = TaskRecordQueued
 		}
 		switch status {
 		case TaskRecordCompleted:
@@ -522,6 +658,8 @@ func aggregateGroupStatus(plan *TaskRecord) TaskRecordStatus {
 			paused++
 		case TaskRecordFailed:
 			failed++
+		case TaskRecordPartialFailed:
+			partial++
 		case TaskRecordCancelled:
 			cancelled++
 		default:
@@ -541,10 +679,10 @@ func aggregateGroupStatus(plan *TaskRecord) TaskRecordStatus {
 		return TaskRecordRunning
 	case paused > 0 && running == 0:
 		return TaskRecordPaused
-	case completed+failed+cancelled == total && failed > 0:
+	case completed+failed+partial+cancelled == total && failed+partial+cancelled > 0:
 		return TaskRecordPartialFailed
 	case scheduled == total:
-		return TaskRecordScheduled
+		return TaskRecordQueued
 	default:
 		return TaskRecordRunning
 	}
