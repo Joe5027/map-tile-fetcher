@@ -9,6 +9,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join, resolve, delimiter as pathDelimiter } from "node:path";
 import { rm } from "node:fs/promises";
 import process from "node:process";
+import { runRepairUIChecks } from "./repair_ui_checks.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const appDir = resolve(scriptDir, "..");
@@ -337,6 +338,7 @@ async function runSmoke(baseURL) {
     await login(page);
     await smokeRegionFlow(page, createdPayloads);
     await smokeRangeFlow(page, createdPayloads);
+    await runRepairUIChecks(page);
 
     if (consoleErrors.length > 0) {
       throw new Error(`browser console errors:\n${consoleErrors.join("\n")}`);

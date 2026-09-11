@@ -23,12 +23,19 @@ let rangeBaseLayerRenderToken = 0;
 let rangeTiandituPreviewTokenValue = "";
 let rangeTiandituPreviewTokenId = "";
 let rangeTiandituPreviewTokenPromise = null;
+let previewTokenExpiresAt = 0;
+let previewTokenRefreshTimer = null;
+let previewTokenGeneration = 0;
+let previewRecoveryUsed = false;
 let adminRegionMap = null;
 let adminRegionBaseLayer = null;
 let adminRegionLabelLayer = null;
 let adminRegionLayerGroup = null;
 let adminRegionSelectedLayer = null;
 let taskAreaPreviewLayer = null;
+let taskPreviewSequence = 0;
+let taskPreviewAbort = null;
+let taskPreviewTask = null;
 let adminRegionLevel = "province";
 let adminRegionRenderToken = 0;
 let adminRegionBaseLayerRenderToken = 0;
@@ -38,6 +45,9 @@ let rangeMapInitRetries = 0;
 let currentTaskFilter = "all";
 let cachedTasks = [];
 let taskPollingTimer = null;
+let taskLoadPromise = null;
+let taskLoadGeneration = 0;
+let authenticated = false;
 const expandedProviders = new Set();
 const expandedGroupTasks = new Set();
 const expandedChildTasks = new Set();
@@ -112,6 +122,9 @@ document.addEventListener("DOMContentLoaded", async () => {
 });
 
 function bindEvents() {
+    document.getElementById("taskPreviewLevel").addEventListener("change",(event)=>{
+        if(taskPreviewTask) void previewTaskArea(taskPreviewTask,Number(event.target.value));
+    });
     document.getElementById("loginForm").addEventListener("submit", login);
     document.getElementById("logoutBtn").addEventListener("click", logout);
     document.getElementById("accountMenuBtn").addEventListener("click", (event) => {
@@ -376,12 +389,19 @@ async function loadTaskLimits() {
 }
 
 function showLogin() {
+    authenticated = false;
+    taskLoadGeneration++;
+    resetPreviewCredentials();
+    clearTaskPreview();
     stopTaskPolling();
     document.getElementById("loginView").classList.remove("is-hidden");
     document.getElementById("appView").classList.add("is-hidden");
 }
 
 function showApp(user) {
+    authenticated = true;
+    taskLoadGeneration++;
+    taskLoadPromise = null;
     document.getElementById("currentUsername").textContent = user.username;
     document.getElementById("loginView").classList.add("is-hidden");
     document.getElementById("appView").classList.remove("is-hidden");
@@ -389,6 +409,7 @@ function showApp(user) {
 
 function startTaskPolling() {
     stopTaskPolling();
+    if (!authenticated) return;
     taskPollingTimer = window.setInterval(() => {
         void loadTasks();
     }, 5000);
@@ -432,6 +453,7 @@ function setWorkspaceTab(tab) {
 }
 
 function setTaskMode(mode) {
+    if(mode !== "tasks") clearTaskPreview();
     taskMode = mode === "tasks" ? "tasks" : mode === "bbox" ? "bbox" : "region";
     if (taskMode !== "tasks") {
         activeMapMode = taskMode;
@@ -583,6 +605,7 @@ function writeSavedCredentials(credentials) {
 }
 
 function applyCredentialsToTaskForm(credentials) {
+    resetPreviewCredentials();
     const inputs = getCredentialInputs();
     Object.entries(inputs).forEach(([key, input]) => {
         if (!input) {
@@ -778,6 +801,7 @@ async function updateAdminRegionBaseLayer() {
         maxZoom
     });
     adminRegionBaseLayer.on("tileerror", () => {
+        if(source.startsWith("tdt-")) void recoverPreviewCredentials(credentials.tiandituToken);
         if (hint && source.startsWith("tdt-")) {
             hint.textContent = "天地图预览瓦片加载失败，请检查 Token 权限";
         }
@@ -790,6 +814,7 @@ async function updateAdminRegionBaseLayer() {
             opacity: 1
         });
         adminRegionLabelLayer.on("tileerror", () => {
+            void recoverPreviewCredentials(credentials.tiandituToken);
             if (hint) {
                 hint.textContent = "天地图标注加载失败，请检查 Token 权限";
             }
@@ -951,6 +976,7 @@ function previousAdminRegionLevel(level) {
 }
 
 function handleAdminRegionMapClick(event) {
+    if(taskMode === "tasks") return;
     const target = event.originalEvent && event.originalEvent.target;
     const regionElement = target && target.closest ? target.closest("[data-admin-region-id]") : null;
     const region = regionElement ? getRegionByID(regionElement.dataset.adminRegionId) : null;
@@ -1270,6 +1296,7 @@ async function updateRangeBaseLayer() {
         maxZoom
     });
     rangeBaseLayer.on("tileerror", () => {
+        if(source.startsWith("tdt-")) void recoverPreviewCredentials(credentials.tiandituToken);
         if (hint && source.startsWith("tdt-")) {
             hint.textContent = "天地图预览瓦片加载失败，请检查 Token 权限";
         }
@@ -1283,6 +1310,7 @@ async function updateRangeBaseLayer() {
             opacity: 1
         });
         rangeLabelLayer.on("tileerror", () => {
+            void recoverPreviewCredentials(credentials.tiandituToken);
             if (hint) {
                 hint.textContent = "天地图标注加载失败，请检查 Token 权限";
             }
@@ -1299,7 +1327,13 @@ async function ensureTiandituPreviewToken(token) {
     if (!hasUsableCredential(normalized, "YOUR_TIANDITU_TOKEN")) {
         return "";
     }
-    if (rangeTiandituPreviewTokenValue === normalized && rangeTiandituPreviewTokenId) {
+    if(rangeTiandituPreviewTokenValue && rangeTiandituPreviewTokenValue !== normalized) {
+        previewTokenGeneration++;
+        window.clearTimeout(previewTokenRefreshTimer);
+        rangeTiandituPreviewTokenPromise=null;
+        previewRecoveryUsed=false;
+    }
+    if (rangeTiandituPreviewTokenValue === normalized && rangeTiandituPreviewTokenId && Date.now() < previewTokenExpiresAt - 60000) {
         return rangeTiandituPreviewTokenId;
     }
     if (rangeTiandituPreviewTokenPromise && rangeTiandituPreviewTokenValue === normalized) {
@@ -1308,23 +1342,58 @@ async function ensureTiandituPreviewToken(token) {
 
     rangeTiandituPreviewTokenValue = normalized;
     rangeTiandituPreviewTokenId = "";
+    const generation = previewTokenGeneration;
     rangeTiandituPreviewTokenPromise = fetchJSON("/api/tile-preview/tianditu-token", {
         method: "POST",
         body: JSON.stringify({ token: normalized })
     }).then((response) => {
-        if (!response.ok || !response.data.id) {
+        if (!response.ok || !response.data.id || generation !== previewTokenGeneration || normalized !== rangeTiandituPreviewTokenValue) {
             return "";
         }
         rangeTiandituPreviewTokenId = String(response.data.id);
+        previewTokenExpiresAt = Date.parse(response.data.expiresAt) || Date.now();
+        window.clearTimeout(previewTokenRefreshTimer);
+        previewTokenRefreshTimer = window.setTimeout(async () => {
+            if(generation !== previewTokenGeneration || !authenticated) return;
+            previewRecoveryUsed = false;
+            await ensureTiandituPreviewToken(normalized);
+            await Promise.all([updateRangeBaseLayer(),updateAdminRegionBaseLayer()]);
+        },Math.max(1000,previewTokenExpiresAt - Date.now() - 60000));
         return rangeTiandituPreviewTokenId;
     }).finally(() => {
-        rangeTiandituPreviewTokenPromise = null;
+        if(generation === previewTokenGeneration) rangeTiandituPreviewTokenPromise = null;
     });
 
     return rangeTiandituPreviewTokenPromise;
 }
 
+function resetPreviewCredentials() {
+    previewTokenGeneration++;
+    rangeBaseLayerRenderToken++;
+    adminRegionBaseLayerRenderToken++;
+    window.clearTimeout(previewTokenRefreshTimer);
+    previewTokenRefreshTimer = null;
+    previewTokenExpiresAt = 0;
+    rangeTiandituPreviewTokenId = "";
+    rangeTiandituPreviewTokenValue = "";
+    rangeTiandituPreviewTokenPromise = null;
+    previewRecoveryUsed = false;
+    for(const layer of [rangeBaseLayer,rangeLabelLayer,adminRegionBaseLayer,adminRegionLabelLayer]) layer?.remove();
+    rangeBaseLayer = rangeLabelLayer = adminRegionBaseLayer = adminRegionLabelLayer = null;
+}
+
+async function recoverPreviewCredentials(token) {
+    if(previewRecoveryUsed || !authenticated) return;
+    previewRecoveryUsed = true;
+    rangeTiandituPreviewTokenId = "";
+    previewTokenExpiresAt = 0;
+    if(await ensureTiandituPreviewToken(token)) {
+        await Promise.all([updateRangeBaseLayer(),updateAdminRegionBaseLayer()]);
+    }
+}
+
 function handleRangeMapClick(latlng) {
+    if(taskMode === "tasks") return;
     document.getElementById("rangeClickCoord").textContent = formatLngLat(latlng);
     if (rangeDrawMode === "polygon") {
         handleRangePolygonClick(latlng);
@@ -2491,15 +2560,28 @@ async function createTask(event) {
 }
 
 async function loadTasks() {
+    if(taskLoadPromise) return taskLoadPromise;
+    const generation = taskLoadGeneration;
+    const pending = loadTasksOnce(generation).finally(()=>{if(taskLoadPromise === pending) taskLoadPromise=null;});
+    taskLoadPromise = pending;
+    return pending;
+}
+
+async function loadTasksOnce(generation) {
+    showMessage("taskListMessage","加载中...");
     const response = await fetchJSON("/api/tasks", { allowUnauthorized: true });
+    if(generation !== taskLoadGeneration) return;
     if (!response.ok) {
         if (response.status === 401) {
             showLogin();
+        } else {
+            showMessage("taskListMessage",response.status === 0 ? "网络连接失败，等待重试。" : "任务加载失败，等待重试。");
         }
         return;
     }
 
     cachedTasks = Array.isArray(response.data) ? response.data : [];
+    hideMessage("taskListMessage");
     cleanupSelections(cachedTasks);
     updateWorkspaceTaskCount(cachedTasks);
     renderTaskStats(cachedTasks);
@@ -2520,7 +2602,7 @@ function renderTaskStats(tasks) {
     const stats = [
         { id: "all", label: "全部任务", count: counts.all },
         { id: "running", label: "运行中", count: counts.running },
-        { id: "scheduled", label: "计划中", count: counts.scheduled + counts.pending },
+        { id: "scheduled", label: "等待中", count: counts.scheduled + counts.pending + counts.queued },
         { id: "completed", label: "已完成", count: counts.completed },
         { id: "failed", label: "失败", count: counts.failed + counts.partial_failed },
         { id: "paused", label: "已暂停", count: counts.paused }
@@ -2596,7 +2678,7 @@ function renderGroupTask(task) {
                         </div>
                     </div>
                     <div class="task-actions">
-                        <div class="task-menu" onclick="event.stopPropagation()">
+                        <div class="task-menu">
                             <button type="button" class="icon-mini-button" data-task-menu-toggle="${menuId}" aria-label="更多操作">
                                 ${icon("more")}
                             </button>
@@ -2615,6 +2697,7 @@ function renderGroupTask(task) {
                 </div>
             </summary>
             <div class="task-card__content">
+                <p class="task-full-name">${task.name}</p>
                 ${riskHint ? `
                     <div class="task-risk-banner">
                         ${icon("warning")}
@@ -2672,7 +2755,7 @@ function renderStandaloneTask(task) {
                         </div>
                     </div>
                     <div class="task-actions">
-                        <div class="task-menu" onclick="event.stopPropagation()">
+                        <div class="task-menu">
                             <button type="button" class="icon-mini-button" data-task-menu-toggle="${menuId}" aria-label="更多操作">
                                 ${icon("more")}
                             </button>
@@ -2691,6 +2774,7 @@ function renderStandaloneTask(task) {
                 </div>
             </summary>
             <div class="task-card__content">
+                <p class="task-full-name">${task.name}</p>
                 ${riskHint ? `
                     <div class="task-risk-banner">
                         ${icon("warning")}
@@ -2805,67 +2889,58 @@ function renderArtifactPill(status) {
     return `<span class="artifact-pill">产物：${translateArtifactStatus(status)}</span>`;
 }
 
-async function previewTaskArea(task) {
-    const area = task && task.area ? task.area : {};
-    if (area.mode === "bbox" && area.bbox) {
-        activeMapMode = "bbox";
-        setTaskMode("tasks");
-        window.setTimeout(() => showTaskBBoxOnMap(area.bbox), 50);
-        return;
-    }
-
-    activeMapMode = "region";
-    setTaskMode("tasks");
-    const response = await fetchJSON(`/api/tasks/${encodeURIComponent(task.id)}/area`);
-    if (!response.ok || !adminRegionMap || !window.L) {
-        return;
-    }
-    if (taskAreaPreviewLayer) {
-        adminRegionMap.removeLayer(taskAreaPreviewLayer);
-    }
-    taskAreaPreviewLayer = L.geoJSON(selectMostSpecificTaskArea(response.data), {
-        style: { color: "#2563eb", weight: 3, fillColor: "#2563eb", fillOpacity: 0.14 }
-    }).addTo(adminRegionMap);
-    const bounds = taskAreaPreviewLayer.getBounds();
-    if (bounds.isValid()) {
-        adminRegionMap.fitBounds(bounds.pad(0.12), { padding: [26, 26], maxZoom: 11 });
-    }
+function clearTaskPreview() {
+    taskPreviewSequence++;
+    taskPreviewAbort?.abort();
+    taskPreviewAbort=null;
+    taskAreaPreviewLayer?.remove();
+    taskAreaPreviewLayer=null;
+    taskPreviewTask=null;
+    document.getElementById("taskPreviewControls")?.classList.add("is-hidden");
 }
 
-function selectMostSpecificTaskArea(geojson) {
-    const features = Array.isArray(geojson && geojson.features) ? geojson.features : [];
-    if (features.length <= 1 || !window.L) {
-        return geojson;
+async function previewTaskArea(task, level) {
+    clearTaskPreview();
+    const sequence=taskPreviewSequence;
+    taskPreviewTask=task;
+    taskPreviewAbort=new AbortController();
+    activeMapMode=task?.area?.bbox ? "bbox" : "region";
+    setTaskMode("tasks");
+    document.getElementById("taskPreviewControls").classList.remove("is-hidden");
+    const status=document.getElementById("taskPreviewStatus");
+    status.textContent=`${task.name || "任务"}：加载范围中...`;
+    const query=Number.isInteger(level) ? `?level=${level}` : "";
+    const response=await fetchJSON(`/api/tasks/${encodeURIComponent(task.id)}/area${query}`,{signal:taskPreviewAbort.signal});
+    if(sequence!==taskPreviewSequence || taskMode!=="tasks") return;
+    const map=activeMapMode==="bbox" ? rangeMap : adminRegionMap;
+    if(!response.ok || !map || !window.L) {
+        status.textContent=response.status===0 ? "范围网络请求失败" : "任务范围加载失败";
+        return;
     }
-
-    let selectedFeature = null;
-    let selectedArea = Number.POSITIVE_INFINITY;
-    features.forEach((feature) => {
-        const bounds = L.geoJSON(feature).getBounds();
-        if (!bounds || !bounds.isValid()) {
-            return;
-        }
-        const southWest = bounds.getSouthWest();
-        const northEast = bounds.getNorthEast();
-        const area = Math.abs((northEast.lng - southWest.lng) * (northEast.lat - southWest.lat));
-        if (area > 0 && area < selectedArea) {
-            selectedArea = area;
-            selectedFeature = feature;
-        }
-    });
-
-    return selectedFeature
-        ? { type: "FeatureCollection", features: [selectedFeature] }
-        : geojson;
+    const features=Array.isArray(response.data.features) ? response.data.features : [];
+    if(features.length===0){status.textContent="该层级没有范围数据";return;}
+    const select=document.getElementById("taskPreviewLevel");
+    select.replaceChildren();
+    for(const entry of response.data.levels || []) {
+        const option=document.createElement("option");
+        option.value=entry.index;
+        option.textContent=`${Number(entry.minZoom)}-${Number(entry.maxZoom)} 级`;
+        option.selected=entry.index===response.data.selectedLevel;
+        select.append(option);
+    }
+    taskAreaPreviewLayer=L.geoJSON(response.data,{interactive:false,style:{color:"#2563eb",weight:3,fillColor:"#2563eb",fillOpacity:0.14}}).addTo(map);
+    const bounds=taskAreaPreviewLayer.getBounds();
+    if(bounds.isValid()) map.fitBounds(bounds.pad(0.12),{padding:[26,26],maxZoom:17});
+    status.textContent=`${task.name || "任务"}：${features.length} 个区域`;
 }
 
 function showTaskBBoxOnMap(bbox) {
     if (!rangeMap || !window.L) {
         return;
     }
-    clearRangeOverlays();
+    taskAreaPreviewLayer?.remove();
     const bounds = L.latLngBounds([bbox.minLat, bbox.minLon], [bbox.maxLat, bbox.maxLon]);
-    rangeRectangle = L.rectangle(bounds, {
+    taskAreaPreviewLayer = L.rectangle(bounds, {
         color: "#2563eb", weight: 3, dashArray: "6 6", fillColor: "#2563eb", fillOpacity: 0.14
     }).addTo(rangeMap);
     rangeMap.fitBounds(bounds.pad(0.2), { padding: [26, 26], maxZoom: 17 });
@@ -2905,6 +2980,7 @@ function countTasks(tasks) {
         all: tasks.length,
         scheduled: 0,
         pending: 0,
+        queued: 0,
         running: 0,
         paused: 0,
         completed: 0,
@@ -2925,7 +3001,7 @@ function applyTaskFilter(tasks) {
         return tasks;
     }
     if (currentTaskFilter === "scheduled") {
-        return tasks.filter((task) => task.status === "scheduled" || task.status === "pending");
+        return tasks.filter((task) => task.status === "scheduled" || task.status === "queued" || task.status === "pending");
     }
     if (currentTaskFilter === "failed") {
         return tasks.filter((task) => task.status === "failed" || task.status === "partial_failed");
@@ -3257,11 +3333,13 @@ async function mutateTask(url, method = "PUT", silent = false) {
 }
 
 async function fetchJSON(url, options = {}) {
+    const generation = taskLoadGeneration;
     const config = {
         method: options.method || "GET",
         headers: { "Content-Type": "application/json" },
         credentials: "same-origin"
     };
+    if(options.signal) config.signal = options.signal;
 
     if (options.body) {
         config.body = options.body;
@@ -3276,7 +3354,7 @@ async function fetchJSON(url, options = {}) {
             data = {};
         }
 
-        if (response.status === 401 && !options.allowUnauthorized) {
+        if (response.status === 401 && !options.allowUnauthorized && generation === taskLoadGeneration) {
             showLogin();
         }
 

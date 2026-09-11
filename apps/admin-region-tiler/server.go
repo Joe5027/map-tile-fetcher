@@ -512,7 +512,7 @@ func registerTiandituPreviewToken(c *gin.Context) {
 	tiandituPreviewTokens.values[id] = previewToken{Token: token, UserID: user.ID, ExpiresAt: now.Add(previewTokenTTL)}
 	tiandituPreviewTokens.Unlock()
 
-	c.JSON(http.StatusOK, gin.H{"id": id})
+	c.JSON(http.StatusOK, gin.H{"id": id, "expiresAt": now.Add(previewTokenTTL).Format(time.RFC3339)})
 }
 
 func proxyTiandituPreviewTile(c *gin.Context) {
@@ -789,14 +789,32 @@ func getTaskArea(c *gin.Context) {
 		return
 	}
 	var selected *LevelConfig
+	selectedIndex := -1
+	levels := make([]gin.H, 0, len(plan.Levels))
 	for index := range plan.Levels {
 		level := &plan.Levels[index]
-		if strings.TrimSpace(level.Geojson) != "" && (selected == nil || level.MinZoom > selected.MinZoom) {
+		levels = append(levels, gin.H{"index": index, "minZoom": level.MinZoom, "maxZoom": level.MaxZoom})
+		if selected == nil || level.MaxZoom > selected.MaxZoom {
 			selected = level
+			selectedIndex = index
 		}
+	}
+	if raw, exists := c.GetQuery("level"); exists {
+		index, err := strconv.Atoi(raw)
+		if err != nil || index < 0 || index >= len(plan.Levels) {
+			c.JSON(400, gin.H{"error": "invalid task area level"})
+			return
+		}
+		selected = &plan.Levels[index]
+		selectedIndex = index
 	}
 	if selected == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "task has no GeoJSON area"})
+		return
+	}
+	if selected.BBox != nil {
+		b := selected.BBox
+		c.JSON(200, gin.H{"type": "FeatureCollection", "levels": levels, "selectedLevel": selectedIndex, "features": []gin.H{{"type": "Feature", "properties": gin.H{}, "geometry": gin.H{"type": "Polygon", "coordinates": [][][]float64{{{b.MinLon, b.MinLat}, {b.MaxLon, b.MinLat}, {b.MaxLon, b.MaxLat}, {b.MinLon, b.MaxLat}, {b.MinLon, b.MinLat}}}}}}})
 		return
 	}
 	path, err := resolveManagedTaskGeoJSONPath(selected.Geojson)
@@ -821,7 +839,7 @@ func getTaskArea(c *gin.Context) {
 	if collection.Type != "FeatureCollection" {
 		features = []json.RawMessage{json.RawMessage(data)}
 	}
-	c.JSON(http.StatusOK, gin.H{"type": "FeatureCollection", "features": features})
+	c.JSON(http.StatusOK, gin.H{"type": "FeatureCollection", "features": features, "levels": levels, "selectedLevel": selectedIndex})
 }
 
 func getTaskFailures(c *gin.Context) {
