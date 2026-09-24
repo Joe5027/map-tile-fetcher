@@ -759,14 +759,14 @@ async function updateAdminRegionBaseLayer() {
         return;
     }
     const renderToken = ++adminRegionBaseLayerRenderToken;
-    const source = document.getElementById("adminRegionPreviewSource")?.value || "osm";
+    const source = document.getElementById("adminRegionPreviewSource")?.value || "tdt-img";
     const credentials = readCredentialRequest(new FormData(document.getElementById("taskForm")));
     const hasToken = hasUsableCredential(credentials.tiandituToken, "YOUR_TIANDITU_TOKEN");
     const hint = document.getElementById("adminRegionMapHint");
 
-    let url = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+    let url = "";
     let labelUrl = "";
-    let maxZoom = 19;
+    let maxZoom = 18;
     if ((source === "tdt-img" || source === "tdt-vec") && hasToken) {
         const previewTokenId = await ensureTiandituPreviewToken(credentials.tiandituToken);
         if (renderToken !== adminRegionBaseLayerRenderToken) {
@@ -794,17 +794,20 @@ async function updateAdminRegionBaseLayer() {
         adminRegionMap.removeLayer(adminRegionLabelLayer);
         adminRegionLabelLayer = null;
     }
-    adminRegionBaseLayer = L.tileLayer(url, {
-        minZoom: MAP_MIN_ZOOM,
-        maxZoom,
-        noWrap: true
-    });
-    adminRegionBaseLayer.on("tileerror", () => {
-        if (hint && source.startsWith("tdt-")) {
-            hint.textContent = "天地图预览瓦片加载失败，请检查 Token 权限";
-        }
-    });
-    adminRegionBaseLayer.addTo(adminRegionMap);
+    adminRegionBaseLayer = null;
+    if (url) {
+        adminRegionBaseLayer = L.tileLayer(url, {
+            minZoom: MAP_MIN_ZOOM,
+            maxZoom,
+            noWrap: true
+        });
+        adminRegionBaseLayer.on("tileerror", () => {
+            if (hint) {
+                hint.textContent = "天地图预览瓦片加载失败，请检查 Token 权限";
+            }
+        });
+        adminRegionBaseLayer.addTo(adminRegionMap);
+    }
     if (labelUrl) {
         adminRegionLabelLayer = L.tileLayer(labelUrl, {
             minZoom: MAP_MIN_ZOOM,
@@ -1371,15 +1374,15 @@ async function updateRangeBaseLayer() {
         return;
     }
     const renderToken = ++rangeBaseLayerRenderToken;
-    const source = document.getElementById("rangePreviewSource")?.value || "osm";
+    const source = document.getElementById("rangePreviewSource")?.value || "tdt-img";
     const credentials = readCredentialRequest(new FormData(document.getElementById("taskForm")));
     const hasToken = hasUsableCredential(credentials.tiandituToken, "YOUR_TIANDITU_TOKEN");
     const hint = document.getElementById("rangePreviewHint");
 
-    let url = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+    let url = "";
     let labelUrl = "";
-    let maxZoom = 19;
-    let hintText = "OSM 预览底图";
+    let maxZoom = 18;
+    let hintText = "输入天地图 Token 后显示天地图预览";
     if ((source === "tdt-img" || source === "tdt-vec") && hasToken) {
         const previewTokenId = await ensureTiandituPreviewToken(credentials.tiandituToken);
         if (renderToken !== rangeBaseLayerRenderToken) {
@@ -1412,17 +1415,20 @@ async function updateRangeBaseLayer() {
         rangeMap.removeLayer(rangeLabelLayer);
         rangeLabelLayer = null;
     }
-    rangeBaseLayer = L.tileLayer(url, {
-        minZoom: MAP_MIN_ZOOM,
-        maxZoom,
-        noWrap: true
-    });
-    rangeBaseLayer.on("tileerror", () => {
-        if (hint && source.startsWith("tdt-")) {
-            hint.textContent = "天地图预览瓦片加载失败，请检查 Token 权限";
-        }
-    });
-    rangeBaseLayer.addTo(rangeMap);
+    rangeBaseLayer = null;
+    if (url) {
+        rangeBaseLayer = L.tileLayer(url, {
+            minZoom: MAP_MIN_ZOOM,
+            maxZoom,
+            noWrap: true
+        });
+        rangeBaseLayer.on("tileerror", () => {
+            if (hint) {
+                hint.textContent = "天地图预览瓦片加载失败，请检查 Token 权限";
+            }
+        });
+        rangeBaseLayer.addTo(rangeMap);
+    }
     if (labelUrl) {
         rangeLabelLayer = L.tileLayer(labelUrl, {
             minZoom: MAP_MIN_ZOOM,
