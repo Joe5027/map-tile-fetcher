@@ -33,6 +33,10 @@
 - On 2026-06-27, `apps/admin-region-tiler/scripts/release_preflight.mjs` and
   `.github/workflows/validate.yml` were added so local release checks and
   GitHub Actions use the same validation route.
+- On 2026-10-10, production release `V0.3.12` was deployed from runtime commit
+  `b11408f`; it includes batched/cached administrative-region GeoJSON loading
+  and removes the OSM basemap from both administrative-region and bounding-box
+  previews.
 
 ## Decisions
 
@@ -57,6 +61,9 @@
 - Keep the old .NET range downloader as documentation only in
   `docs/range-migration.md`; do not reintroduce runtime code unless explicitly
   requested.
+- Keep production releases immutable. `V0.3.12` was built as a compatibility
+  overlay on the prior production image so the existing non-root UID, workdir,
+  entrypoint, persistent mounts, and rollback path remained unchanged.
 
 ## Assumptions
 
@@ -113,9 +120,21 @@
 - Local workflow validation on 2026-06-27 was limited to manual source
   inspection because `actionlint` was not installed and Ruby/YAML parsing was
   unavailable in the session.
+- 2026-10-10 `V0.3.12` release validation passed: `go test ./...` on Go 1.25.4,
+  `node --check` for `static/script.js`, `scripts/smoke_ui.mjs`, and
+  `scripts/release_preflight.mjs`, region-resource hash comparison, image user /
+  workdir / entrypoint compatibility inspection, image and binary hash checks,
+  container health, external HTTP `200`, unauthenticated auth API `401`, and
+  deployed frontend inspection confirming no OSM or OpenStreetMap references.
+- The production database was backed up before recreation of the application
+  container. Counts remained 60 plans and 44 runs after deployment, with zero
+  active runs before and after the release.
+- The documented handoff validator and workspace audit were unavailable on
+  2026-10-10 because their absolute paths reference a different Windows user
+  profile. Section-order inspection, source comparison, the repository
+  sensitive-value scan, and `git diff --check` were used instead.
 
 ## Next Action
 
-- Monitor the first GitHub Actions run after pushing this repository; if remote
-  browser dependency installation is slow or flaky, add dependency caching or
-  split UI smoke into a separate workflow job.
+- Monitor production after `V0.3.12`; use the timestamped Compose and SQLite
+  backups from the deployment if rollback becomes necessary.
