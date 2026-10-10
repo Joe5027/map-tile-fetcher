@@ -244,6 +244,14 @@ type previewToken struct {
 	ExpiresAt time.Time
 }
 
+type artifactDownloadGrant struct {
+	TaskID       string
+	RunID        string
+	ArtifactPath string
+	ArtifactName string
+	ExpiresAt    time.Time
+}
+
 type regionCatalogCacheState struct {
 	sync.RWMutex
 	Loaded    bool
@@ -258,6 +266,7 @@ type regionCatalogCacheState struct {
 const regionCatalogCacheTTL = 10 * time.Second
 const maxRegionGeoJSONBatchSize = 64
 const previewTokenTTL = 15 * time.Minute
+const artifactDownloadGrantTTL = 7 * 24 * time.Hour
 const maxPreviewTileBytes int64 = 8 << 20
 
 var (
@@ -271,6 +280,14 @@ var (
 		sync.RWMutex
 		values map[string]previewToken
 	}{values: make(map[string]previewToken)}
+	artifactDownloadGrants = struct {
+		sync.Mutex
+		values map[string]artifactDownloadGrant
+		byRun  map[string]string
+	}{
+		values: make(map[string]artifactDownloadGrant),
+		byRun:  make(map[string]string),
+	}
 	previewHTTPClient = newTileHTTPClient(20*time.Second, "")
 )
 
@@ -292,6 +309,7 @@ func initServer() {
 
 	r.POST("/api/auth/login", loginHandler)
 	r.POST("/api/auth/logout", logoutHandler)
+	r.GET("/api/downloads/:token", downloadArtifactByGrant)
 
 	protected := r.Group("/api")
 	protected.Use(authMiddleware())
@@ -749,7 +767,23 @@ func downloadTaskArtifact(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"error": "artifact is not ready"})
 		return
 	}
-	artifactPath, err := ensurePathWithinRoot(plan.LastRun.ArtifactPath, viper.GetString("output.directory"), false)
+	serveArtifactFile(c, plan.LastRun.ArtifactPath, plan.LastRun.ArtifactName)
+}
+
+func downloadArtifactByGrant(c *gin.Context) {
+	token := strings.TrimSpace(c.Param("token"))
+	grant, ok := artifactDownloadGrantForToken(token, time.Now())
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "download link is invalid or expired"})
+		return
+	}
+	c.Header("Referrer-Policy", "no-referrer")
+	c.Header("Cache-Control", "private, no-store")
+	serveArtifactFile(c, grant.ArtifactPath, grant.ArtifactName)
+}
+
+func serveArtifactFile(c *gin.Context, rawPath, rawName string) {
+	artifactPath, err := ensurePathWithinRoot(rawPath, viper.GetString("output.directory"), false)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "artifact is unavailable"})
 		return
@@ -759,11 +793,78 @@ func downloadTaskArtifact(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "artifact is unavailable"})
 		return
 	}
-	name := filepath.Base(strings.TrimSpace(plan.LastRun.ArtifactName))
+	name := filepath.Base(strings.TrimSpace(rawName))
 	if name == "." || name == string(filepath.Separator) || name == "" {
 		name = filepath.Base(artifactPath)
 	}
 	c.FileAttachment(artifactPath, name)
+}
+
+func artifactDownloadURL(taskID string, run *TaskRunRecord) string {
+	fallback := "/api/tasks/" + taskID + "/download"
+	if run == nil || run.ArtifactStatus != ArtifactReady || strings.TrimSpace(run.ArtifactPath) == "" {
+		return ""
+	}
+
+	now := time.Now()
+	runKey := taskID + "\x00" + run.ID
+	artifactDownloadGrants.Lock()
+	defer artifactDownloadGrants.Unlock()
+
+	for token, grant := range artifactDownloadGrants.values {
+		if grant.ExpiresAt.After(now) {
+			continue
+		}
+		delete(artifactDownloadGrants.values, token)
+		key := grant.TaskID + "\x00" + grant.RunID
+		if artifactDownloadGrants.byRun[key] == token {
+			delete(artifactDownloadGrants.byRun, key)
+		}
+	}
+
+	if token := artifactDownloadGrants.byRun[runKey]; token != "" {
+		grant, exists := artifactDownloadGrants.values[token]
+		if exists && grant.ArtifactPath == run.ArtifactPath && grant.ArtifactName == run.ArtifactName {
+			return "/api/downloads/" + token
+		}
+		delete(artifactDownloadGrants.values, token)
+		delete(artifactDownloadGrants.byRun, runKey)
+	}
+
+	token, err := newToken()
+	if err != nil {
+		log.Warnf("failed to create artifact download link for task %s: %v", taskID, err)
+		return fallback
+	}
+	artifactDownloadGrants.values[token] = artifactDownloadGrant{
+		TaskID:       taskID,
+		RunID:        run.ID,
+		ArtifactPath: run.ArtifactPath,
+		ArtifactName: run.ArtifactName,
+		ExpiresAt:    now.Add(artifactDownloadGrantTTL),
+	}
+	artifactDownloadGrants.byRun[runKey] = token
+	return "/api/downloads/" + token
+}
+
+func artifactDownloadGrantForToken(token string, now time.Time) (artifactDownloadGrant, bool) {
+	if token == "" {
+		return artifactDownloadGrant{}, false
+	}
+	artifactDownloadGrants.Lock()
+	defer artifactDownloadGrants.Unlock()
+	grant, exists := artifactDownloadGrants.values[token]
+	if !exists || !grant.ExpiresAt.After(now) {
+		if exists {
+			delete(artifactDownloadGrants.values, token)
+			key := grant.TaskID + "\x00" + grant.RunID
+			if artifactDownloadGrants.byRun[key] == token {
+				delete(artifactDownloadGrants.byRun, key)
+			}
+		}
+		return artifactDownloadGrant{}, false
+	}
+	return grant, true
 }
 
 func getTaskArea(c *gin.Context) {
@@ -1379,7 +1480,7 @@ func taskResponseFromRecord(plan *TaskRecord) TaskResponse {
 		response.ArtifactStatus = run.ArtifactStatus
 		response.ArtifactName = run.ArtifactName
 		if run.ArtifactStatus == ArtifactReady {
-			response.DownloadURL = "/api/tasks/" + plan.ID + "/download"
+			response.DownloadURL = artifactDownloadURL(plan.ID, run)
 		}
 	}
 

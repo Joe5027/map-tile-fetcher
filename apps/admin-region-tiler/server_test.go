@@ -2,11 +2,16 @@ package main
 
 import (
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/spf13/viper"
 )
 
 func TestBuildPlansFromRequestBBoxCreatesDirectLevel(t *testing.T) {
@@ -213,6 +218,103 @@ func TestPlanResponseIncludesUnifiedTaskContractFields(t *testing.T) {
 	if response.Progress.Total != response.Total || response.Artifact.Status != response.ArtifactStatus {
 		t.Fatalf("unified response mirrors are inconsistent: %#v", response)
 	}
+}
+
+func TestArtifactDownloadGrantSupportsDirectDownloadWithoutSession(t *testing.T) {
+	withTempWorkingDir(t)
+	resetArtifactDownloadGrantsForTest(t)
+	previousOutputDirectory := viper.GetString("output.directory")
+	viper.Set("output.directory", "output")
+	t.Cleanup(func() { viper.Set("output.directory", previousOutputDirectory) })
+
+	if err := os.MkdirAll("output", directoryPermissions); err != nil {
+		t.Fatal(err)
+	}
+	artifactPath := filepath.Join("output", "direct-download.zip")
+	if err := os.WriteFile(artifactPath, []byte("artifact-data"), filePermissions); err != nil {
+		t.Fatal(err)
+	}
+	run := &TaskRunRecord{
+		ID:             "run-direct-download",
+		TaskRecordID:   "task-direct-download",
+		ArtifactPath:   artifactPath,
+		ArtifactName:   "download.zip",
+		ArtifactStatus: ArtifactReady,
+	}
+	plan := &TaskRecord{
+		ID:           run.TaskRecordID,
+		Kind:         TaskRecordKindSingle,
+		Name:         "direct download",
+		ScheduleMode: ScheduleImmediate,
+		RunAt:        time.Now(),
+		LastRun:      run,
+	}
+
+	response := taskResponseFromRecord(plan)
+	if !strings.HasPrefix(response.DownloadURL, "/api/downloads/") {
+		t.Fatalf("expected public artifact grant URL, got %q", response.DownloadURL)
+	}
+	if second := taskResponseFromRecord(plan).DownloadURL; second != response.DownloadURL {
+		t.Fatalf("expected grant URL reuse, got %q then %q", response.DownloadURL, second)
+	}
+
+	token := strings.TrimPrefix(response.DownloadURL, "/api/downloads/")
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Params = gin.Params{{Key: "token", Value: token}}
+	context.Request = httptest.NewRequest(http.MethodGet, response.DownloadURL, nil)
+	downloadArtifactByGrant(context)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected direct download status %d, got %d: %s", http.StatusOK, recorder.Code, recorder.Body.String())
+	}
+	if recorder.Body.String() != "artifact-data" {
+		t.Fatalf("unexpected artifact body %q", recorder.Body.String())
+	}
+	if disposition := recorder.Header().Get("Content-Disposition"); !strings.Contains(disposition, "download.zip") {
+		t.Fatalf("unexpected content disposition %q", disposition)
+	}
+	if recorder.Header().Get("Referrer-Policy") != "no-referrer" {
+		t.Fatalf("expected no-referrer policy, got %q", recorder.Header().Get("Referrer-Policy"))
+	}
+}
+
+func TestExpiredArtifactDownloadGrantIsRejected(t *testing.T) {
+	resetArtifactDownloadGrantsForTest(t)
+	artifactDownloadGrants.Lock()
+	artifactDownloadGrants.values["expired"] = artifactDownloadGrant{
+		TaskID:    "task",
+		RunID:     "run",
+		ExpiresAt: time.Now().Add(-time.Second),
+	}
+	artifactDownloadGrants.byRun["task\x00run"] = "expired"
+	artifactDownloadGrants.Unlock()
+
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Params = gin.Params{{Key: "token", Value: "expired"}}
+	context.Request = httptest.NewRequest(http.MethodGet, "/api/downloads/expired", nil)
+	downloadArtifactByGrant(context)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("expected expired grant status %d, got %d", http.StatusNotFound, recorder.Code)
+	}
+}
+
+func resetArtifactDownloadGrantsForTest(t *testing.T) {
+	t.Helper()
+	artifactDownloadGrants.Lock()
+	previousValues := artifactDownloadGrants.values
+	previousByRun := artifactDownloadGrants.byRun
+	artifactDownloadGrants.values = make(map[string]artifactDownloadGrant)
+	artifactDownloadGrants.byRun = make(map[string]string)
+	artifactDownloadGrants.Unlock()
+	t.Cleanup(func() {
+		artifactDownloadGrants.Lock()
+		artifactDownloadGrants.values = previousValues
+		artifactDownloadGrants.byRun = previousByRun
+		artifactDownloadGrants.Unlock()
+	})
 }
 
 func withTempWorkingDir(t *testing.T) {
