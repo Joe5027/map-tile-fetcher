@@ -37,6 +37,9 @@
   `b11408f`; it includes batched/cached administrative-region GeoJSON loading
   and removes the OSM basemap from both administrative-region and bounding-box
   previews.
+- On 2026-10-10, production release `V0.3.13` was deployed from runtime commit
+  `bfa4af3`; artifact responses now provide random, artifact-scoped download
+  grant URLs that work with `wget` without exposing the browser session cookie.
 
 ## Decisions
 
@@ -64,6 +67,9 @@
 - Keep production releases immutable. `V0.3.12` was built as a compatibility
   overlay on the prior production image so the existing non-root UID, workdir,
   entrypoint, persistent mounts, and rollback path remained unchanged.
+- Keep authenticated legacy artifact routes for compatibility, while using
+  seven-day in-memory grants for copied direct-download links. A service restart
+  invalidates old grants, and refreshing the task page issues a replacement.
 
 ## Assumptions
 
@@ -133,8 +139,14 @@
   2026-10-10 because their absolute paths reference a different Windows user
   profile. Section-order inspection, source comparison, the repository
   sensitive-value scan, and `git diff --check` were used instead.
+- 2026-10-10 `V0.3.13` release validation passed: `go test ./...` with server Go
+  1.25.4, `node --check static/script.js`, focused direct-download and expiry
+  tests, image compatibility and health checks, and a production `wget` range
+  request without session cookies. The request returned `206`, one byte, range
+  headers, and the expected ZIP attachment name; database counts remained 60
+  plans, 44 runs, and zero active runs.
 
 ## Next Action
 
-- Monitor production after `V0.3.12`; use the timestamped Compose and SQLite
+- Monitor production after `V0.3.13`; use the timestamped Compose and SQLite
   backups from the deployment if rollback becomes necessary.
