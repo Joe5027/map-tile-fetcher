@@ -40,6 +40,11 @@
 - On 2026-10-10, production release `V0.3.13` was deployed from runtime commit
   `bfa4af3`; artifact responses now provide random, artifact-scoped download
   grant URLs that work with `wget` without exposing the browser session cookie.
+- On 2026-10-22, the production login password was rotated without committing
+  it to Git or baking it into an image. Existing sessions were revoked, the
+  persistent environment and SQLite bcrypt hash were synchronized, and release
+  `V0.3.14` was deployed from commit `1f187a0` without default credential
+  hints in the login form.
 
 ## Decisions
 
@@ -70,6 +75,9 @@
 - Keep authenticated legacy artifact routes for compatibility, while using
   seven-day in-memory grants for copied direct-download links. A service restart
   invalidates old grants, and refreshing the task page issues a replacement.
+- Keep production credentials only in the server environment and hashed user
+  records. Password rotations must back up both surfaces, revoke old sessions,
+  and verify both successful new-password login and rejected old-password login.
 
 ## Assumptions
 
@@ -145,8 +153,15 @@
   request without session cookies. The request returned `206`, one byte, range
   headers, and the expected ZIP attachment name; database counts remained 60
   plans, 44 runs, and zero active runs.
+- 2026-10-22 password-rotation and `V0.3.14` validation passed: the new password
+  returned `200` for login and authenticated identity, the retired default
+  password returned `401`, the stored hash was bcrypt, the container was
+  `running/healthy`, and the externally served login HTML contained neither
+  default credential hint. Production retained 72 plans and 53 runs with zero
+  active runs before deployment.
 
 ## Next Action
 
-- Monitor production after `V0.3.13`; use the timestamped Compose and SQLite
+- Monitor production after `V0.3.14`; use the timestamped environment, Compose,
+  and SQLite
   backups from the deployment if rollback becomes necessary.
