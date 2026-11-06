@@ -43,6 +43,8 @@ go.work.sum
 
 # Dependency directories
 # vendor/
+node_modules/
+apps/admin-region-tiler/static/vendor/cesium/
 
 # Logs and caches
 __pycache__/

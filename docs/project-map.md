@@ -22,7 +22,7 @@ Out of scope unless the user explicitly changes direction:
 
 | Path | Stack | Primary role | Entry points | Narrow validation |
 | --- | --- | --- | --- | --- |
-| `apps/admin-region-tiler` | Go 1.25+, Gin, SQLite, static frontend | Unified map tile downloader with bbox range mode, administrative-region mode, persistent tasks, scheduled runs, multiple map sources, failures, artifacts, and deploy assets | `main.go`, `server.go`, `runtime.go`, `task.go`, `db.go`, `static/script.js`, `scripts/smoke_ui.mjs`, `scripts/release_preflight.mjs` | `go test ./...`; `node --check .\static\script.js` when frontend JS changes; `node .\scripts\smoke_ui.mjs` for UI smoke; `node .\scripts\release_preflight.mjs` for full preflight |
+| `apps/admin-region-tiler` | Go 1.27.3, Gin, SQLite, static frontend | Unified map tile downloader with bbox range mode, administrative-region mode, persistent tasks, scheduled runs, multiple map sources, failures, artifacts, and deploy assets | `main.go`, `server.go`, `runtime.go`, `task.go`, `db.go`, `static/script.js`, `scripts/smoke_ui.mjs`, `scripts/release_preflight.mjs` | `go test ./...`; `node --check .\static\script.js` when frontend JS changes; `node .\scripts\smoke_ui.mjs` for UI smoke; `node .\scripts\release_preflight.mjs` for full preflight |
 
 ## Admin Region Tiler Map
 

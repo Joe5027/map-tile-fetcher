@@ -52,7 +52,7 @@ def allowed_source(name):
         return False
     if path.name.endswith("_test.go") or path.name.startswith("test_"):
         return False
-    return relative in RUNTIME_FILES or relative in {"go.mod", "go.sum"} or (
+    return relative in RUNTIME_FILES or relative in {"go.mod", "go.sum", "package.json", "package-lock.json", "scripts/prepare_assets.mjs"} or (
         path.suffix == ".go" and (len(path.parts) == 1 or path.parts[0] == "internal")) or (
         path.parts[0] in {"static", "geojson", "deploy"} and path.suffix.lower() in {
             ".html", ".css", ".js", ".png", ".svg", ".jpg", ".ico", ".woff2", ".geojson", ".json", ".conf", ".service", ".md", ".sh"}
@@ -161,9 +161,11 @@ def build(root, ref, output, allow_dirty=False, targets=("windows", "linux")):
         source = pathlib.Path(temporary) / "source"
         source.mkdir()
         snapshot(root, info["commit"], source, info["dirty"])
+        npm = "npm.cmd" if os.name == "nt" else "npm"
+        subprocess.run([npm, "ci", "--omit=dev", "--no-audit", "--no-fund"], cwd=source/APP, check=True)
         environment = {k:v for k,v in os.environ.items() if k not in {"GOFLAGS", "GOOS", "GOARCH", "CGO_ENABLED"}}
         environment.update({"CGO_ENABLED":"0", "GOARCH":"amd64", "GOAMD64":"v1", "TZ":"UTC"})
-        toolchain = subprocess.check_output(["go","version"], env=environment).decode().strip()
+        toolchain = subprocess.check_output(["go","version"], cwd=source/APP, env=environment).decode().strip()
         flags = " ".join(["-buildid=", "-X main.buildVersion="+info["version"], "-X main.buildCommit="+info["commit"],
                           "-X main.buildTime="+info["builtAt"], "-X main.buildDirty="+str(info["dirty"]).lower()])
         for target in targets:

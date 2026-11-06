@@ -17,7 +17,7 @@ python -m venv .venv-region
 ```
 
 Linux 将 `.venv-region/Scripts/python` 替换为 `.venv-region/bin/python`。
-依赖锁定 Shapely 2.1.2、NumPy 2.2.6，包含 PyPI Windows/Linux amd64 wheel 的 SHA-256。
+依赖锁定 Shapely 2.2.0、NumPy 2.2.6，包含 PyPI Windows/Linux amd64 wheel 的 SHA-256。
 发布预检可设置 `REGION_PYTHON` 为该环境 Python 的绝对路径。
 
 ## 输入与结果

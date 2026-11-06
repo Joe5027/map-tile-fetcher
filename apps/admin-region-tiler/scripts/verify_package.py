@@ -90,6 +90,8 @@ def verify(archive_path):
                 assert version==info,"API metadata differs from CLI"
                 assert b"loginForm" in request("/")
                 assert len(request("/static/vendor/leaflet/leaflet.js"))>1000
+                assert len(request("/static/vendor/cesium/Cesium.js"))>100000
+                assert len(request("/static/vendor/cesium/Widgets/widgets.css"))>1000
                 request("/api/auth/login",{"username":"fixture","password":"package-fixture-password"})
                 payload={"name":"package fixture","mode":"bbox","area":{"bbox":{"minLon":1,"minLat":1,"maxLon":2,"maxLat":2}},
                     "zoom":{"min":1,"max":1},"output":{"format":"zip"},"workers":1,"timeDelay":0,"scheduleMode":"immediate",

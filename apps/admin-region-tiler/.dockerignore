@@ -30,5 +30,7 @@ tiler-linux
 
 .git/
 .gitignore
+node_modules/
+static/vendor/cesium/
 .DS_Store
 Thumbs.db

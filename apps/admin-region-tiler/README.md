@@ -29,10 +29,11 @@
 工具不再支持直接部署覆盖，默认只读检查；七项维护状态见
 [维护验收记录](../../docs/maintenance-acceptance-2026-09-11.md)。
 
-1. 安装 Go 1.25 或更高版本。
+1. 安装 Go 1.27.3（见 go.mod）以及 Node 24.22.2/npm。
 2. 在本目录执行：
 
 ```powershell
+npm ci --omit=dev --no-audit --no-fund
 go run .
 ```
 
@@ -159,7 +160,7 @@ node .\scripts\smoke_ui.mjs --url http://127.0.0.1:8081
 脚本需要本地或全局可用的 Playwright 包。如缺失，可执行：
 
 ```powershell
-npm install -g playwright
+npm ci --no-audit --no-fund
 npx playwright install chromium
 ```
 

@@ -11,7 +11,7 @@ fixtures; no user database or existing downloads are used.
 | Portable rules, dependency review, main completion and handoff | Committed: `da33be6` |
 | Download configuration and format correctness | Committed: `32ab1ca`, `79d0184` |
 | Automatic recovery, queue slots and storage performance | Pending |
-| Dependency/toolchain upgrade | Pending |
+| Dependency/toolchain upgrade | Locked and tested on an isolated source snapshot; native package/CI checks pending |
 | Cesium terrain generation and offline preview | Terrain codec and sampling tested; application integration in progress |
 | Source selection, paginated history and responsive interactions | Pagination and visible-page refresh tested; terrain source UI pending |
 | Manuals, reproducible images, native packages and final main checks | Pending |
@@ -72,3 +72,17 @@ pagination, last-page deletion, keyed updates, focus/menu/selection/expansion
 preservation, phase display and stopping polling when the task page is hidden.
 Download-grant expiry is checked on use; bulk expiry cleanup runs at most once
 per minute.
+
+## Dependency Baseline
+
+The committed source at `d90fcbc` was extracted into a fresh temporary directory,
+then tested with the new `go.mod`/`go.sum`: `go test ./...` and `go vet ./...`
+passed. This separates dependency compatibility from concurrent recovery and
+terrain implementation. The Shapely 2.2.0 hash-locked environment passed all 18
+Python tests. Project-local `npm ci` prepared Cesium 1.147.0 and Playwright
+1.65.0; the existing browser suite passed with those locked versions.
+
+Go toolchain downloads and a checksum-verified Node 24.22.2 executable use local
+caches only; the user's global runtimes were not replaced. See
+[dependency decisions](dependencies-2026-11.md) for official release links,
+upgrade benefits and deliberately retained versions.

@@ -31,11 +31,12 @@
 
 ### 三分钟启动
 
-源码运行需要 Go 1.25 或更高版本。在仓库应用目录启动，确保能读取 `conf.toml`、`static/` 和 `geojson/`：
+源码运行需要 Go 1.27.3（见 go.mod）以及 Node 24.22.2/npm。在仓库应用目录启动，确保能读取 `conf.toml`、`static/` 和 `geojson/`：
 
 ```powershell
 git clone https://github.com/Joe5027/map-tile-fetcher.git
 cd map-tile-fetcher\apps\admin-region-tiler
+npm ci --omit=dev --no-audit --no-fund
 go run .
 ```
 
@@ -193,11 +194,12 @@ Map Tile Fetcher is a self-hosted Go Web app for downloading authorized map tile
 
 ### Quick Start
 
-Source builds require Go 1.25 or later. Start in the application directory so the app can read `conf.toml`, `static/`, and `geojson/`:
+Source builds require Go 1.27.3 (see go.mod) and Node 24.22.2/npm. Start in the application directory so the app can read `conf.toml`, `static/`, and `geojson/`:
 
 ```powershell
 git clone https://github.com/Joe5027/map-tile-fetcher.git
 cd map-tile-fetcher\apps\admin-region-tiler
+npm ci --omit=dev --no-audit --no-fund
 go run .
 ```
 
@@ -343,7 +345,7 @@ In addition to Go, browser checks require Node.js, Playwright, and Chromium.
 Install them once if they are not already available:
 
 ```powershell
-npm install -g playwright
+npm ci --no-audit --no-fund
 npx playwright install chromium
 ```
 
