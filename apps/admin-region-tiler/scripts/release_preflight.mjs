@@ -3,6 +3,7 @@
 import { spawn } from "node:child_process";
 import process from "node:process";
 
+const preflightStarted = performance.now();
 const checks = [
   {
     label: "Region maintenance contracts (offline fixtures)",
@@ -68,9 +69,10 @@ for (const check of checks) {
 await runSensitiveValueScan();
 await runGeneratedFileScan();
 
-console.log("Release preflight passed");
+console.log(`Release preflight passed in ${((performance.now() - preflightStarted) / 1000).toFixed(1)}s`);
 
 function run(check) {
+  const started = performance.now();
   console.log(`\n==> ${check.label}`);
   console.log(`$ ${[check.command, ...check.args].join(" ")}`);
 
@@ -87,6 +89,7 @@ function run(check) {
     });
 
     child.on("exit", (code, signal) => {
+      console.log(`${check.label}: ${((performance.now() - started) / 1000).toFixed(1)}s`);
       if (code === 0) {
         resolveRun();
         return;

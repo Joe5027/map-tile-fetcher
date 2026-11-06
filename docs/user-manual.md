@@ -107,6 +107,8 @@ Terrain imagery remains ordinary ZIP/MBTiles data; Mapbox terrain vector tiles
 are not elevation. Choose the public Terrarium source for elevation, with maximum
 level 14 by default or 15 when needed. No AWS account is required. Open the child
 task's 3D preview or download its ZIP. See the [terrain guide](terrain.md).
+The preview renders on demand while idle; camera movement and elevation-color
+changes still update normally, without reducing visual quality.
 
 Artifacts are stored on disk and indexed in SQLite. SQLite stores control
 metadata only; raw tile payloads stay in the filesystem artifact paths.

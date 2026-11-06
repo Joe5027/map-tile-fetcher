@@ -202,6 +202,8 @@ export async function runWorkflowAcceptance(page, baseURL, fixture) {
       const pendingPartialPreview = page.waitForEvent("popup");
       await partialChild.locator(".terrain-preview-link").click();
       const partialPreview = await pendingPartialPreview;
+      await partialPreview.setViewportSize({width,height:1000});
+      assert.equal(await partialPreview.evaluate(()=>innerWidth),width,"partial preview must use the scenario's viewport");
       partialPreview.on("pageerror", error => errors.push(error.message));
       const fallback = await assertMissingChildFallback(partialPreview);
       await partialPreview.close();
@@ -216,18 +218,55 @@ export async function runWorkflowAcceptance(page, baseURL, fixture) {
       const pendingPreview = page.waitForEvent("popup");
       await child.locator(".terrain-preview-link").click();
       const preview = await pendingPreview;
+      await preview.setViewportSize({width,height:1000});
+      assert.equal(await preview.evaluate(()=>innerWidth),width,"complete preview must use the scenario's viewport");
       preview.on("pageerror", error => errors.push(error.message));
       await preview.waitForFunction(() => window.terrainPreview?.ready, null, {timeout:60000});
+      await preview.evaluate(() => {
+        window.terrainRenderedFrames=0;
+        window.terrainLastRenderedAt=performance.now();
+        const scene=terrainPreview.viewer.scene;
+        scene.postRender.addEventListener(()=>{
+          terrainRenderedFrames++;
+          window.terrainLastRenderedAt=performance.now();
+          window.terrainRenderedPixel=Array.from(scene.context.readPixels({x:scene.drawingBufferWidth>>1,y:scene.drawingBufferHeight>>1,width:1,height:1}));
+        });
+      });
       await preview.waitForFunction(() => terrainPreview.viewer.scene.globe.tilesLoaded && terrainPreview.viewer.scene.globe._surface._tilesToRender.some(tile => tile.data?.mesh), null, {timeout:60000});
+      await preview.waitForFunction(()=>terrainPreview.viewer.scene.globe.tilesLoaded && !terrainPreview.viewer.scene._renderRequested
+        && performance.now()-terrainLastRenderedAt>=200);
+      const idleFrames = await preview.evaluate(async () => {
+        const before=terrainRenderedFrames;
+        await new Promise(resolve=>setTimeout(resolve,500));
+        return {count:terrainRenderedFrames-before,requestRenderMode:terrainPreview.viewer.scene.requestRenderMode};
+      });
+      assert(idleFrames.requestRenderMode && idleFrames.count <= 1, `idle terrain must not keep rendering: ${JSON.stringify(idleFrames)}`);
       const height = await preview.evaluate(async () => (await Cesium.sampleTerrain(terrainPreview.provider, 1, [Cesium.Cartographic.fromDegrees(0, 0)]))[0].height);
       assert(Math.abs(height - 100) < 0.01, `published terrain height differs: ${height}`);
       assert(await preview.locator("#terrain-error").isHidden());
       assert(await preview.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
-      await preview.locator("#terrain-world").click();
-      await preview.locator("#terrain-fit").click();
-      await preview.locator("#terrain-color").click();
+      const interactionFrames = [];
+      const redraw = async selector => {
+        // Locator actionability can itself span frames; start counting at the
+        // real click event, immediately before the application's click handler.
+        await preview.locator(selector).evaluate(button=>button.addEventListener("click",()=>{window.terrainActionStartFrames=terrainRenderedFrames;},{capture:true,once:true}));
+        await preview.locator(selector).click();
+        await preview.waitForFunction(()=>terrainRenderedFrames>terrainActionStartFrames);
+        interactionFrames.push({selector,frames:await preview.evaluate(()=>terrainRenderedFrames-terrainActionStartFrames)});
+      };
+      await redraw("#terrain-world");
+      await redraw("#terrain-fit");
+      await preview.waitForFunction(()=>terrainPreview.viewer.scene.globe.tilesLoaded);
+      const coloredPixel=await preview.evaluate(()=>terrainRenderedPixel);
+      await redraw("#terrain-color");
       assert(await preview.locator("#elevation-legend").isHidden());
-      await preview.locator("#terrain-color").click();
+      assert(await preview.evaluate(()=>terrainPreview.viewer.scene.globe.material===undefined),"plain-color mode must remove the height material");
+      const plainPixel=await preview.evaluate(()=>terrainRenderedPixel);
+      assert(coloredPixel.slice(0,3).some((value,i)=>Math.abs(value-plainPixel[i])>=5),`color toggle must redraw visibly different pixels: ${JSON.stringify({coloredPixel,plainPixel})}`);
+      await redraw("#terrain-color");
+      assert(await preview.evaluate(()=>terrainPreview.viewer.scene.globe.material.type==="ElevationRamp"),"height material must be restored");
+      const restoredPixel=await preview.evaluate(()=>terrainRenderedPixel);
+      assert(coloredPixel.slice(0,3).every((value,i)=>Math.abs(value-restoredPixel[i])<=2),"restoring height coloring must restore rendered pixels");
       await preview.close();
       const terrain = await download(child, `${width}-${mode}-terrain.zip`);
       const layer = [...terrain].find(([name]) => name.endsWith("layer.json"));
@@ -241,7 +280,7 @@ export async function runWorkflowAcceptance(page, baseURL, fixture) {
         assert.equal(mesh.readFloatLE(24), 100, "mesh minimum height");
         assert.equal(mesh.readFloatLE(28), 100, "mesh maximum height");
       }
-      results.push({width, mode, actions:"create/pause/resume/partial-parent-fallback/retry/area-preview/3D-preview/download", terrainMeshes:meshes.length, height, fallback, retryRequests:retryRequests.length});
+      results.push({width, mode, actions:"create/pause/resume/partial-parent-fallback/retry/area-preview/3D-preview/download", terrainMeshes:meshes.length, height, fallback, idleFrames:idleFrames.count, interactionFrames, colorPixels:{colored:coloredPixel,plain:plainPixel,restored:restoredPixel}, retryRequests:retryRequests.length});
       console.log(`Real workflow ${width}px ${mode} passed: create/pause/resume, missing-child parent fallback (${fallback.sampledHeight}m), retry, 2D/3D previews and ZIP contents`);
     }
     for (const width of [390,768,1440]) {
@@ -319,6 +358,8 @@ async function assertMissingChildFallback(page) {
   const rendered = await page.evaluate(() => {
     const scene = terrainPreview.viewer.scene;
     const point = Cesium.Cartographic.fromDegrees(20,-20);
+    // Refresh the drawing buffer for readPixels after automatic rendering has settled.
+    scene.requestRender();
     scene.render();
     const tile = scene.globe._surface._tilesToRender.find(tile => tile.data?.mesh && Cesium.Rectangle.contains(tile.rectangle, point));
     const data = tile.data.terrainData;

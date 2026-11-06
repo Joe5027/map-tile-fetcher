@@ -35,7 +35,8 @@
 | layer.json、terrain、署名、服务示例、离线预览和 ZIP | 真实 worker ZIP/认证路由/HTTP gzip；包内 README 含 Nginx 与 Cesium 示例；本地 Cesium 四视角/独立高度采样，外网请求为 0 |
 | 导出来源不带凭据 | 合法无名称、带 userinfo/query/fragment 的来源请求先复现泄露再修复；下载 URL 原样保留，导出名称和 URL 清理 |
 | 旧数据库副本迁移及旧产物继续下载 | `TestLegacyDatabaseCopyMigration` 同时保留失败历史及 ready ZIP；原库未变，副本幂等迁移后经真实下载 handler 读取相同字节 |
-| 三尺寸真实创建/暂停/恢复/重试/预览/下载 | `workflow_acceptance.mjs`：390/768/1440 × 行政区/矩形/多边形共 9 链；真实 API/SQLite/worker，下载 ZIP 独立验证 CRC、5 网格、4,225 顶点和 100m 高程 |
+| 三尺寸真实创建/暂停/恢复/重试/预览/下载 | `workflow_acceptance.mjs`：390/768/1440 × 行政区/矩形/多边形共 9 链；新预览窗口显式采用并断言对应宽度；真实 API/SQLite/worker，下载 ZIP 独立验证 CRC、5 网格、4,225 顶点和 100m 高程 |
+| 预览及验收效率 | 按需绘制、设色显式重绘；真实帧/高度/交互验收和同工具链 A/B；分支只跑 PR 检查，保留 main 检查，npm 缓存与 headless-only 安装避免重复工作 |
 | 首瓦片、总时、事务、连接、内存和临时盘证据 | 原下载引擎夹具保留；新增 `benchmark_workflow.py` 测真实 API 到发布，包括 ZIP、OS 进程树 RSS、完整运行目录及 SQLite 临时目录；采样局限明确记载，不把微基准当整任务提速 |
 | 依赖最新稳定审查与合理升级/保留、锁定统一 | [依赖决策](dependencies-2026-11.md) 对应 go/npm/Python 锁文件与 Go/Node/Python/Docker/Actions 固定版本；Python 保留 3.13 ABI，选两平台共同可用补丁，不替换全局运行时 |
 | README、双语手册、配置/API、当前截图 | 根及应用 README、手册、terrain/build 文档；四张本地脱敏图、可复现 capture 命令及前端源码哈希 |

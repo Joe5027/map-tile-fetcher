@@ -92,6 +92,10 @@ not run.
   post-push CI, protected merge and branch cleanup as explicit delivery checks,
   and verify them before claiming the entire plan complete.
 - Run the narrowest meaningful check before claiming completion.
+- Reuse verified evidence for unchanged application trees. Documentation or CI
+  scheduling edits need their affected checks, not another local full application
+  run; preserve required remote gates. When validation is slow, measure its
+  stages and remove duplicated work before increasing timeouts or adding runners.
 - Commit the validated batch before starting the next implementation batch.
 - For `apps/admin-region-tiler`, prefer: `go test ./...`.
 - For frontend script edits, run `node --check` on the changed JavaScript file.

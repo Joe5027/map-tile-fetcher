@@ -57,7 +57,7 @@ node --check .\scripts\smoke_ui.mjs
 node .\scripts\smoke_ui.mjs
 ```
 
-For release preflight or CI workflow changes:
+For a release candidate or changes to the checks exercised by preflight:
 
 ```powershell
 cd apps/admin-region-tiler
@@ -77,6 +77,18 @@ directory and verifies login, resources, version and a real loopback download.
 The application CI job allows 30 minutes for browser installation, all nine
 real workflows and race/vet. The former 20-minute budget cancelled a healthy
 run after an observed eight-minute browser installation; no cases are skipped.
+Development branches run the workflow through their PR only; pushes to `main`
+and manual dispatch still run it. This avoids a duplicate branch-push run for
+the same candidate. npm download caches use the app lockfile. CI installs only
+Chromium's headless shell, the same executable already used by these headless
+tests, rather than downloading the unused headed browser too.
+
+Reuse evidence for an unchanged application tree. CI trigger/time-budget/cache
+edits need workflow review, relevant CLI checks and required remote checks, not
+another local Go/Python/browser suite. For changed browser behavior, run its
+focused checks once; `capture_docs.mjs` already includes normal smoke/repair,
+so do not separately repeat that entire suite merely to update images. Record
+stage timings before adding parallel runners or relaxing timeouts.
 
 The Go suite includes `TestAPILifecycle`, which builds the real app binary and
 exercises HTTP, the scheduler, SQLite and ordinary worker processes against a

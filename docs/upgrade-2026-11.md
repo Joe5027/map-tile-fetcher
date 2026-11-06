@@ -306,6 +306,58 @@ polling/progress latency. Verification downloads occur after the timing ends.
 This is one quiet paired run without a timing threshold, not a statistical
 throughput or memory guarantee for other machines or provider payloads.
 
+## Preview And Validation Cost
+
+The user asked why acceptance was taking so long. Linux logs showed nine real
+workflow cases taking about 65–75 seconds each, run serially, while branch-push
+and PR triggers duplicated the same pipeline. Stage profiling showed no fixed
+30/60-second sleep: a local create/pause/resume/partial-publication path took
+about 1.7 seconds and retry about 0.36 seconds. Continuous Cesium software
+rendering delayed ordinary browser interactions. Repeated script downloads
+were not the main bottleneck (about 130–170 ms per Cesium script response).
+
+A matched Windows single-case comparison used Node 24.22.2, Playwright 1.65.0,
+the same 390px popup and actual browser actions. Continuous rendering took
+32.570 seconds including startup; on-demand rendering took 21.341 seconds.
+The main workflow excluding startup/catalogue setup fell from 26.051 to
+14.656 seconds, and the four button actions plus frame checks from 12.735 to
+1.678 seconds. This is a single local comparison, not a timing guarantee.
+The 500 ms idle observation saw four rendered frames before and one final
+frame after; camera and both color changes still produced real rendered
+frames. Height, fallback, one-request repair, ZIP and deletion checks passed.
+
+The production preview now renders on demand without reducing resolution or
+mesh detail. Camera changes and tile loads trigger frames, and color changes
+explicitly request one. A separate accuracy issue was fixed in the browser
+fixture: a popup inherited the context's 1440px viewport even when its parent
+page was 390px. Each popup now receives and asserts the actual scenario width.
+The older standalone capture already tested the toolbar at all three widths;
+parent-page width alone is not evidence of popup width.
+
+The workflow keeps all nine real cases. Branch pushes no longer duplicate PR
+checks; `main` pushes and manual dispatch retain the full workflow. Lockfile
+npm caching and headless-shell-only installation avoid unnecessary downloads
+without changing the tested browser. Verified unchanged application evidence
+is reused for documentation/CI-only edits; required remote gates remain.
+Release preflight prints each stage's elapsed time so a future slowdown can
+be located without rerunning the full suite just to add timing instrumentation.
+
+The final local nine-workflow run passed in 141.941 seconds including startup,
+catalogue setup, all cases, deletion and cleanup, using Node 24.22.2. Each
+390/768/1440px popup was independently sized and checked. All nine idle
+observations recorded zero frames; each world/fit/color action produced a
+real frame. Color pixels changed from `[93,170,145,255]` to
+`[158,180,172,255]` and back, without the test forcing a color redraw. Parent
+fallback at 100 m, exactly one repair request and five valid mesh files per
+ZIP still passed. This local duration is not a like-for-like comparison with
+the older hosted Linux workflow; the paired comparison above measures the gain.
+The final documentation capture passed in 60.176 seconds, including normal
+UI/repair checks, four real terrain views, height sampling and zero external
+requests. Its idle-frame count was zero and color pixels changed/restored.
+All five manifest source hashes match the rendered frontend; the refreshed
+images were reviewed. The unchanged backend/Python suites were reused from
+their passing candidate checks instead of rerun for these frontend/CI edits.
+
 ## Acceptance Evidence And Limits
 
 The initial integrated local release preflight passed with the pinned Node 24.22.2:

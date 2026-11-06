@@ -98,3 +98,15 @@ python -m venv .venv-region
 Runtime recovery, terrain and packaging acceptance results are recorded in
 [the upgrade record](upgrade-2026-11.md); dependency installation alone does not
 prove those workflows.
+
+The validation-speed follow-up keeps the already reviewed Playwright 1.65.0,
+Cesium 1.147.0 and Actions versions. It uses setup-node's existing
+[lockfile-based npm cache](https://github.com/actions/setup-node#caching-global-packages-data)
+and installs only the [headless shell](https://playwright.dev/docs/browsers#chromium-headless-shell)
+actually selected by the installed Playwright launcher. This removes a redundant
+headed-browser download without switching browser engines or adding dependencies.
+Browser-binary caching is not added: [Playwright's guidance](https://playwright.dev/docs/ci#caching-browsers)
+notes that restoration can cost as much as downloading and does not cache Linux
+system dependencies. The measured preview issue is addressed using Cesium's
+existing [explicit rendering mode](https://cesium.com/learn/cesiumjs/ref-doc/Scene.html#requestRenderMode),
+with actual rendering and interaction checks rather than a package upgrade.

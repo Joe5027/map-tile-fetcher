@@ -10,7 +10,7 @@ From `apps/admin-region-tiler`, reproduce with:
 
 ```powershell
 npm ci
-npx playwright install chromium
+npx playwright install --only-shell chromium
 node scripts/capture_docs.mjs
 ```
 
@@ -18,6 +18,9 @@ The capture command runs the normal UI smoke and repair checks, starts isolated
 local services, generates real quantized-mesh fixtures and loads local Cesium.
 External terrain/imagery requests are rejected. It checks 390/768/1440 pixel
 layouts before writing the four 1440-pixel documentation images.
+Real frame and pixel checks verify that an idle preview stops redrawing and
+camera/color controls still update the terrain. Color checks observe the
+application's own redraw, without forcing a frame from the test.
 
 `screenshots.json` records source revision, working-tree state, hashes of the
 rendered frontend sources, dependency versions and terrain/browser assertions.

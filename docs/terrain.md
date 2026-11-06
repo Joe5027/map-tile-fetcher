@@ -24,6 +24,9 @@ Cesium 输出只接受 Terrarium 编码的 XYZ PNG；普通图片不能当作高
 4. 校验可用祖先链，生成 `layer.json`、gzip `.terrain`、来源署名和服务说明，再打包发布。
 5. 从子任务打开三维预览，或下载 ZIP 用于其他 Cesium 应用。
 
+应用内预览按需绘制：静止时避免持续重绘，移动视角、加载新瓦片和切换高程设色时更新。
+保留原有画质与网格精度，减少闲置 CPU/GPU 占用。
+
 创建前的矩形估算已包含所有祖先和邻接采样请求，并分别显示原始请求与网格数量。
 多边形使用外接矩形保守估算，准备阶段按实际去重范围计数后执行限额；不因保守估算而拒绝有效任务。
 
@@ -89,5 +92,6 @@ English: choose public Terrarium elevation and Cesium output, then preview the
 child artifact or download its ZIP. The package is EPSG:3857/TMS quantized-mesh
 with one root, complete ancestors, 65×65 sampling and gzip payloads. Serve the
 included files over HTTP with the supplied compression headers, and use local
-Cesium assets. Missing data remains missing; source accuracy and vertical datum
+Cesium assets. The built-in preview renders on demand while retaining normal
+camera, tile-loading and elevation-color updates. Missing data remains missing; source accuracy and vertical datum
 are preserved as limitations rather than claimed survey-grade guarantees.

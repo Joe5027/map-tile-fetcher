@@ -1,15 +1,15 @@
 {
-  "generatedAt": "2026-11-06T13:17:43.258Z",
-  "sourceCommit": "f7724ce1003825b3c205d1bcca9a65ca244b9747",
+  "generatedAt": "2026-11-06T14:39:43.479Z",
+  "sourceCommit": "2a06aba7121792a8ecc0422e3435c0359b2bf743",
   "workingTreeDirty": true,
   "sourceHashes": {
     "apps/admin-region-tiler/static/index.html": "f82ef47ff5a67594a21c2fefdd0a389c71b55a6f1f5feb35058e9b5b69122b2e",
     "apps/admin-region-tiler/static/script.js": "f4ab154b4477384b3cbe813f8faa70e4012227a9d53459036d531986d078dcf2",
     "apps/admin-region-tiler/static/styles.css": "309eb591c44b0765209554d8f8541c6dd830e574a3bed23c6adbce44b6ed454a",
     "apps/admin-region-tiler/static/terrain-preview.html": "eaed6f49052911494b8dcd919ab37c98499dc358a1a2f3fdf3044e399dbbd45d",
-    "apps/admin-region-tiler/static/terrain-preview.js": "561240559fa5b417834ba78b8989d5b2d8aacbab821ed9e58466bf1a80cbe849"
+    "apps/admin-region-tiler/static/terrain-preview.js": "96cccf490426c0760739751ec6d389ae794fc1e2e332f9c976adfe61a086a7b4"
   },
-  "reproduce": "cd apps/admin-region-tiler && npm ci && npx playwright install chromium && node scripts/capture_docs.mjs",
+  "reproduce": "cd apps/admin-region-tiler && npm ci && npx playwright install --only-shell chromium && node scripts/capture_docs.mjs",
   "versions": {
     "playwright": "1.65.0",
     "cesium": "1.147.0"
@@ -72,8 +72,8 @@
       },
       {
         "longitude": 120,
-        "tiles": 13,
-        "meshTiles": 13,
+        "tiles": 1,
+        "meshTiles": 1,
         "centerPixel": [
           118,
           136,
@@ -82,6 +82,27 @@
         ]
       }
     ],
+    "idleFrames": 0,
+    "colorPixels": {
+      "colored": [
+        118,
+        136,
+        85,
+        255
+      ],
+      "plain": [
+        125,
+        150,
+        125,
+        255
+      ],
+      "restored": [
+        118,
+        136,
+        85,
+        255
+      ]
+    },
     "externalRequests": 0,
     "responsiveWidths": [
       390,
