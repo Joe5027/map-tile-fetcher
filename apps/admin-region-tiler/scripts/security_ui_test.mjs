@@ -15,10 +15,15 @@ for (const render of ["renderStandaloneTask", "renderChildTask", "renderGroupTas
   assert(!html.includes('href="javascript:'), `${render} accepted a script URL`);
   assert(html.includes("&lt;img"), `${render} lost the literal name`);
 }
-for (const url of ["https://example.test/file", "//example.test/file", "/api/tasks/other/download"]) {
+const grantURL = `/api/downloads/${"a1".repeat(32)}`;
+for (const url of ["https://example.test/file", "//example.test/file", "/api/tasks/other/download", "/api/downloads/invalid", `${grantURL}?redirect=//example.test`, `${grantURL}/../../auth/logout`]) {
   const html = context.renderChildTask({ id: "safe-id", status: "completed", artifactStatus: "ready", downloadUrl: url });
   assert(!html.includes('class="artifact-link"'), `accepted unmanaged download: ${url}`);
 }
 const html = context.renderChildTask({ id: "safe-id", status: "completed", artifactStatus: "ready", downloadUrl: "/api/tasks/safe-id/download" });
 assert(html.includes('href="/api/tasks/safe-id/download"'), "managed download missing");
+for (const render of ["renderStandaloneTask", "renderChildTask"]) {
+  const directHTML = context[render]({ id: "safe-id", status: "completed", artifactStatus: "ready", downloadUrl: grantURL });
+  assert(directHTML.includes(`href="${grantURL}"`), `${render} dropped the artifact grant link`);
+}
 console.log("Rendering and managed download regression checks passed");
