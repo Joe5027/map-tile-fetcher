@@ -11,6 +11,7 @@ import { rm } from "node:fs/promises";
 import process from "node:process";
 import { runRepairUIChecks } from "./repair_ui_checks.mjs";
 import { runTerrainPreviewChecks, captureMainScreenshots, writeScreenshotManifest } from "./capture_docs.mjs";
+import { prepareWorkflowFixture, runWorkflowAcceptance } from "./workflow_acceptance.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const appDir = resolve(scriptDir, "..");
@@ -21,6 +22,7 @@ const options = parseArgs(process.argv.slice(2));
 const startedProcesses = [];
 const cleanupPaths = [];
 let cleaningUp = false;
+let workflowFixture;
 
 process.on("SIGINT", async () => {
   await cleanup();
@@ -33,7 +35,11 @@ process.on("SIGTERM", async () => {
 });
 
 try {
-  const target = options.url || await startApp();
+  if (options.workflow) {
+    if (options.url || options.keepServer) throw new Error("Workflow acceptance requires its own temporary server and cleanup; omit --url and --keep-server.");
+    workflowFixture = await prepareWorkflowFixture(appDir);
+  }
+  const target = options.url || await startApp(workflowFixture?.configPath);
   const result = await runSmoke(target);
   printResult(result);
 } catch (error) {
@@ -41,6 +47,7 @@ try {
   process.exitCode = 1;
 } finally {
   await cleanup();
+  await workflowFixture?.cleanup();
 }
 
 function parseArgs(args) {
@@ -51,6 +58,7 @@ function parseArgs(args) {
     url: "",
     port: 0,
     captureDocs: false,
+    workflow: false,
   };
 
   for (let index = 0; index < args.length; index += 1) {
@@ -59,6 +67,8 @@ function parseArgs(args) {
       parsed.headed = true;
     } else if (arg === "--capture-docs") {
       parsed.captureDocs = true;
+    } else if (arg === "--workflow") {
+      parsed.workflow = true;
     } else if (arg === "--keep-server") {
       parsed.keepServer = true;
     } else if (arg === "--url") {
@@ -98,6 +108,7 @@ Options:
   --keep-server       Leave the started Go server running after the smoke run.
   --timeout-ms <ms>   Browser assertion timeout. Default: 60000.
   --capture-docs      Refresh sanitized documentation screenshots and manifest.
+  --workflow          Run real local worker/browser workflows at three widths.
 
 Playwright lookup:
   Uses the project's locked local dependency. Run npm ci, then
@@ -122,7 +133,7 @@ function normalizeBaseURL(value) {
   return trimmed.replace(/\/+$/, "");
 }
 
-async function startApp() {
+async function startApp(configPath) {
   const port = options.port || await getFreePort();
   const dbName = `smoke-ui-${Date.now()}-${process.pid}.db`;
   cleanupPaths.push(
@@ -131,7 +142,7 @@ async function startApp() {
     join(appDir, "data", `${dbName}-wal`),
   );
 
-  const child = spawn("go", ["run", "."], {
+  const child = spawn("go", ["run", ".", ...(configPath ? ["-c", configPath] : [])], {
     cwd: appDir,
     env: {
       ...process.env,
@@ -215,6 +226,14 @@ async function runSmoke(baseURL) {
   const browser = await chromium.launch({ headless: !options.headed });
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
   const page = await context.newPage();
+  if (options.workflow) {
+    try {
+      await workflowFixture.guard(context, baseURL);
+      await page.goto(`${baseURL}/`, { waitUntil: "networkidle", timeout: options.timeoutMs });
+      await login(page);
+      return { workflow: await runWorkflowAcceptance(page, baseURL, workflowFixture) };
+    } finally { await browser.close(); }
+  }
   const createdPayloads = [];
   const pendingCreates = [];
   const confirmMessages = [];
@@ -466,7 +485,8 @@ async function smokeTerrainFlows(page, createdPayloads, pendingCreates) {
   await page.locator("input[name='name']").fill("真实高程范围夹具");
   await page.locator("input[name='rangeMaxZoom']").fill("15");
   await page.locator("input[name='timeDelay']").fill("0");
-  assert((await page.locator("#taskCreateSummary").innerText()).includes("祖先层级"), "terrain preparation should explain extra downloaded levels and neighbours");
+  const terrainSummary = await page.locator("#taskCreateSummary").innerText();
+  assert(terrainSummary.includes("祖先") && terrainSummary.includes("接缝邻域"), "terrain preparation should explain extra downloaded levels and neighbours");
   await submitOnceWhilePending(page, createdPayloads, pendingCreates, createdPayloads.length);
   const range = createdPayloads.at(-1);
   assert(range.mode === "bbox" && range.output.format === "cesium" && range.zoom.min === 14 && range.zoom.max === 15, "bbox must submit selected Cesium zooms");
@@ -575,6 +595,7 @@ function isExpectedConsoleError(text) {
 }
 
 function printResult(result) {
+  if (result.workflow) { console.log(`Workflow acceptance passed: ${JSON.stringify(result.workflow)}`); return; }
   const regionPayload = result.payloads.find((payload) => !payload.mode);
   const rangePayload = result.payloads.find((payload) => payload.mode === "bbox");
   console.log("UI smoke passed");

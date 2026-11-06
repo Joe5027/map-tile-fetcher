@@ -68,6 +68,7 @@ type Task struct {
 	fileCommitLocks   [64]sync.Mutex
 	expectedPath      string
 	expectedLimit     int64
+	expectedProgress  func(current, estimate int64) error
 	expandExpected    func(TileJob, func(TileJob) error) error
 	deriveArtifacts   func(*TaskRecord, *Task, *TaskRunRecord) error
 	artifactDirectory string

@@ -9,7 +9,7 @@
 [task]
 	#number of fetchers
 	workers = 3
-	# Parent budget includes every selected source; paused children retain a slot.
+	# Parent budget includes every selected source; paused children release their active slot.
 	max_tiles = 1000000
 	max_active = 3
 	#number of savers

@@ -66,7 +66,7 @@ Out of scope unless the user explicitly changes direction:
   - parent pipe lifecycle, run ownership/locks, same-run restart recovery,
     persisted phases, pause intent and slot release
 - `mbtiles_batch.go`, `storage_space.go`
-  - one SQLite writer with 256-tile/250 ms bounded transactions; count success
+  - one SQLite writer with 256-tile/8 MiB/250 ms bounded transactions; count success
     only after commit; account for phase-specific additional disk space
 - `terrain_pipeline.go`, `terrain_routes.go`
   - source metadata persists inside child levels; raw PNG and derived terrain
@@ -91,6 +91,12 @@ Out of scope unless the user explicitly changes direction:
 - `performance_fixture_test.go`, `scripts/benchmark_download.py`
   - the same 256-tile loopback workload across Git revisions; sampled heap/disk,
     first committed tile, elapsed time and connection count (ZIP packing excluded)
+- `scripts/benchmark_workflow.py`, `scripts/workflow_acceptance.mjs`
+  - whole API/worker/publication resource measurements and nine real browser
+    action chains across area modes and responsive widths
+- `acceptance_*_test.go`
+  - plan-gap regressions for geometry, preparation progress, single-read retry,
+    bounded copy space, queue responsiveness and vector preservation
 - `repair_contract_test.go`
   - portable assertions runnable against both archived pre-repair code and the
     current app; evidence is indexed in `docs/repair-acceptance-2026-09-11.md`

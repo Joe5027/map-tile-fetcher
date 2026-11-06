@@ -96,7 +96,10 @@ const FALLBACK_TILEMAPS = [
     { id: 7, name: "Google路网", url: "http://mt0.google.com/vt/lyrs=h&x={x}&y={y}&z={z}", format: "png", schema: "xyz", min_zoom: 0, max_zoom: 20 },
     { id: 8, name: "Google卫星图", url: "http://mt0.google.com/vt/lyrs=s&x={x}&y={y}&z={z}", format: "png", schema: "xyz", min_zoom: 0, max_zoom: 20 },
     { id: 9, name: "Mapbox街道图", url: "https://api.mapbox.com/v4/mapbox.mapbox-streets-v8/{z}/{x}/{y}.vector.pbf?sku=YOUR_MAPBOX_SKU&access_token=YOUR_MAPBOX_TOKEN", format: "pbf", schema: "xyz", min_zoom: 0, max_zoom: 14 },
-    { id: 10, name: "Mapbox地形图", url: "https://api.mapbox.com/v4/mapbox.mapbox-terrain-v2/{z}/{x}/{y}.vector.pbf?sku=YOUR_MAPBOX_SKU&access_token=YOUR_MAPBOX_TOKEN", format: "pbf", schema: "xyz", min_zoom: 0, max_zoom: 14 }
+    { id: 10, name: "Mapbox地形等高线（矢量，非高程DEM）", url: "https://api.mapbox.com/v4/mapbox.mapbox-terrain-v2/{z}/{x}/{y}.vector.pbf?sku=YOUR_MAPBOX_SKU&access_token=YOUR_MAPBOX_TOKEN", format: "pbf", schema: "xyz", min_zoom: 0, max_zoom: 14, metadata: { kind: "vector", minZoom: 0, maxZoom: 14 } },
+    { id: 11, name: "天地图地形底图 (ter_w)", url: "https://t0.tianditu.gov.cn/DataServer?T=ter_w&x={x}&y={y}&l={z}&tk=YOUR_TIANDITU_TOKEN", format: "png", schema: "xyz", min_zoom: 0, max_zoom: 14, metadata: { kind: "raster", minZoom: 0, maxZoom: 14 } },
+    { id: 12, name: "天地图地形注记 (cta_w)", url: "https://t0.tianditu.gov.cn/DataServer?T=cta_w&x={x}&y={y}&l={z}&tk=YOUR_TIANDITU_TOKEN", format: "png", schema: "xyz", min_zoom: 0, max_zoom: 14, metadata: { kind: "raster", minZoom: 0, maxZoom: 14 } },
+    { id: 13, name: "公开高程 Terrarium（Cesium）", url: "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png", format: "png", schema: "xyz", min_zoom: 0, max_zoom: 15, metadata: { kind: "elevation", encoding: "terrarium", projection: "EPSG:3857", minZoom: 0, maxZoom: 15, defaultZoom: 14, attribution: "Mapzen / Tilezen Terrain Tiles; https://github.com/tilezen/joerd/blob/master/docs/attribution.md", verticalDatum: "Source-dependent; no vertical-datum transformation. Visualization only." } }
 ];
 
 const RANGE_LAYER_NAMES = {
@@ -627,7 +630,17 @@ function updateTaskCreateSummary() {
         }
     }
     lines.push(`${schedule.error || schedule.label} · ${output.label}`);
-    if (output.format === "cesium") lines.push("准备阶段会计入祖先层级和接缝邻域，随后下载、转换并发布可预览的地形包。");
+    if (output.format === "cesium") {
+        if (isRange) {
+            const request = readRangeRequest(formData);
+            const range = selectedZoomRange(sources);
+            if (isValidRangeSelection(request) && Number.isInteger(request.zoom.min) && Number.isInteger(request.zoom.max)
+                && request.zoom.min >= range.min && request.zoom.max <= range.max && request.zoom.min <= request.zoom.max) {
+                const estimate = estimateRangeDownloads(request.bbox, request.zoom, sources, output.format);
+                lines.push(`${request.selectionMode === "polygon" ? "外接矩形保守估算" : "下载估算"}：${estimate.rawTiles} 个原始请求（含祖先及接缝邻域），${estimate.meshTiles} 个地形网格。`);
+            }
+        } else lines.push("准备阶段会计入祖先层级和接缝邻域，随后下载、转换并发布可预览的地形包。");
+    }
     summary.replaceChildren(...lines.map((line) => {
         const paragraph = document.createElement("p");
         paragraph.textContent = line;
@@ -2761,7 +2774,10 @@ function updateRangeEstimate() {
     const sizeElement = document.getElementById("rangeSizeEstimate");
 
     const range = selectedZoomRange(request.sources);
-    document.getElementById("rangeTerrainEstimate").classList.toggle("is-hidden", document.getElementById("taskForm").elements.outputFormat.value !== "cesium");
+    const outputFormat = document.getElementById("taskForm").elements.outputFormat.value;
+    const hint = document.getElementById("rangeTerrainEstimate");
+    hint.classList.toggle("is-hidden", outputFormat !== "cesium" && request.selectionMode !== "polygon");
+    hint.textContent = "";
     if (!isValidRangeSelection(request) || !Number.isInteger(request.zoom.min) || !Number.isInteger(request.zoom.max) || request.zoom.min < range.min || request.zoom.max > range.max || request.zoom.min > request.zoom.max || request.sources.length === 0) {
         tileElement.textContent = "-";
         totalElement.textContent = "-";
@@ -2769,22 +2785,93 @@ function updateRangeEstimate() {
         return;
     }
 
-    const tileCount = calculateRangeTileCount(request.bbox, request.zoom);
-    const total = tileCount * request.sources.length;
-    tileElement.textContent = String(tileCount);
-    totalElement.textContent = String(total);
+    const estimate = estimateRangeDownloads(request.bbox, request.zoom, request.sources, outputFormat);
+    const counts = estimate.perSource.map((source) => source.rawTiles);
+    tileElement.textContent = new Set(counts).size === 1 ? String(counts[0]) : `${Math.min(...counts)}～${Math.max(...counts)}`;
+    totalElement.textContent = String(estimate.rawTiles);
     sizeElement.textContent = request.sources.some((source) => source.metadata?.kind === "elevation")
-        ? "以源瓦片和转换结果为准" : `${((total * 8) / 1024).toFixed(2)} MB`;
+        ? "以源瓦片和转换结果为准" : `${((estimate.rawTiles * 8) / 1024).toFixed(2)} MB`;
+    const details = [];
+    if (outputFormat === "cesium") details.push(`已计入祖先与接缝邻域：${estimate.rawTiles} 个原始请求，${estimate.meshTiles} 个地形网格。`);
+    if (request.selectionMode === "polygon") details.push("按外接矩形保守估算；多边形实际请求数以准备阶段去重结果为准。");
+    hint.textContent = details.join(" ");
+}
+
+function rangeTileRectangle(bbox, z) {
+    const leftTop = rangeTileForLonLat(bbox.minLon, bbox.maxLat, z);
+    const rightBottom = rangeTileForLonLat(bbox.maxLon, bbox.minLat, z);
+    return { minX: leftTop.x, maxX: rightBottom.x, minY: leftTop.y, maxY: rightBottom.y };
 }
 
 function calculateRangeTileCount(bbox, zoom) {
     let count = 0;
     for (let z = zoom.min; z <= zoom.max; z += 1) {
-        const leftTop = rangeTileForLonLat(bbox.minLon, bbox.maxLat, z);
-        const rightBottom = rangeTileForLonLat(bbox.maxLon, bbox.minLat, z);
-        count += (rightBottom.x - leftTop.x + 1) * (rightBottom.y - leftTop.y + 1);
+        const rect = rangeTileRectangle(bbox, z);
+        count += (rect.maxX - rect.minX + 1) * (rect.maxY - rect.minY + 1);
     }
     return count;
+}
+
+// Count integer rectangles by interval union. Work depends on zoom ranges,
+// never on the number of tiles (a world-sized level 15 is still inexpensive).
+function countTileRectangleUnion(rectangles) {
+    const edges = [...new Set(rectangles.flatMap((rect) => [rect.minX, rect.maxX + 1]))].sort((a, b) => a - b);
+    let count = 0;
+    for (let i = 1; i < edges.length; i += 1) {
+        const left = edges[i - 1];
+        const intervals = rectangles.filter((rect) => rect.minX <= left && rect.maxX >= left)
+            .map((rect) => [rect.minY, rect.maxY + 1]).sort((a, b) => a[0] - b[0]);
+        let covered = 0;
+        let end = -1;
+        for (const [start, nextEnd] of intervals) {
+            covered += Math.max(0, nextEnd - Math.max(start, end));
+            end = Math.max(end, nextEnd);
+        }
+        count += (edges[i] - left) * covered;
+    }
+    return count;
+}
+
+function terrainHaloRectangles(rect, z) {
+    const n = 2 ** z;
+    const rows = { minY: Math.max(0, rect.minY - 1), maxY: Math.min(n - 1, rect.maxY + 1) };
+    const left = rect.minX - 1;
+    const right = rect.maxX + 1;
+    if (right - left + 1 >= n) return [{ ...rows, minX: 0, maxX: n - 1 }];
+    if (left < 0) return [{ ...rows, minX: 0, maxX: right }, { ...rows, minX: n + left, maxX: n - 1 }];
+    if (right >= n) return [{ ...rows, minX: left, maxX: n - 1 }, { ...rows, minX: 0, maxX: right - n }];
+    return [{ ...rows, minX: left, maxX: right }];
+}
+
+function calculateTerrainTileCounts(bbox, zoom) {
+    const levels = Array.from({ length: zoom.max + 1 }, () => []);
+    for (let z = zoom.min; z <= zoom.max; z += 1) {
+        const rect = rangeTileRectangle(bbox, z);
+        for (let ancestor = 0; ancestor <= z; ancestor += 1) {
+            const scale = 2 ** (z - ancestor);
+            levels[ancestor].push({ minX: Math.floor(rect.minX / scale), maxX: Math.floor(rect.maxX / scale),
+                minY: Math.floor(rect.minY / scale), maxY: Math.floor(rect.maxY / scale) });
+        }
+    }
+    let rawTiles = 0;
+    let meshTiles = 0;
+    levels.forEach((rectangles, z) => {
+        meshTiles += countTileRectangleUnion(rectangles);
+        rawTiles += countTileRectangleUnion(rectangles.flatMap((rect) => terrainHaloRectangles(rect, z)));
+    });
+    return { rawTiles, meshTiles, selectedTiles: calculateRangeTileCount(bbox, zoom) };
+}
+
+function estimateRangeDownloads(bbox, zoom, sources, outputFormat) {
+    const selectedTiles = calculateRangeTileCount(bbox, zoom);
+    const terrain = outputFormat === "cesium" && sources.some(isTerrariumSource) ? calculateTerrainTileCounts(bbox, zoom) : null;
+    const perSource = sources.map((source) => {
+        const counts = terrain && isTerrariumSource(source) ? terrain : { rawTiles: selectedTiles, meshTiles: 0 };
+        return { id: source.id, rawTiles: counts.rawTiles, meshTiles: counts.meshTiles };
+    });
+    const rawTiles = perSource.reduce((sum, source) => sum + source.rawTiles, 0);
+    return { rawTiles, meshTiles: perSource.reduce((sum, source) => sum + source.meshTiles, 0),
+        auxiliaryTiles: rawTiles - selectedTiles * sources.length, perSource };
 }
 
 function rangeTileForLonLat(lon, lat, z) {

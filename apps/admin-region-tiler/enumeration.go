@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/paulmach/orb/maptile"
 	"github.com/paulmach/orb/maptile/tilecover"
@@ -149,6 +150,11 @@ func (task *Task) expectedCount() (int64, error) {
 		if task.expectedLimit > 0 && total > task.expectedLimit {
 			return 0, &TileBudgetError{Estimated: total, Limit: task.expectedLimit, Actual: true}
 		}
+		if task.expectedProgress != nil {
+			if err := task.expectedProgress(total, task.Total); err != nil {
+				return 0, err
+			}
+		}
 		return total, nil
 	}
 	db, cleanup, err := task.openExpectedCatalogue(task.ctx)
@@ -158,6 +164,9 @@ func (task *Task) expectedCount() (int64, error) {
 	defer cleanup()
 	var count int64
 	err = db.QueryRow(`SELECT COUNT(*) FROM jobs`).Scan(&count)
+	if err == nil && task.expectedProgress != nil {
+		err = task.expectedProgress(count, task.Total)
+	}
 	if err == nil && task.expectedLimit > 0 && count > task.expectedLimit {
 		return 0, &TileBudgetError{Estimated: count, Limit: task.expectedLimit, Actual: true}
 	}
@@ -224,6 +233,12 @@ func (task *Task) openExpectedCatalogue(ctx context.Context) (*sql.DB, func(), e
 	}
 	defer insert.Close()
 	var count int64
+	lastProgress := time.Now()
+	if task.expectedProgress != nil {
+		if err := task.expectedProgress(0, task.Total); err != nil {
+			return nil, nil, err
+		}
+	}
 	emit := func(job TileJob) error {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -237,6 +252,12 @@ func (task *Task) openExpectedCatalogue(ctx context.Context) (*sql.DB, func(), e
 			return err
 		}
 		count += added
+		if added > 0 && task.expectedProgress != nil && time.Since(lastProgress) >= 200*time.Millisecond {
+			if err := task.expectedProgress(count, task.Total); err != nil {
+				return err
+			}
+			lastProgress = time.Now()
+		}
 		if task.expectedLimit > 0 && count > task.expectedLimit {
 			return &TileBudgetError{Estimated: count, Limit: task.expectedLimit, Actual: true}
 		}

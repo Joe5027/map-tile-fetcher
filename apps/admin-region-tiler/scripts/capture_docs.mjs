@@ -36,6 +36,7 @@ export async function captureMainScreenshots(page) {
     cachedTasks = [task]; taskPageTotal = 1; taskPageCounts = { all: 1, completed: 1 };
     expandedGroupTasks.clear(); setTaskMode("tasks"); await loadTasks(); renderTaskList(cachedTasks);
   }, task);
+  await settleCaptureMode(page, "tasks");
   await page.screenshot({ path: join(assetsDir, "dashboard-overview.png"), fullPage: true });
   await page.locator('[data-group-task-id="docs-terrain"] > summary').click();
   await page.waitForFunction(() => taskAreaPreviewLayer !== null);
@@ -49,7 +50,26 @@ export async function captureMainScreenshots(page) {
   await page.locator("input[name='rangeMinZoom']").fill("14");
   await page.locator("input[name='rangeMaxZoom']").fill("14");
   await page.evaluate(() => { hideMessage("taskCreateNotice"); updateRangeEstimate(); });
+  await settleCaptureMode(page, "bbox");
+  const modeState = await page.evaluate(() => ({ mode: taskMode,
+    buttons: [...document.querySelectorAll("[data-task-mode]")].map(button => ({ mode: button.dataset.taskMode,
+      pressed: button.getAttribute("aria-pressed"), active: button.classList.contains("is-active"), color: getComputedStyle(button).color })),
+    formHidden: document.getElementById("rangeModePanel").classList.contains("is-hidden") }));
+  console.log(`Capture bbox mode state: ${JSON.stringify(modeState)}`);
+  assert.equal(modeState.mode, "bbox", "capture must use the real bbox mode");
+  assert.deepEqual(modeState.buttons.filter(button => button.active).map(button => button.mode), ["bbox"], "only the bbox tab can be active in the creation screenshot");
+  assert.equal(modeState.buttons.find(button => button.mode === "bbox").color, "rgb(37, 99, 235)", "active bbox color must finish its actual CSS transition");
+  assert.equal(modeState.buttons.find(button => button.mode === "tasks").color, "rgb(100, 116, 139)", "inactive tasks color must finish its actual CSS transition");
+  assert(!modeState.formHidden, "bbox creation form must be visible");
   await page.screenshot({ path: join(assetsDir, "bbox-task-creation.png"), fullPage: true });
+}
+
+async function settleCaptureMode(page, mode) {
+  // Mode classes update immediately, but the production buttons animate color
+  // for 180ms. Wait for the real transition instead of capturing the old color.
+  await page.evaluate(() => new Promise(resolveFrame => requestAnimationFrame(() => requestAnimationFrame(resolveFrame))));
+  await page.waitForFunction(expected => taskMode === expected && [...document.querySelectorAll("[data-task-mode]")]
+    .every(button => button.getAnimations().every(animation => animation.playState === "finished" || animation.playState === "idle")), mode);
 }
 
 export async function runTerrainPreviewChecks(context, baseURL, { capture = false } = {}) {

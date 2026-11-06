@@ -156,6 +156,65 @@ func TestTerrainMixedLevelURLRejectedBeforePersistence(t *testing.T) {
 	}
 }
 
+func TestTerrainExportDoesNotLeakSourceURLCredentials(t *testing.T) {
+	useFileTestStore(t)
+	setTestOutput(t)
+	const sourceURL = "https://source-user:source-password@terrain.example.test/{z}/{x}/{y}.png?token=source-secret#private-fragment"
+	request := terrainTestRequest(sourceURL)
+	request.Sources[0].Name = ""
+	parent, children, err := buildTaskRecordsFromRequest(1, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.createTaskRecords(append([]*TaskRecord{parent}, children...)...); err != nil {
+		t.Fatal(err)
+	}
+	plan := children[0]
+	if strings.Contains(plan.SourceName, "source-secret") || strings.Contains(plan.SourceName, "source-password") {
+		t.Fatal("default source label still contains URL credentials")
+	}
+	// Also cover already persisted legacy/custom names that are themselves URLs.
+	plan.SourceName = sourceURL
+	task, err := buildTaskFromRecord(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer task.cancel()
+	directory, err := managedRunDirectory(plan, "source-privacy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := &TaskRunRecord{ID: "source-privacy", OutputPath: filepath.Join(directory, "tiles")}
+	data := terrainTestPNG(t, 123.5)
+	if err := task.forEachExpected(func(job TileJob) error {
+		path := filepath.Join(run.OutputPath, fmt.Sprint(job.Tile.Z), fmt.Sprint(job.Tile.X), fmt.Sprintf("%d.png", job.Tile.Y))
+		return atomicTerrainWrite(path, func(w io.Writer) error { _, err := w.Write(data); return err })
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := deriveTerrainArtifacts(plan, task, run); err != nil {
+		t.Fatal(err)
+	}
+	if plan.URL != sourceURL {
+		t.Fatal("request credentials were removed from the download URL")
+	}
+	for _, name := range []string{"layer.json", "README.txt", "terrain-info.json"} {
+		data, err := os.ReadFile(filepath.Join(task.artifactDirectory, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, secret := range []string{"source-user", "source-password", "source-secret", "private-fragment"} {
+			if bytes.Contains(data, []byte(secret)) {
+				t.Errorf("%s exposes source URL credential %q", name, secret)
+			}
+		}
+	}
+	const descriptiveName = "Slope layer ?token=label & contrast"
+	if publicSourceLabel(descriptiveName) != descriptiveName {
+		t.Fatal("ordinary descriptive source name changed")
+	}
+}
+
 func TestTerrainWorkerPublishesMeshesAndRetriesCumulativeRawBaseline(t *testing.T) {
 	useFileTestStore(t)
 	setTestOutput(t)

@@ -60,6 +60,7 @@ docker compose up --build -d
 | Windows/Linux 安装包与 Docker | [构建与安装](docs/build-and-install.md) |
 | 区域维护与现存数据缺口 | [区域维护](docs/region-maintenance.md) / [边界调查](docs/region-gap-investigation-2026-09-11.md) |
 | 升级、性能证据和未验证范围 | [升级记录](docs/upgrade-2026-11.md) |
+| 提交前逐项核对实施计划 | [计划覆盖与验收](docs/plan-acceptance-2026-11.md) |
 | 依赖升级/保留理由 | [依赖评审](docs/dependencies-2026-11.md) |
 | Agent 快速接手 | [项目地图](docs/project-map.md) → [完成定义](docs/done-definition.md) → [协作手册](docs/ai-operating-handbook.md) |
 

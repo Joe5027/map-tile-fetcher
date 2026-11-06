@@ -84,6 +84,12 @@ func runWorkerProcess(taskRecordID, runID string) error {
 	task.expectedPath = filepath.Join(runDir, "expected.sqlite")
 	task.expectedLimit = maxTaskTiles()
 	_ = store.setRunPhase(run.ID, "preparing", 0, 0)
+	task.expectedProgress = func(current, estimate int64) error {
+		if err := store.setRunPhase(run.ID, "enumerating", current, estimate); err != nil {
+			log.Warnf("failed to persist enumeration progress for run %s: %v", run.ID, err)
+		}
+		return nil
+	}
 	controller := &workerController{taskRecordID: taskRecordID, task: task, stop: make(chan struct{})}
 	if err := controller.sync(); err != nil {
 		return failBeforeStart(err)
@@ -97,6 +103,7 @@ func runWorkerProcess(taskRecordID, runID string) error {
 		}
 	}
 	expected, err := task.expectedCount()
+	task.expectedProgress = nil
 	if err != nil {
 		return failBeforeStart(err)
 	}
@@ -106,12 +113,7 @@ func runWorkerProcess(taskRecordID, runID string) error {
 	resuming := os.Getenv(workerResumeEnv) == "1"
 	task.preserveOutput = resuming
 	if run.TriggerMode == triggerRetryFailures {
-		previous, err := store.validateRetryBaselineWithTask(taskRecord, task)
-		if err != nil {
-			_ = failBeforeStart(err)
-			return err
-		}
-		if err := copyRetryBaseline(taskRecord, task, previous); err != nil {
+		if err := store.prepareRetryBaseline(taskRecord, task); err != nil {
 			_ = failBeforeStart(err)
 			return err
 		}

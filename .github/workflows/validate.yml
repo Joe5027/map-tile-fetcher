@@ -72,7 +72,7 @@ jobs:
 
       - uses: actions/setup-python@v7.1.0
         with:
-          python-version: "3.13"
+          python-version-file: .python-version
 
       - name: Install isolated region tooling
         run: |
@@ -105,7 +105,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-python@v7.1.0
         with:
-          python-version: "3.13"
+          python-version-file: .python-version
       - name: Test locked environment
         run: |
           python -m venv .venv-region
@@ -144,7 +144,7 @@ jobs:
           node-version-file: .node-version
       - uses: actions/setup-python@v7.1.0
         with:
-          python-version: "3.13"
+          python-version-file: .python-version
       - name: Build twice and verify native package
         run: |
           python -B scripts/build_release.py --ref HEAD --target '${{ matrix.target }}' --output-dir ../../dist/package-a

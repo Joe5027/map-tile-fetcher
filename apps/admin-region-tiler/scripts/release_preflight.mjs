@@ -40,6 +40,11 @@ const checks = [
     args: ["./scripts/security_ui_test.mjs"],
   },
   {
+    label: "Terrain estimates and fallback catalogue contracts",
+    command: "node",
+    args: ["./scripts/terrain_estimate_checks.mjs"],
+  },
+  {
     label: "Repair UI script syntax",
     command: "node",
     args: ["--check", "./scripts/repair_ui_checks.mjs"],
@@ -48,6 +53,11 @@ const checks = [
     label: "Browser UI smoke",
     command: "node",
     args: ["./scripts/smoke_ui.mjs"],
+  },
+  {
+    label: "Real browser workflows at 390/768/1440 pixels",
+    command: "node",
+    args: ["./scripts/workflow_acceptance.mjs"],
   },
 ];
 let gitRootCache = "";

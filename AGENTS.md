@@ -86,6 +86,11 @@ not run.
 
 ## Validation Before Completion
 
+- Before a delivery commit or push, reconcile every accepted plan item with
+  implementation, executed evidence and updated documentation. Close real gaps;
+  passing the existing suite alone does not prove complete plan coverage. Keep
+  post-push CI, protected merge and branch cleanup as explicit delivery checks,
+  and verify them before claiming the entire plan complete.
 - Run the narrowest meaningful check before claiming completion.
 - Commit the validated batch before starting the next implementation batch.
 - For `apps/admin-region-tiler`, prefer: `go test ./...`.

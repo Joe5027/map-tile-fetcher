@@ -1,7 +1,8 @@
 # 构建与安装
 
-构建入口为 `apps/admin-region-tiler/scripts/build_release.py`，需要 Git、Go 1.27.3、Node 24.22.2/npm、Python 3.13。
-Go 版本以应用 `go.mod` 为准，Node 版本以根目录 `.node-version` 为准。
+构建入口为 `apps/admin-region-tiler/scripts/build_release.py`，需要 Git、Go 1.27.3、Node 24.22.2/npm、Python 3.13.17。
+Go 版本以应用 `go.mod` 为准，Node/Python 版本以根目录 `.node-version` / `.python-version` 为准。
+可使用独立运行目录中的解释器；执行打包命令前确认其版本，无需替换全局 Python。
 打包器使用 Python 标准库，并在源码快照中执行 `npm ci --omit=dev`，从锁定版本准备离线 Cesium 静态资源；不要求 Shapely 环境。
 首次构建需要访问 Go/npm 包源。安装包运行时不需要 Node、Python、npm 或联网下载前端库。
 

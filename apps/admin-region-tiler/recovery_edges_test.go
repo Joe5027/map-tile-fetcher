@@ -1,26 +1,57 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/paulmach/orb"
 	"github.com/paulmach/orb/maptile"
 )
 
 func TestLegacyDatabaseCopyMigration(t *testing.T) {
 	useFileTestStore(t)
+	root := setTestOutput(t)
+	resetArtifactDownloadGrantsForTest(t)
 	p := storedBBoxTask(t, "legacy", "")
 	run := &TaskRunRecord{ID: "legacy-run", TaskRecordID: p.ID, UserID: 1, Status: TaskFailed, ArtifactStatus: ArtifactNone}
 	if err := store.createRun(run); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.replaceFailureRecords(run, []TileFailureRecord{{Z: 1, X: 1, Y: 0, URL: p.URL, Retryable: true}}); err != nil {
+		t.Fatal(err)
+	}
+	oldTiles := filepath.Join(root, "legacy-tiles")
+	if err := os.MkdirAll(oldTiles, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(oldTiles, "legacy.png"), testPNG(t), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ready := &TaskRunRecord{ID: "legacy-ready", TaskRecordID: p.ID, UserID: p.UserID, Status: TaskPartialFailed, ArtifactStatus: ArtifactReady, OutputPath: oldTiles, ArtifactPath: filepath.Join(root, "legacy.zip"), ArtifactName: "legacy.zip"}
+	if err := zipDirectory(oldTiles, ready.ArtifactPath, nil); err != nil {
+		t.Fatal(err)
+	}
+	expectedArtifact, err := os.ReadFile(ready.ArtifactPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.createRun(ready); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.markTaskRecordRunning(p.ID, ready.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.updateTaskRecordStatus(p.ID, TaskRecordPartialFailed); err != nil {
 		t.Fatal(err)
 	}
 	// Emulate the pre-repair failure schema, then migrate a database copy.
@@ -62,6 +93,28 @@ func TestLegacyDatabaseCopyMigration(t *testing.T) {
 	if _, err := copyStore.getTaskRecordByID(p.ID); err != nil {
 		t.Fatal(err)
 	}
+	// Exercise the ordinary response and download handler against the migrated
+	// copy, not only the row/schema shape. The original database stays untouched.
+	original := store
+	store = copyStore
+	defer func() { store = original }()
+	plan, err := copyStore.getTaskRecordForUser(p.UserID, p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := taskResponseFromRecord(plan)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Params = gin.Params{{Key: "token", Value: strings.TrimPrefix(response.DownloadURL, "/api/downloads/")}}
+	c.Request = httptest.NewRequest(http.MethodGet, response.DownloadURL, nil)
+	downloadArtifactByGrant(c)
+	if w.Code != http.StatusOK || !bytes.Equal(w.Body.Bytes(), expectedArtifact) {
+		t.Fatalf("migrated artifact download: %d %s", w.Code, w.Body.String())
+	}
+	if err := validateArchive(ready.ArtifactPath); err != nil {
+		t.Fatal(err)
+	}
+	store = original
 	columns, err := store.tableColumnSet("failures")
 	if err != nil || columns["resolved_at"] {
 		t.Fatal("migration modified original", err)

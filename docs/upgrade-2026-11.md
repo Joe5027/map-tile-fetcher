@@ -107,7 +107,10 @@ BBox enumeration uses arithmetic counts and streamed coordinates. Polygon
 coordinates are deduplicated into one reusable manifest; exact counts enforce
 the existing configured budget. Retry baseline validation runs in the worker,
 outside the scheduler lock. MBTiles uses one writer, a prepared statement and
-bounded transactions (256 records or 250 ms), counting success after commit.
+bounded transactions (256 records, 8 MiB of tile bytes or 250 ms), counting
+success after commit. A single larger valid tile is accepted in its own batch.
+Consumed batch references are released after commit; baseline copying shares
+the byte boundary instead of retaining up to 256 large tile payloads.
 Ordinary output no longer runs `VACUUM`. Disk checks estimate actual copy,
 conversion and ZIP work; no implicit extra 1 GiB reserve blocks small jobs.
 
@@ -170,7 +173,7 @@ dialogs, page visibility, focus/selection/menu preservation, pagination,
 password/session behavior and task actions. Synthetic screenshot terrain is
 explicitly labelled and source file hashes accompany the captured images.
 
-## End-To-End Download Fixture Comparison
+## Download Engine Fixture Comparison
 
 Command: `python apps/admin-region-tiler/scripts/benchmark_download.py --ref
 450f40d --ref 53b7af2 --output tmp/performance-final.json`. Each revision is
@@ -201,15 +204,130 @@ is excluded from this engine fixture; the separate 832-file packing interruption
 case validates packaging and progress-write behavior. The 256-record storage
 microbenchmark separately compares 256 transactions with one bounded batch.
 
+## Final Plan Coverage Audit
+
+The [plan coverage matrix](https://github.com/Joe5027/map-tile-fetcher/blob/main/docs/plan-acceptance-2026-11.md)
+maps every accepted work item to implementation and executable evidence. The
+final review found and closed gaps that earlier passing tests did not cover:
+
+- Terrain creation estimates include ancestors and the sampling halo. The
+  fallback catalogue includes terrain sources when the catalogue request fails.
+  Ninety formula/brute-force comparisons and the actual browser check confirm
+  14 raw requests / 3 meshes for a 1–2 degree bbox at level 2.
+- Preparation reports its unique count and estimate; a 512-coordinate retry
+  baseline is read, validated and copied in exactly one pass. A locked
+  65,535-tile baseline does not prevent retry enqueue or another task operation.
+- Real skinny, island and overlapping GeoJSON fixtures exercise actual unique
+  budgets. A legacy database copy preserves failure history and downloads the
+  same published ZIP bytes after migration; the original database is unchanged.
+- SQLite copy estimates include live table/index pages, exclude free pages,
+  and distinguish new destinations from resume journals. The real copy tests
+  compare measured temporary usage against those estimates. Disk-boundary tests
+  use actual free space without filling the user's drive.
+  Resume copying also credits existing raw/ZIP target files and reserves only
+  net growth plus one atomic replacement overlap. The failed-before regression
+  previously charged 296 bytes for four tiny tiles despite three already being
+  present; it now needs 74 bytes growth plus 74 bytes replacement space.
+- Nine real browser chains cover all three area modes at 390/768/1440 pixels:
+  create, pause, resume, failed-tile retry, extent/terrain preview and ZIP
+  download. They use actual API, database and worker execution; retry issues
+  exactly one missing source request. Independent ZIP parsing verifies CRC,
+  five meshes, 4,225 vertices per mesh and known 100 m elevations. Background
+  refresh preserves selection and the actual scroll container at each width.
+  Before retry, only the root is available (1/5 meshes); each case independently
+  samples 100 m at the missing child and renders an actual level-3 upsampled
+  mesh whose 62 non-skirt vertices are all 100 m. Cancelling permanent deletion
+  sends zero purge requests; accepting sends exactly one real purge, removes
+  the card and makes the task return HTTP 404.
+- Exported unnamed terrain sources no longer include URL userinfo, query or
+  fragment in metadata. A legal source reproduced the leak before repair;
+  the original download URL still works. Ordinary vector ZIP/MBTiles payloads
+  are checked byte for byte.
+- Python is pinned to 3.13.17 across local verification and CI. It is the common
+  supported Windows/Linux patch selected for the existing 3.13 wheel lock;
+  the dependency record explains why 3.13.18 and 3.15.2 were not selected.
+
+All four documentation images were refreshed again after the coverage fixes.
+The capture now waits for the actual CSS color transition and checks tab state
+and final colors: the earlier image could show the old task-tab color during
+the 180 ms transition despite the correct bbox state. It does not alter the
+product DOM or CSS to manufacture an image.
+
+The full-workflow memory measurement also found that count-only MBTiles
+batches retained too much data for large PNG tiles. The 8 MiB boundary fixes
+that measured regression without rejecting a valid large tile. Actual saver
+and retry-copy tests force later batches to fail and verify that the earlier
+committed batch remains usable; timer-driven commits cannot mask those tests.
+The large-BLOB resume fixture measured 8,449,544 additional bytes against an
+8,757,928-byte estimate. A preflush failure also records the just-consumed tile,
+so it cannot disappear from the retryable failure set.
+
+## Whole-Workflow Fixture Comparison
+
+Command: `python apps/admin-region-tiler/scripts/benchmark_workflow.py --ref
+450f40d --working-tree --output tmp/workflow-performance-final.json`, using
+Python 3.13.17. This is a real API -> scheduler -> worker -> publication
+comparison, including ZIP creation. The loopback source serves 256 identical,
+deterministic 256×256 RGB PNGs with four download workers and zero delay.
+Each downloaded artifact is independently checked for 256 byte-identical tiles.
+
+The old implementation uses Go 1.25.3; the candidate uses Go 1.27.3. The
+candidate was measured before commit, based on `f7724ce`, with non-test Go,
+module and config source hash
+`815863e364550a33bc0f4cf0110f52cb11d7825bf35685722fbf0503d3aa6704`.
+The script records the same source fingerprint when comparing committed refs.
+
+| Metric | Old ZIP | Candidate ZIP | Old MBTiles | Candidate MBTiles |
+| --- | ---: | ---: | ---: | ---: |
+| API creation to publication, ms | 4,256.146 | 3,335.214 | 2,075.098 | 756.719 |
+| First externally observed committed tile, ms | 253.933 | 183.956 | 1,154.242 | 550.498 |
+| Requests / TCP connections | 256 / 256 | 256 / 4 | 256 / 256 | 256 / 4 |
+| Sampled simultaneous process-tree RSS, bytes | 59,637,760 | 62,595,072 | 71,651,328 | 81,350,656 |
+| Sampled peak runtime-directory size, bytes | 98,642,541 | 89,825,252 | 150,581,367 | 51,388,373 |
+| Published artifact size, bytes | 50,476,438 | 50,464,150 | 50,536,448 | 50,528,256 |
+
+The candidate completes sooner and uses fewer connections on this workload,
+but both formats use more process memory than the old implementation. An
+earlier candidate without the byte bound reached 162,963,456 bytes of MBTiles
+process-tree RSS; the 8 MiB boundary cuts that observed peak roughly in half
+while preserving its throughput. There is no claim that every memory or
+latency metric improves, and the tiny-file engine fixture above still shows
+the filesystem cost of durable atomic file replacement.
+
+RSS and logical file sizes are sampled every 20 ms and can miss short peaks.
+The process tree includes the owned service and workers; recorded per-process
+OS peak counters include startup and are not additive simultaneous peaks.
+All worker temp variables, including SQLite/VACUUM, point inside the isolated
+runtime directory. Its size includes the control database, raw data, coordinate
+catalogues, journals and packaging; it excludes build source/binary and does
+not measure physical filesystem allocation. First-tile observation uses a
+complete saved file or the persisted MBTiles success counter, so includes
+polling/progress latency. Verification downloads occur after the timing ends.
+This is one quiet paired run without a timing threshold, not a statistical
+throughput or memory guarantee for other machines or provider payloads.
+
 ## Acceptance Evidence And Limits
 
-The integrated local release preflight passed with the pinned Node 24.22.2:
+The initial integrated local release preflight passed with the pinned Node 24.22.2:
 18 Python fixtures, `go test ./...` (main package 107.054 s), all JavaScript
 syntax/rendering checks, complete browser smoke/repair, sensitive-value scan
 and generated-file scan. Separate `go vet ./...`, `go mod verify`, three release
 builder contract tests, documentation checks and the workspace AI audit passed.
 Screenshot hashes match the five rendered frontend source files. Native packages
 include the terrain guide, its reviewed images and Cesium license/credits.
+
+After the plan coverage fixes, the entire local release preflight passed again
+with Go 1.27.3, Node 24.22.2 and Python 3.13.17: all 18 Python tests, the full
+Go suite (main package 106.173 s), syntax/rendering contracts, 90 terrain
+estimate comparisons, normal UI/repair and all nine real browser workflows,
+including parent fallback and permanent-deletion confirmation. Both sensitive
+and generated-file scans passed with the new files staged. Separate vet,
+module verification, documentation checks (33 Markdown files / 84 local
+links), whitespace checks and the workspace AI audit passed. The measured Go
+source fingerprint and all five screenshot source hashes match the candidate.
+There are no outstanding implementation or local acceptance items in the plan
+matrix; exact-revision CI, native packages and branch convergence remain the
+delivery gates executed after a candidate commit exists.
 
 The [PR #8 checks](https://github.com/Joe5027/map-tile-fetcher/pull/8/checks)
 and [Validate workflow runs](https://github.com/Joe5027/map-tile-fetcher/actions/workflows/validate.yml)
@@ -220,8 +338,9 @@ using a cached or permanently embedded transient branch list. The dependency
 baseline `9ca929a` already passed all six jobs in run `42211344918`.
 
 The local Windows toolchain cannot run Go race with CGO disabled; Linux CI owns
-that check. OS-RSS and full operating-system power-loss behavior were not
-measured. Synthetic terrain fixtures and one public root PNG do not validate
+that check. Full operating-system power-loss behavior was not tested. The
+workflow fixture above adds OS-RSS evidence to the earlier heap-only comparison.
+Synthetic terrain fixtures and one public root PNG do not validate
 real-world vertical accuracy, every external provider or other terrain engines.
 No production deployment, user database migration/replacement or wide-area real
 download was performed. Existing authoritative-boundary gaps are unchanged and
@@ -237,9 +356,12 @@ login, asset and worker/download verification (3,629 manifest files).
 
 The merge message supplied through the API had only two bullets in each
 language, while the repository validator requires three. Local verification of
-`f0a2865` detected that metadata error. This follow-up records the audit and
+`f0a2865` detected that metadata error. The initial follow-up `f7724ce` records the audit and
 adds mandatory validation of the exact proposed merge message before the API
-call. It changes no application code or validation rule. The historical merge
+call; that initial commit changes no application code or validation rule.
+The subsequent coverage audit adds the implementation and acceptance fixes
+described above, carried by [PR #9](https://github.com/Joe5027/map-tile-fetcher/pull/9).
+The historical merge
 message is retained rather than rewriting protected main; a new compliant
 commit and merge receive their own checks. Final exact-revision workflow state
 remains available through the links above.

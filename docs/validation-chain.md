@@ -68,7 +68,8 @@ node .\scripts\release_preflight.mjs
 The release preflight runs Go tests, frontend syntax checks, UI smoke,
 tracked-file sensitive-value scanning, and tracked generated-file scanning.
 It also runs `python -B -m unittest discover -s scripts -p test_*.py -v`.
-Set `REGION_PYTHON` to the isolated Python 3.13 interpreter installed with
+Use the Python version pinned in root `.python-version` (currently 3.13.17).
+Set `REGION_PYTHON` to that isolated interpreter installed with
 `pip install --require-hashes --only-binary=:all: -r scripts/requirements-region.lock`.
 See [region tooling](region-maintenance.md) and [build/install validation](build-and-install.md).
 Windows/Linux package CI builds twice, compares checksums, extracts in a fresh
@@ -77,7 +78,11 @@ directory and verifies login, resources, version and a real loopback download.
 The Go suite includes `TestAPILifecycle`, which builds the real app binary and
 exercises HTTP, the scheduler, SQLite and ordinary worker processes against a
 local tile fixture. It does not contact real tile providers. UI smoke still
-intercepts creation payloads; it is not the backend lifecycle proof.
+intercepts selected creation payloads for focused regression checks. The separate
+`node scripts/workflow_acceptance.mjs` check uses real browser clicks and actual
+API/worker requests for administrative, rectangular and polygonal tasks at
+390/768/1440 px, including pause, resume, retry, preview and downloaded ZIP
+content. Layout-only checks do not substitute for those workflows.
 Preflight also runs rendering-security contracts and responsive/preview/login
 regressions. Linux CI additionally runs `go test -race ./...` and `go vet ./...`.
 Use [repair acceptance](repair-acceptance-2026-09-11.md) for issue mapping,
@@ -94,12 +99,20 @@ Performance evidence is reproducible without contacting providers:
 
 ```powershell
 python -B scripts/benchmark_download.py --ref 450f40d --ref HEAD --output tmp/performance.json
+python -B scripts/benchmark_workflow.py --ref 450f40d --working-tree --output tmp/workflow-performance.json
 go test -run '^$' -bench BenchmarkMBTilesWrites -benchtime=3x -count=1 .
 ```
 
 The first fixture measures the download engine, excluding ZIP packing; heap and
 output peaks are sampled every 10 ms, not OS RSS. Compare exact revisions and
 record toolchain and machine details. Timing is evidence, not a flaky pass gate.
+The workflow fixture measures real API acceptance through worker publication,
+including ZIP packing, sampled OS process-tree RSS and all isolated runtime
+temporary paths. It verifies the downloaded artifact bytes after timing stops.
+`--working-tree` permits the plan's pre-commit comparison without inventing a
+completed commit; the report records the base commit and compiled source hash.
+Follow [the complete plan coverage checklist](plan-acceptance-2026-11.md) before
+delivery; passing the old suite does not cover new acceptance requirements.
 
 For repository documentation, handoff state, rules, or local skills, run from
 the repository root:
