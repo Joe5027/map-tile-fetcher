@@ -5,8 +5,8 @@ import { once } from "node:events";
 import { createServer } from "node:net";
 import { request as httpRequest } from "node:http";
 import { existsSync } from "node:fs";
-import { fileURLToPath, pathToFileURL } from "node:url";
-import { dirname, join, resolve, delimiter as pathDelimiter } from "node:path";
+import { fileURLToPath } from "node:url";
+import { dirname, join, resolve } from "node:path";
 import { rm } from "node:fs/promises";
 import process from "node:process";
 import { runRepairUIChecks } from "./repair_ui_checks.mjs";
@@ -95,7 +95,8 @@ Options:
   --timeout-ms <ms>   Browser assertion timeout. Default: 60000.
 
 Playwright lookup:
-  The script tries local playwright, PLAYWRIGHT_MODULE_PATH, then npm root -g.
+  Uses the project's locked local dependency. Run npm ci, then
+  npx playwright install chromium from the application directory.
 `);
 }
 
@@ -105,81 +106,7 @@ async function loadPlaywright() {
     return localModule;
   }
 
-  const candidates = [];
-  if (process.env.PLAYWRIGHT_MODULE_PATH) {
-    candidates.push(process.env.PLAYWRIGHT_MODULE_PATH);
-  }
-
-  const npmRoot = await execFileOutput(npmCommand(), ["root", "-g"]).catch(() => "");
-  if (npmRoot.trim()) {
-    candidates.push(join(npmRoot.trim(), "playwright"));
-  }
-  candidates.push(...playwrightCandidatesFromPath());
-
-  for (const candidate of candidates) {
-    const resolved = resolvePlaywrightEntry(candidate);
-    if (!resolved) {
-      continue;
-    }
-    const module = await import(pathToFileURL(resolved).href).catch(() => null);
-    if (module?.chromium) {
-      return module;
-    }
-  }
-
-  throw new Error([
-    "Playwright is not available to this script.",
-    "Install it with `npm install -g playwright` and `npx playwright install chromium`,",
-    "or set PLAYWRIGHT_MODULE_PATH to a playwright package directory or index.mjs file.",
-  ].join(" "));
-}
-
-function resolvePlaywrightEntry(candidate) {
-  if (!candidate) {
-    return "";
-  }
-  const normalized = resolve(candidate);
-  if (existsSync(normalized) && normalized.endsWith(".mjs")) {
-    return normalized;
-  }
-  const indexMjs = join(normalized, "index.mjs");
-  if (existsSync(indexMjs)) {
-    return indexMjs;
-  }
-  const nestedIndexMjs = join(normalized, "node_modules", "playwright", "index.mjs");
-  if (existsSync(nestedIndexMjs)) {
-    return nestedIndexMjs;
-  }
-  return "";
-}
-
-function playwrightCandidatesFromPath() {
-  const pathValue = process.env.Path || process.env.PATH || "";
-  const entries = pathValue.split(pathDelimiter).filter(Boolean);
-  const candidates = [];
-  for (const entry of entries) {
-    candidates.push(join(entry, "node_modules", "playwright"));
-    if (existsSync(join(entry, "playwright.cmd")) || existsSync(join(entry, "playwright"))) {
-      candidates.push(join(entry, "node_modules", "playwright"));
-    }
-  }
-  return Array.from(new Set(candidates));
-}
-
-function execFileOutput(command, args) {
-  return new Promise((resolveOutput, rejectOutput) => {
-    execFile(command, args, { windowsHide: true }, (error, stdout, stderr) => {
-      if (error) {
-        rejectOutput(new Error(stderr || error.message));
-        return;
-      }
-      resolveOutput(stdout);
-    });
-  });
-}
-
-function npmCommand() {
-  return process.platform === "win32" ? "npm.cmd" : "npm";
+  throw new Error("Local Playwright is unavailable. Run `npm ci` and `npx playwright install chromium` from the application directory.");
 }
 
 function normalizeBaseURL(value) {
@@ -307,6 +234,7 @@ async function runSmoke(baseURL) {
     body: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aWQAAAABJRU5ErkJggg==", "base64"),
   }));
 
+  await page.route("**/api/tasks/page?*", (route) => route.fulfill({json:{items:[],total:0,counts:{all:0}}}));
   await page.route("**/api/tasks", async (route) => {
     const request = route.request();
     if (request.method() === "POST") {

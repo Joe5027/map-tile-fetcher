@@ -87,6 +87,7 @@ type LevelConfig struct {
 }
 
 type TaskRecord struct {
+	responseView   *taskResponseView
 	generatedFiles []string
 	ID             string
 	UserID         int64
@@ -1429,7 +1430,7 @@ func (s *SQLiteStore) purgeTaskRecord(planID string) error {
 	if _, err := tx.Exec(`DELETE FROM execution_queue WHERE plan_id IN (SELECT id FROM plans WHERE id=? OR parent_id=?)`, planID, planID); err != nil {
 		return err
 	}
-	for _, table := range []string{"run_coverage", "pending_publications"} {
+	for _, table := range []string{"run_coverage", "pending_publications", "run_phases"} {
 		if _, err := tx.Exec(`DELETE FROM `+table+` WHERE run_id IN (SELECT id FROM task_runs WHERE plan_id IN (SELECT id FROM plans WHERE id = ? OR parent_id = ?))`, planID, planID); err != nil {
 			return err
 		}

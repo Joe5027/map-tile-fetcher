@@ -136,6 +136,7 @@ type TaskFailureSummaryResponse struct {
 }
 
 type TaskResponse struct {
+	Phase                 RunPhase                   `json:"phase"`
 	Queue                 QueueState                 `json:"queue"`
 	EffectiveWorkers      int                        `json:"effectiveWorkers"`
 	EffectiveTimeDelay    int                        `json:"effectiveTimeDelay"`
@@ -339,6 +340,7 @@ func initServer() {
 			c.JSON(200, gin.H{"maxTiles": maxTaskTiles(), "maxActive": maxActiveTasks(), "defaultWorkers": 3, "minWorkers": 1, "maxWorkers": 50})
 		})
 		protected.GET("/tasks", listTasks)
+		protected.GET("/tasks/page", listTaskPage)
 		protected.GET("/tasks/:id", getTask)
 		protected.GET("/tasks/:id/area", getTaskArea)
 		protected.PUT("/tasks/:id/pause", pauseTask)
@@ -850,20 +852,23 @@ func artifactDownloadURL(taskID string, run *TaskRunRecord) string {
 	artifactDownloadGrants.Lock()
 	defer artifactDownloadGrants.Unlock()
 
-	for token, grant := range artifactDownloadGrants.values {
-		if grant.ExpiresAt.After(now) {
-			continue
+	if now.Sub(artifactDownloadGrantLastSweep) >= time.Minute {
+		for token, grant := range artifactDownloadGrants.values {
+			if grant.ExpiresAt.After(now) {
+				continue
+			}
+			delete(artifactDownloadGrants.values, token)
+			key := grant.TaskID + "\x00" + grant.RunID
+			if artifactDownloadGrants.byRun[key] == token {
+				delete(artifactDownloadGrants.byRun, key)
+			}
 		}
-		delete(artifactDownloadGrants.values, token)
-		key := grant.TaskID + "\x00" + grant.RunID
-		if artifactDownloadGrants.byRun[key] == token {
-			delete(artifactDownloadGrants.byRun, key)
-		}
+		artifactDownloadGrantLastSweep = now
 	}
 
 	if token := artifactDownloadGrants.byRun[runKey]; token != "" {
 		grant, exists := artifactDownloadGrants.values[token]
-		if exists && grant.ArtifactPath == run.ArtifactPath && grant.ArtifactName == run.ArtifactName {
+		if exists && grant.ExpiresAt.After(now) && grant.ArtifactPath == run.ArtifactPath && grant.ArtifactName == run.ArtifactName {
 			return "/api/downloads/" + token
 		}
 		delete(artifactDownloadGrants.values, token)
@@ -1542,9 +1547,16 @@ func taskResponseFromRecord(plan *TaskRecord) TaskResponse {
 		RunAt:          plan.RunAt.Format(time.RFC3339),
 		ArtifactStatus: ArtifactNone,
 	}
-	if store != nil {
+	if plan.responseView != nil {
+		response.Integrity = plan.responseView.Integrity
+		response.Queue = plan.responseView.Queue
+		response.Phase = plan.responseView.Phase
+	} else if store != nil {
 		response.Integrity = store.integrityState(plan.ID)
 		response.Queue = store.queueState(plan.ID)
+		if plan.LastRun != nil {
+			response.Phase = store.runPhase(plan.LastRun.ID)
+		}
 	}
 	policy := defaultFetchPolicy(plan.URL, plan.SourceName)
 	response.EffectiveWorkers = effectiveWorkers(plan.Workers, policy)
@@ -1590,7 +1602,7 @@ func taskResponseFromRecord(plan *TaskRecord) TaskResponse {
 		} else if response.Integrity.Missing > 0 {
 			response.Integrity.Status = "incomplete"
 		}
-		applyFailureSummary(plan.ID, &response)
+		applyRecordFailureSummary(plan, &response)
 		applyProgressAndArtifact(&response)
 		return response
 	}
@@ -1617,14 +1629,18 @@ func taskResponseFromRecord(plan *TaskRecord) TaskResponse {
 		}
 	}
 
-	if store != nil {
-		if published, err := store.publishedRun(plan.ID); err == nil {
-			response.ArtifactStatus = ArtifactReady
-			response.ArtifactName = published.ArtifactName
-			response.DownloadURL = artifactDownloadURL(plan.ID, published)
-		}
+	var published *TaskRunRecord
+	if plan.responseView != nil {
+		published = plan.responseView.Published
+	} else if store != nil {
+		published, _ = store.publishedRun(plan.ID)
 	}
-	applyFailureSummary(plan.ID, &response)
+	if published != nil {
+		response.ArtifactStatus = ArtifactReady
+		response.ArtifactName = published.ArtifactName
+		response.DownloadURL = artifactDownloadURL(plan.ID, published)
+	}
+	applyRecordFailureSummary(plan, &response)
 	applyProgressAndArtifact(&response)
 	return response
 }

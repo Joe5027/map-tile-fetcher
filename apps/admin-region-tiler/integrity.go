@@ -52,7 +52,7 @@ func (s *SQLiteStore) initIntegritySchema() error {
 			return err
 		}
 	}
-	return nil
+	return s.initRunPhaseSchema()
 }
 
 func (s *SQLiteStore) integrityState(planID string) IntegrityState {

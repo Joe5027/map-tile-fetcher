@@ -45,6 +45,12 @@ let adminRegionPendingFocusRegionId = "";
 let rangeMapInitRetries = 0;
 let currentTaskFilter = "all";
 let cachedTasks = [];
+const TASK_PAGE_LIMIT = 50;
+let taskPageOffset = 0;
+let taskPageTotal = 0;
+let taskCounts = null;
+let taskListLoaded = false;
+const renderedTaskCards = new Map();
 let taskPollingTimer = null;
 let taskLoadPromise = null;
 let taskLoadGeneration = 0;
@@ -172,6 +178,12 @@ function bindEvents() {
     document.getElementById("taskForm").addEventListener("input", updateTaskCreateSummary);
     document.getElementById("taskForm").addEventListener("change", updateTaskCreateSummary);
     document.getElementById("refreshBtn").addEventListener("click", loadTasks);
+    document.getElementById("taskPagePrev").addEventListener("click", () => changeTaskPage(Math.max(0, taskPageOffset - TASK_PAGE_LIMIT)));
+    document.getElementById("taskPageNext").addEventListener("click", () => changeTaskPage(taskPageOffset + TASK_PAGE_LIMIT));
+    document.addEventListener("visibilitychange", () => {
+        startTaskPolling();
+        if (!document.hidden && authenticated && taskMode === "tasks") void loadTasks();
+    });
     document.getElementById("addLevelBtn").addEventListener("click", addLevelConfig);
     document.getElementById("fitAdminRegionMapBtn").addEventListener("click", fitAdminRegionMapToSelection);
     document.getElementById("toggleSelectTasksBtn").addEventListener("click", toggleSelectVisibleTasks);
@@ -274,11 +286,10 @@ function bindEvents() {
         if (!button) {
             return;
         }
-            currentTaskFilter = button.dataset.taskFilter;
-            renderTaskStats(cachedTasks);
-            renderTaskList(cachedTasks);
-            renderSelectionMeta();
-        });
+        currentTaskFilter = button.dataset.taskFilter;
+        renderTaskStats(cachedTasks);
+        changeTaskPage(0);
+    });
 
     document.getElementById("taskMoreBtn").addEventListener("click", (event) => {
         event.stopPropagation();
@@ -429,6 +440,11 @@ function showApp(user) {
     authenticated = true;
     taskLoadGeneration++;
     taskLoadPromise = null;
+    taskPageOffset = 0;
+    taskCounts = null;
+    taskListLoaded = false;
+    selectedTaskIds.clear();
+    renderedTaskCards.clear();
     document.getElementById("currentUsername").textContent = user.username;
     document.getElementById("loginView").classList.add("is-hidden");
     document.getElementById("appView").classList.remove("is-hidden");
@@ -436,7 +452,7 @@ function showApp(user) {
 
 function startTaskPolling() {
     stopTaskPolling();
-    if (!authenticated) return;
+    if (!authenticated || taskMode !== "tasks" || document.hidden) return;
     taskPollingTimer = window.setInterval(() => {
         void loadTasks();
     }, 5000);
@@ -531,6 +547,8 @@ function setTaskMode(mode) {
         }, 40);
     }
     updateTaskCreateSummary();
+    startTaskPolling();
+    if (isTasksMode && authenticated && !document.hidden) void loadTasks();
 }
 
 function syncScheduleControls() {
@@ -2847,8 +2865,8 @@ async function loadTasks() {
 }
 
 async function loadTasksOnce(generation) {
-    showMessage("taskListMessage","加载中...");
-    const response = await fetchJSON("/api/tasks", { allowUnauthorized: true });
+    if (!taskListLoaded) showMessage("taskListMessage","加载中...");
+    const response = await fetchJSON(`/api/tasks/page?limit=${TASK_PAGE_LIMIT}&offset=${taskPageOffset}&status=${encodeURIComponent(currentTaskFilter)}`, { allowUnauthorized: true });
     if(generation !== taskLoadGeneration) return;
     if (!response.ok) {
         if (response.status === 401) {
@@ -2859,13 +2877,36 @@ async function loadTasksOnce(generation) {
         return;
     }
 
-    cachedTasks = Array.isArray(response.data) ? response.data : [];
+    taskPageTotal = Number(response.data.total) || 0;
+    taskCounts = response.data.counts || {};
+    if (taskPageOffset >= taskPageTotal && taskPageOffset > 0) {
+        taskPageOffset = Math.max(0, Math.floor((taskPageTotal - 1) / TASK_PAGE_LIMIT) * TASK_PAGE_LIMIT);
+        return loadTasksOnce(generation);
+    }
+    cachedTasks = Array.isArray(response.data.items) ? response.data.items : [];
+    taskListLoaded = true;
     hideMessage("taskListMessage");
     cleanupSelections(cachedTasks);
     updateWorkspaceTaskCount(cachedTasks);
     renderTaskStats(cachedTasks);
     renderTaskList(cachedTasks);
     renderSelectionMeta();
+    renderTaskPagination();
+}
+
+function changeTaskPage(offset) {
+    taskPageOffset = offset;
+    taskLoadGeneration++;
+    taskLoadPromise = null;
+    selectedTaskIds.clear();
+    void loadTasks();
+}
+
+function renderTaskPagination() {
+    const pages = Math.max(1, Math.ceil(taskPageTotal / TASK_PAGE_LIMIT));
+    document.getElementById("taskPageInfo").textContent = `第 ${Math.floor(taskPageOffset / TASK_PAGE_LIMIT) + 1}/${pages} 页 · ${taskPageTotal} 个任务`;
+    document.getElementById("taskPagePrev").disabled = taskPageOffset === 0;
+    document.getElementById("taskPageNext").disabled = taskPageOffset + TASK_PAGE_LIMIT >= taskPageTotal;
 }
 
 function updateWorkspaceTaskCount(tasks) {
@@ -2873,11 +2914,11 @@ function updateWorkspaceTaskCount(tasks) {
     if (!element) {
         return;
     }
-    element.textContent = String(Array.isArray(tasks) ? tasks.length : 0);
+    element.textContent = String(taskCounts?.all ?? (Array.isArray(tasks) ? tasks.length : 0));
 }
 
 function renderTaskStats(tasks) {
-    const counts = countTasks(tasks);
+    const counts = { ...countTasks([]), ...(taskCounts || countTasks(tasks)) };
     const stats = [
         { id: "all", label: "全部任务", count: counts.all },
         { id: "running", label: "运行中", count: counts.running },
@@ -2887,12 +2928,18 @@ function renderTaskStats(tasks) {
         { id: "paused", label: "已暂停", count: counts.paused }
     ];
 
-    document.getElementById("taskStats").innerHTML = stats.map((stat) => `
+    const container = document.getElementById("taskStats");
+    if (!container.children.length) container.innerHTML = stats.map((stat) => `
         <button type="button" class="stat-chip ${currentTaskFilter === stat.id ? "is-active" : ""}" data-task-filter="${stat.id}">
             <span>${stat.label}</span>
             <small>${stat.count}</small>
         </button>
     `).join("");
+    for (const stat of stats) {
+        const button = container.querySelector(`[data-task-filter="${stat.id}"]`);
+        button.classList.toggle("is-active", currentTaskFilter === stat.id);
+        button.querySelector("small").textContent = stat.count;
+    }
 }
 
 function renderTaskList(tasks) {
@@ -2900,22 +2947,64 @@ function renderTaskList(tasks) {
     const filtered = applyTaskFilter(tasks);
 
     if (filtered.length === 0) {
-        list.innerHTML = `
+        if (!list.querySelector(".task-empty")) list.innerHTML = `
             <div class="task-empty">
                 <img src="/static/assets/images/empty-state.svg" alt="暂无任务">
                 <h3>暂无任务</h3>
                 <p>暂无任务，创建一个下载任务后可在这里查看进度。</p>
             </div>
         `;
+        renderedTaskCards.clear();
         return;
     }
 
-    list.innerHTML = filtered.map((task) => {
-        if (task.kind === "group") {
-            return renderGroupTask(task);
+    const scrollTop = list.scrollTop;
+    const wanted = new Set(filtered.map((task) => String(task.id)));
+    for (const [id, cached] of renderedTaskCards) {
+        if (!wanted.has(id)) { cached.node.remove(); renderedTaskCards.delete(id); }
+    }
+    for (const child of Array.from(list.children)) {
+        if (!child.matches("[data-group-task-id]") || renderedTaskCards.get(child.dataset.groupTaskId)?.node !== child) child.remove();
+    }
+    filtered.forEach((task, index) => {
+        const id = String(task.id);
+        const signature = JSON.stringify(task);
+        let cached = renderedTaskCards.get(id);
+        if (!cached || cached.signature !== signature || cached.node.parentNode !== list) {
+            const old = cached?.node;
+            const focus = old?.contains(document.activeElement) ? taskFocusKey(document.activeElement) : null;
+            const openMenus = old ? Array.from(old.querySelectorAll(".task-menu__panel:not(.is-hidden)")).map((menu) => menu.id) : [];
+            const template = document.createElement("template");
+            template.innerHTML = task.kind === "group" ? renderGroupTask(task) : renderStandaloneTask(task);
+            const node = template.content.firstElementChild;
+            if (old?.parentNode === list) old.replaceWith(node);
+            else list.insertBefore(node, list.children[index] || null);
+            for (const menuID of openMenus) {
+                const menu = Array.from(node.querySelectorAll(".task-menu__panel")).find((item) => item.id === menuID);
+                menu?.classList.remove("is-hidden");
+            }
+            if (focus) {
+                Array.from(node.querySelectorAll("button,a,input,summary")).find((element) => taskFocusKey(element) === focus)?.focus({preventScroll:true});
+            }
+            cached = { node, signature };
+            renderedTaskCards.set(id, cached);
         }
-        return renderStandaloneTask(task);
-    }).join("");
+        if (list.children[index] !== cached.node) list.insertBefore(cached.node, list.children[index] || null);
+        const checkbox = cached.node.querySelector(".task-select");
+        if (checkbox) checkbox.checked = selectedTaskIds.has(id);
+        cached.node.open = expandedGroupTasks.has(id);
+        for (const child of cached.node.querySelectorAll("details[data-child-task-id]")) {
+            child.open = expandedChildTasks.has(child.dataset.childTaskId);
+        }
+    });
+    list.scrollTop = scrollTop;
+}
+
+function taskFocusKey(element) {
+    const details = element.closest("details");
+    return JSON.stringify([element.tagName, element.dataset.taskAction, element.dataset.taskId,
+        element.dataset.taskMenuToggle, details?.dataset.childTaskId || details?.dataset.groupTaskId,
+        element.getAttribute("href")]);
 }
 
 function renderGroupTask(task) {
@@ -2949,6 +3038,7 @@ function renderGroupTask(task) {
                         <div class="progress-bar">
                             <div class="progress-bar__value" style="width:${progress}%"></div>
                         </div>
+                        ${renderTaskPhase(children.find((child) => ["running", "queued", "paused"].includes(child.status)) || task)}
                         <div class="task-metrics">
                             <span>运行中：<strong>${task.runningChildren || 0}</strong></span>
                             <span>暂停：<strong>${task.pausedChildren || 0}</strong></span>
@@ -3026,6 +3116,7 @@ function renderStandaloneTask(task) {
                         <div class="progress-bar">
                             <div class="progress-bar__value" style="width:${progress}%"></div>
                         </div>
+                        ${renderTaskPhase(task)}
                         <div class="task-metrics">
                             <span>进度：<strong>${task.current || 0}/${task.total || 0}</strong></span>
                             <span>成功：<strong>${task.successCount || 0}</strong></span>
@@ -3118,6 +3209,7 @@ function renderChildTask(task) {
                         <div class="progress-bar">
                             <div class="progress-bar__value" style="width:${progress}%"></div>
                         </div>
+                        ${renderTaskPhase(task)}
                         <div class="child-task__meta">
                             <span>进度：<strong>${task.current || 0}/${task.total || 0}</strong></span>
                             <span>成功：<strong>${task.successCount || 0}</strong></span>
@@ -3246,6 +3338,18 @@ function managedDownloadURL(task) {
         return expected;
     }
     return typeof url === "string" && /^\/api\/downloads\/[a-f0-9]{64}$/.test(url) ? url : "";
+}
+
+function renderTaskPhase(task) {
+    if (task.queue?.state === "queued") {
+        return `<p class="task-phase">排队等待执行 · 位置 ${Number(task.queue.position) || 0}</p>`;
+    }
+    if (task.queue?.state === "paused") return '<p class="task-phase">已暂停，等待恢复</p>';
+    const phase = task.phase || {};
+    if (!phase.name) return "";
+    const labels = {preparing:"准备任务",enumerating:"统计瓦片",downloading:"下载瓦片",verifying:"核对完整度",packing:"打包产物",writing:"写入数据",converting:"转换地形",publishing:"发布产物",completed:"处理完成"};
+    const progress = Number(phase.total) > 0 ? ` · ${Number(phase.current) || 0}/${Number(phase.total)}` : "";
+    return `<p class="task-phase">${escapeHTML(labels[phase.name] || phase.name)}${progress}</p>`;
 }
 
 function renderIntegrity(task) {

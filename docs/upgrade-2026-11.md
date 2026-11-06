@@ -13,7 +13,7 @@ fixtures; no user database or existing downloads are used.
 | Automatic recovery, queue slots and storage performance | Pending |
 | Dependency/toolchain upgrade | Pending |
 | Cesium terrain generation and offline preview | Terrain codec and sampling tested; application integration in progress |
-| Source selection, paginated history and responsive interactions | Pending |
+| Source selection, paginated history and responsive interactions | Pagination and visible-page refresh tested; terrain source UI pending |
 | Manuals, reproducible images, native packages and final main checks | Pending |
 
 ## Download Configuration Regressions
@@ -56,3 +56,19 @@ The encoder disables that optional culling through NaN for such coarse tiles;
 actual Cesium 1.147 multi-view validation is still required before delivery.
 Windows race verification is unavailable with the current CGO-disabled toolchain;
 Linux race verification remains part of final acceptance.
+
+## Task History Fixture
+
+`TestTaskPageMatchesLegacyAndBoundsWork` creates 1,000 parent tasks with three
+children each. On the local Windows fixture, the legacy response took 1.918 s
+and 4,689,609 bytes; the 50-parent page took 57.8 ms and 234,695 bytes, using
+eight batch queries. This measures API construction on that fixture, not a
+universal latency guarantee. Global status aggregation still scans compact
+status data; full run/artifact/failure records are limited to the selected page.
+
+`GET /api/tasks/page?limit=50&offset=0&status=all` returns `items`, `total`, and
+`counts`. The original array endpoint remains compatible. Browser checks cover
+pagination, last-page deletion, keyed updates, focus/menu/selection/expansion
+preservation, phase display and stopping polling when the task page is hidden.
+Download-grant expiry is checked on use; bulk expiry cleanup runs at most once
+per minute.
