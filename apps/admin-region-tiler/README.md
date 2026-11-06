@@ -1,7 +1,7 @@
 # 地图下载器 Tiler - Map Tile Fetcher
 
 这是 Map Tile Fetcher 的 Go Web 应用目录。应用提供登录、任务创建、任务历史、
-失败记录、ZIP/MBTiles 产物下载、Docker 部署和发布预检脚本。
+失败记录、ZIP/MBTiles/离线 Cesium 地形产物、Docker 部署和发布预检脚本。
 
 > 请只用于你有权访问和下载的地图瓦片服务。项目提供限速、重试和本地 token
 > 配置能力，但不会授权绕过任何第三方服务条款、配额或访问限制。
@@ -9,15 +9,19 @@
 ## 功能概览
 
 - 新建计划和我的任务使用独立 Tab，创建任务和查看历史互不拥挤。
+- 两种创建模式共用下载参数，提交前在页面查看任务摘要；请求期间禁用重复创建。
 - 支持 `行政区划下载` 和 `范围框选下载` 两种创建模式。
 - 支持天地图、Mapbox、OSM、Google 样例和自定义瓦片 URL。
 - 支持立即执行和单次定时执行。
-- 支持 ZIP 文件树和 MBTiles 两种产物。
+- 支持 ZIP 文件树、MBTiles 和 Terrarium → Cesium quantized-mesh 地形包。
+- 区域与来源独立；真实高程默认最大级别 14，可选 15，提供本地离线三维预览。
 - 支持失败记录持久化、失败瓦片重试、暂停、恢复、取消和彻底删除。
+- 异常退出自动继续原运行，手动暂停保持暂停；暂停释放执行槽，恢复按容量排队。
+- 历史任务每页 50 个父任务，按状态筛选；可见页刷新保留焦点、选择和展开。
 - `geojson/` 可作为持久化区域资源目录，新增区域文件无需重建镜像。
 - 默认每父任务全部图层合计最多 100 万瓦片，同时运行最多 3 个子任务，其余持久排队。
 - 失败重试发布累计完整 ZIP/MBTiles；历史核对只读本地输出，缺失旧成功瓦片时需显式重新创建。
-- 配置、迁移和十类问题验证见 [修复验收记录](../../docs/repair-acceptance-2026-09-11.md)。
+- 高程用法见[地形说明](../../docs/terrain.md)，当前变更、性能与验证见[升级记录](../../docs/upgrade-2026-11.md)。
 
 ## 本地源码启动
 
@@ -28,10 +32,11 @@
 工具不再支持直接部署覆盖，默认只读检查；七项维护状态见
 [维护验收记录](../../docs/maintenance-acceptance-2026-09-11.md)。
 
-1. 安装 Go 1.25 或更高版本。
+1. 安装 Go 1.27.3（见 go.mod）以及 Node 24.22.2/npm。
 2. 在本目录执行：
 
 ```powershell
+npm ci --omit=dev --no-audit --no-fund
 go run .
 ```
 
@@ -109,13 +114,18 @@ Linux/macOS 使用同样参数时，把挂载路径写成 `"$PWD/data:/app/data"
 | `AUTH_DEFAULT_USERNAME` | `admin` | 默认登录用户名。 |
 | `AUTH_DEFAULT_PASSWORD` | `adminmap` | 默认登录密码。 |
 | `TASK_MAX_TILES` | `1000000` | 父任务所有图层累计预算。 |
-| `TASK_MAX_ACTIVE` | `3` | 同时运行的子任务上限，暂停继续占槽。 |
+| `TASK_MAX_ACTIVE` | `3` | 同时运行的子任务上限，暂停释放槽位，恢复按容量排队。 |
 | `TASK_WORKERS` | `3` | 默认请求线程，用户可选 1～50，受来源上限约束。 |
 
 生产部署至少要修改 `AUTH_DEFAULT_USERNAME` 和 `AUTH_DEFAULT_PASSWORD`。真实地图服务
 token 不要写入 Git，可保存在本地配置、环境变量或部署平台密钥管理中。
 
 ## 配置地图源
+
+下载默认复用 HTTP 连接。只有确需断开连接的来源才在 `source_policies.headers`
+中配置 `Connection = "close"`。`max_retries = 0` 禁用单次请求的额外尝试；
+`retry_passes` 独立控制额外补抓次数。来源的 `retry_statuses` 同时用于这两条重试路径。
+PNG/JPEG/WebP 图片会校验格式；WebP 产物保留原始字节。
 
 地图源示例在 `conf.toml`。URL 中的瓦片坐标使用 `{x}`、`{y}`、`{z}` 占位：
 
@@ -150,10 +160,10 @@ node .\scripts\smoke_ui.mjs
 node .\scripts\smoke_ui.mjs --url http://127.0.0.1:8081
 ```
 
-脚本需要本地或全局可用的 Playwright 包。如缺失，可执行：
+脚本只使用本项目锁定的 Playwright 包。如缺失，可执行：
 
 ```powershell
-npm install -g playwright
+npm ci --no-audit --no-fund
 npx playwright install chromium
 ```
 
@@ -179,10 +189,15 @@ node .\scripts\release_preflight.mjs
 
 - `internal/area`：bbox 和行政区划参数校验。
 - `internal/downloader`：bbox 瓦片坐标及数量计算。
+- `internal/terrain`：Terrarium 解码、全球采样、quantized-mesh 和 TMS availability。
 - `server.go`、`main.go`、`db.go`：HTTP API、配置、登录、SQLite 事务与迁移。
 - `runtime.go`、`queue.go`：任务控制、持久排队和工作进程调度。
+- `recovery_runtime.go`：运行归属、旧 worker 退出协调、原运行续传。
+- `task_page.go`：父任务分页、全局计数和关联记录批量查询。
 - `task.go`、`enumeration.go`、`worker_process.go`：枚举、下载、重试和写入。
 - `artifact_lifecycle.go`、`integrity.go`、`reconcile.go`：产物发布、删除、累计完整度与历史核对。
+- `terrain_pipeline.go`、`terrain_routes.go`：高程来源、转换缓存、离线包及认证预览。
+- `mbtiles_batch.go`、`storage_space.go`：单 writer 批事务与按阶段计算额外空间。
 - `static/`：登录、新建计划、任务管理及地图预览页面。
 
 详细入口见 [项目地图](../../docs/project-map.md)，清理结果和后续问题见

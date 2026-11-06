@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	_ "golang.org/x/image/webp"
+
 	"github.com/paulmach/orb"
 	"github.com/paulmach/orb/geojson"
 )
@@ -151,7 +153,7 @@ func saveToMBTile(tile Tile, db *sql.DB) error {
 	return nil
 }
 
-func saveToFiles(tile Tile, task *Task) error {
+func saveToFiles(tile Tile, task *Task) (err error) {
 	dir := filepath.Join(task.File, fmt.Sprintf(`%d`, tile.T.Z), fmt.Sprintf(`%d`, tile.T.X))
 	if err := os.MkdirAll(dir, directoryPermissions); err != nil {
 		return err
@@ -161,11 +163,34 @@ func saveToFiles(tile Tile, task *Task) error {
 		y = tile.flipY()
 	}
 	fileName := filepath.Join(dir, fmt.Sprintf(`%d.%s`, y, task.TileMap.Format))
-	err := os.WriteFile(fileName, tile.C, filePermissions)
+	file, err := os.CreateTemp(dir, fmt.Sprintf("%d.*.partial", y))
 	if err != nil {
 		return err
 	}
-	return nil
+	temporary := file.Name()
+	defer func() {
+		if err != nil {
+			_ = os.Remove(temporary)
+		}
+	}()
+	if err = file.Chmod(filePermissions); err == nil {
+		_, err = file.Write(tile.C)
+	}
+	closeErr := file.Close()
+	if err != nil {
+		return err
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	// Windows cannot replace the same destination concurrently. Different
+	// levels may intentionally use different URLs for the same coordinate.
+	// Only the short rename is serialized; tile writes remain concurrent.
+	key := (uint64(tile.T.X)*73856093 ^ uint64(tile.T.Y)*19349663 ^ uint64(tile.T.Z)*83492791) % uint64(len(task.fileCommitLocks))
+	lock := &task.fileCommitLocks[key]
+	lock.Lock()
+	defer lock.Unlock()
+	return os.Rename(temporary, fileName)
 }
 
 func optimizeConnection(db *sql.DB) error {
@@ -181,20 +206,6 @@ func optimizeConnection(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
-	return nil
-}
-
-func optimizeDatabase(db *sql.DB) error {
-	_, err := db.Exec("ANALYZE;")
-	if err != nil {
-		return err
-	}
-
-	_, err = db.Exec("VACUUM;")
-	if err != nil {
-		return err
-	}
-
 	return nil
 }
 

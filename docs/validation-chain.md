@@ -11,8 +11,9 @@ Confirm the change affects only:
 - repository-level docs, rules, local skills, or validation surfaces that support
   the Go app
 
-Do not import old source folders, release packages, screenshots, runtime data,
-generated tile outputs, or retired .NET runtime code.
+Do not import old source folders, release packages, temporary screenshots,
+runtime data, generated tile outputs, or retired .NET runtime code. Reviewed
+documentation images in `docs/assets/` follow `AGENTS.md`.
 
 ## 2. Source Truth Gate
 
@@ -50,6 +51,8 @@ For browser UI smoke automation:
 
 ```powershell
 cd apps/admin-region-tiler
+npm ci --no-audit --no-fund
+npx playwright install chromium
 node --check .\scripts\smoke_ui.mjs
 node .\scripts\smoke_ui.mjs
 ```
@@ -80,23 +83,39 @@ regressions. Linux CI additionally runs `go test -race ./...` and `go vet ./...`
 Use [repair acceptance](repair-acceptance-2026-09-11.md) for issue mapping,
 baseline red/green commands, legacy migration and artifact coordinate evidence.
 
-For handoff artifacts:
+New recovery/elevation changes require the relevant real-worker fixtures,
+not just the pure codec tests: parent termination, paused capacity, cumulative
+retry, missing root/child elevation, and authenticated compressed terrain
+delivery. `task_page_test.go` checks 1,000 parents with three children, fixed
+batch query count and equivalent legacy responses. Browser terrain acceptance
+must load the actual mesh with local Cesium and block external requests.
+
+Performance evidence is reproducible without contacting providers:
 
 ```powershell
-python C:\Users\32674\.codex\skills\deep-execution-upgrade\scripts\validate_handoff_contract.py --path docs\long-term-memory.md --format text
+python -B scripts/benchmark_download.py --ref 450f40d --ref HEAD --output tmp/performance.json
+go test -run '^$' -bench BenchmarkMBTilesWrites -benchtime=3x -count=1 .
 ```
 
-For workspace control-surface changes:
+The first fixture measures the download engine, excluding ZIP packing; heap and
+output peaks are sampled every 10 ms, not OS RSS. Compare exact revisions and
+record toolchain and machine details. Timing is evidence, not a flaky pass gate.
+
+For repository documentation, handoff state, rules, or local skills, run from
+the repository root:
 
 ```powershell
-python C:\Users\32674\.codex\skills\deep-execution-upgrade\scripts\audit_environment.py --mode workspace --workspace . --format text
+node --check scripts/check_docs.mjs
+node scripts/check_docs.mjs
 ```
 
-For runtime capability or MCP/plugin routing claims:
-
-```powershell
-python C:\Users\32674\.codex\skills\deep-execution-upgrade\scripts\runtime_preflight.py --format text
-```
+This checks repository-local Markdown links/images, required entrypoints, and
+canonical rule references plus the five ordered handoff sections. External URLs and historical absolute local
+links are not resolved; the latter are reported as skipped. Source-to-document
+comparison and visual inspection of changed documentation images remain required.
+Run an environment skill's audit when that skill requires it and is available;
+do not make another user's global installation a repository validation gate.
+Use successful current-session calls when reporting runtime capabilities.
 
 ## 4. Secret And Generated-File Gate
 
@@ -153,3 +172,11 @@ before the commit is created. GitHub Actions validates pushed and pull-request
 commits with the same script; make the `Commit Message` check required in
 branch protection if the remote must block merges instead of only reporting a
 failed check.
+
+## 7. Main And Branch Cleanup
+
+Apply [the branch convergence procedure](merge-plan.md#branch-convergence).
+Validate the merged result on `main`, reconcile every non-main branch's unique
+work, then remove integrated local and remote branches and verify actual refs.
+Report any unresolved branch or check; do not call the delivery complete while
+the required convergence remains unfinished.

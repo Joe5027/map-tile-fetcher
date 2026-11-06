@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"errors"
 	"time"
 )
@@ -17,21 +18,6 @@ func (m *RuntimeManager) enqueue(plan *TaskRecord, trigger string) error {
 			return err
 		}
 	}
-	budgetPlan, sourceCount := fresh, len(plans)
-	if fresh.ParentID != "" {
-		budgetPlan, err = store.getTaskRecordByID(fresh.ParentID)
-		if err != nil {
-			return err
-		}
-		siblings, err := store.listTaskChildrenByParent(fresh.ParentID)
-		if err != nil {
-			return err
-		}
-		sourceCount = len(siblings)
-	}
-	if _, err := validateTaskBudget(budgetPlan.Levels, sourceCount); err != nil {
-		return err
-	}
 	eligible := []*TaskRecord{}
 	for _, p := range plans {
 		if err := store.checkNotDeleting(p.ID); err != nil {
@@ -47,9 +33,6 @@ func (m *RuntimeManager) enqueue(plan *TaskRecord, trigger string) error {
 			}
 			if summary.Retryable == 0 {
 				continue
-			}
-			if _, err := store.validateRetryBaseline(p); err != nil {
-				return err
 			}
 		}
 		eligible = append(eligible, p)
@@ -86,7 +69,12 @@ func (m *RuntimeManager) enqueue(plan *TaskRecord, trigger string) error {
 func (m *RuntimeManager) dispatchQueued() error {
 	for {
 		m.mu.RLock()
-		count := len(m.active)
+		count := 0
+		for _, active := range m.active {
+			if !active.Suspended {
+				count++
+			}
+		}
 		m.mu.RUnlock()
 		if count >= maxActiveTasks() {
 			return nil
@@ -94,7 +82,10 @@ func (m *RuntimeManager) dispatchQueued() error {
 		var id, trigger string
 		err := store.db.QueryRow(`SELECT plan_id,trigger_mode FROM execution_queue WHERE state='queued' AND due_at<=? ORDER BY due_at,enqueued_at,plan_id LIMIT 1`, time.Now().UnixMilli()).Scan(&id, &trigger)
 		if err != nil {
-			return nil
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil
+			}
+			return err
 		}
 		plan, err := store.getTaskRecordByID(id)
 		if err == nil {

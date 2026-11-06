@@ -1,7 +1,9 @@
 # 构建与安装
 
-构建入口为 `apps/admin-region-tiler/scripts/build_release.py`，需要 Git、Go 1.25+、Python 3.13。
-打包器只依赖 Python 标准库，不要求区域工具的 Shapely 环境。
+构建入口为 `apps/admin-region-tiler/scripts/build_release.py`，需要 Git、Go 1.27.3、Node 24.22.2/npm、Python 3.13。
+Go 版本以应用 `go.mod` 为准，Node 版本以根目录 `.node-version` 为准。
+打包器使用 Python 标准库，并在源码快照中执行 `npm ci --omit=dev`，从锁定版本准备离线 Cesium 静态资源；不要求 Shapely 环境。
+首次构建需要访问 Go/npm 包源。安装包运行时不需要 Node、Python、npm 或联网下载前端库。
 
 ## 构建身份
 
@@ -35,9 +37,9 @@ python apps/admin-region-tiler/scripts/verify_package.py dist/verification/map-t
 不带 `--allow-dirty` 时工作区必须干净；正常构建从指定 Git 提交快照读取文件。
 开发脏构建只读取 Git 已跟踪文件，新文件应先加入暂存区。
 
-包包含配置示例、静态资源、区域资源、部署示例、许可证、手册、`build-info.json` 和
+包包含配置示例、静态资源（含离线 Cesium 及其许可证）、区域资源、部署示例、许可证、手册与地形配图、`build-info.json` 和
 `manifest.json`。输出目录另有 `SHA256SUMS`，不包含真实 `.env`、数据库、下载、日志和测试。
-固定源码和相同 Go/Python/zlib 工具链下，排序、归档时间和 `-trimpath` 保证可重复校验和。
+固定源码、npm 锁文件和相同 Go/Node/Python/zlib 工具链下，排序、归档时间和 `-trimpath` 保证可重复校验和。
 `INCOMPLETE` 存在表示构建未完成，不作为可用安装包。脚本不推送、不建标签、不发布 Release。
 
 解压后在包目录运行 `tiler.exe` 或 `./tiler`，保持 `conf.toml`、`static/`、`geojson/` 同级。

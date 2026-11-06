@@ -12,9 +12,13 @@ type TileBudgetError struct {
 	Estimated    int64
 	Limit        int64
 	Conservative bool
+	Actual       bool
 }
 
 func (e *TileBudgetError) Error() string {
+	if e.Actual {
+		return fmt.Sprintf("tile budget exceeded: %d unique requests counted, limit %d", e.Estimated, e.Limit)
+	}
 	return fmt.Sprintf("tile budget exceeded: estimated %d, limit %d (conservative geometry estimate: %t)", e.Estimated, e.Limit, e.Conservative)
 }
 func maxTaskTiles() int64 {
@@ -55,7 +59,7 @@ func boundBudget(bound orb.Bound, minZoom, maxZoom int) (int64, error) {
 }
 func estimateLevels(levels []LevelConfig) (int64, bool, error) {
 	var total int64
-	conservative := false
+	conservative := len(levels) > 1
 	for _, level := range levels {
 		var count int64
 		var err error
@@ -83,8 +87,34 @@ func validateTaskBudget(levels []LevelConfig, sources int) (int64, error) {
 		return 0, err
 	}
 	n *= int64(sources)
-	if n > maxTaskTiles() {
+	// A region's enclosing rectangle is an estimate, not its tile set. The
+	// worker reserves the real deduplicated count before issuing requests.
+	if n > maxTaskTiles() && !conservative {
 		return n, &TileBudgetError{Estimated: n, Limit: maxTaskTiles(), Conservative: conservative}
 	}
 	return n, nil
+}
+
+func (s *SQLiteStore) reserveTaskBudget(plan *TaskRecord, actual int64) error {
+	parent := plan.ParentID
+	if parent == "" {
+		parent = plan.ID
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	// The first write obtains SQLite's writer lock before reading the sum.
+	if _, err := tx.Exec(`INSERT INTO task_budgets(plan_id,parent_id,tiles) VALUES(?,?,?) ON CONFLICT(plan_id) DO UPDATE SET parent_id=excluded.parent_id,tiles=excluded.tiles`, plan.ID, parent, actual); err != nil {
+		return err
+	}
+	var total int64
+	if err := tx.QueryRow(`SELECT COALESCE(SUM(tiles),0) FROM task_budgets WHERE parent_id=?`, parent).Scan(&total); err != nil {
+		return err
+	}
+	if total > maxTaskTiles() {
+		return &TileBudgetError{Estimated: total, Limit: maxTaskTiles(), Actual: true}
+	}
+	return tx.Commit()
 }

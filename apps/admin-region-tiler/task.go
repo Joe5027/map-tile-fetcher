@@ -65,18 +65,25 @@ type TaskOptions struct {
 }
 
 type Task struct {
-	workerManaged  bool
-	retrySource    func(func(TileJob) error) error
-	failureSink    func(TileFailureRecord) error
-	preserveOutput bool
-	ID             string
-	Name           string
-	Description    string
-	File           string
-	Min            int
-	Max            int
-	Layers         []Layer
-	TileMap        TileMap
+	fileCommitLocks   [64]sync.Mutex
+	expectedPath      string
+	expectedLimit     int64
+	expandExpected    func(TileJob, func(TileJob) error) error
+	deriveArtifacts   func(*TaskRecord, *Task, *TaskRunRecord) error
+	artifactDirectory string
+	derivedIntegrity  *IntegrityState
+	workerManaged     bool
+	retrySource       func(func(TileJob) error) error
+	failureSink       func(TileFailureRecord) error
+	preserveOutput    bool
+	ID                string
+	Name              string
+	Description       string
+	File              string
+	Min               int
+	Max               int
+	Layers            []Layer
+	TileMap           TileMap
 
 	Total        int64
 	Current      int64
@@ -217,6 +224,8 @@ func NewTask(layers []Layer, m TileMap, opts TaskOptions) *Task {
 	}
 
 	task.pauseCond = sync.NewCond(&task.mu)
+	// One cancellation wakeup per task also covers saver/persistence failures.
+	context.AfterFunc(task.ctx, func() { task.mu.Lock(); task.pauseCond.Broadcast(); task.mu.Unlock() })
 	task.jobs = make(chan TileJob, task.bufSize)
 	task.savingpipe = make(chan Tile, task.savePipeSize)
 
@@ -346,7 +355,7 @@ func buildTaskFromRequest(req CreateTaskRequest) (*Task, error) {
 		RetryPasses:    maxInt(viper.GetInt("task.retry_passes"), 0),
 		BufferSize:     firstPositive(viper.GetInt("task.mergebuf"), 32),
 		OutputFormat:   outputFormatFromRequest(req),
-		MaxRetries:     firstPositive(viper.GetInt("task.max_retries"), 2),
+		MaxRetries:     configuredNonNegative("task.max_retries", 2),
 		RequestTTL:     time.Duration(firstPositive(viper.GetInt("task.request_timeout_seconds"), 20)) * time.Second,
 		RetryBackoff:   time.Duration(firstPositive(viper.GetInt("task.retry_backoff_ms"), 300)) * time.Millisecond,
 		SlowBackoff:    time.Duration(firstPositive(viper.GetInt("task.slow_backoff_ms"), 1000)) * time.Millisecond,
@@ -357,6 +366,9 @@ func buildTaskFromRequest(req CreateTaskRequest) (*Task, error) {
 	task := NewTask(layers, tm, options)
 	if task == nil {
 		return nil, errors.New("failed to create task")
+	}
+	if err := configureTerrainTask(task, req); err != nil {
+		return nil, err
 	}
 
 	return task, nil
@@ -544,7 +556,7 @@ func (task *Task) waitIfPaused() error {
 	task.mu.Lock()
 	defer task.mu.Unlock()
 
-	for task.Status == TaskPaused {
+	for task.Status == TaskPaused && task.ctx.Err() == nil {
 		task.pauseCond.Wait()
 	}
 
@@ -700,10 +712,6 @@ func (task *Task) closeOutput() error {
 		return nil
 	}
 
-	if err := optimizeDatabase(db); err != nil {
-		log.Warnf("optimize mbtiles failed for task %s: %v", task.ID, err)
-	}
-
 	return db.Close()
 }
 
@@ -724,7 +732,7 @@ func (task *Task) runFetchers() {
 					if errors.Is(err, context.Canceled) {
 						return
 					}
-					retryable := isRetryable(err)
+					retryable := task.isRetryable(err)
 					if retryable && job.Pass < task.retryPasses {
 						job.Pass++
 						continue
@@ -739,6 +747,11 @@ func (task *Task) runFetchers() {
 }
 
 func (task *Task) runSavers() {
+	if task.outformat == "mbtiles" {
+		task.saveWG.Add(1)
+		go task.runMBTilesSaver()
+		return
+	}
 	for i := 0; i < task.savePipeSize; i++ {
 		task.saveWG.Add(1)
 		go func() {
@@ -981,7 +994,6 @@ func (task *Task) nextProxy() string {
 }
 
 func (task *Task) applyRequestHeaders(req *http.Request) {
-	req.Close = true
 	if strings.TrimSpace(task.policy.UserAgent) != "" {
 		req.Header.Set("User-Agent", task.policy.UserAgent)
 	}
@@ -996,9 +1008,7 @@ func (task *Task) applyRequestHeaders(req *http.Request) {
 			req.Header.Set(key, value)
 		}
 	}
-	if req.Header.Get("Connection") == "" {
-		req.Header.Set("Connection", "close")
-	}
+	req.Close = strings.EqualFold(req.Header.Get("Connection"), "close")
 }
 
 func (task *Task) fetchTile(mt maptile.Tile, url string) ([]byte, error) {
@@ -1039,7 +1049,7 @@ func (task *Task) fetchTile(mt maptile.Tile, url string) ([]byte, error) {
 			}
 		}
 
-		if !isRetryable(lastErr) || attempt == task.maxRetries {
+		if !task.isRetryable(lastErr) || attempt == task.maxRetries {
 			break
 		}
 
@@ -1199,18 +1209,24 @@ func (task *Task) Run() {
 	}
 
 	closeErr := task.closeOutput()
+	task.mu.RLock()
+	stopMessage := task.ErrorMessage
+	task.mu.RUnlock()
+	if stopMessage == "" {
+		stopMessage = "download stopped after output or persistence failure"
+	}
 
 	switch {
-	case errors.Is(enqueueErr, context.Canceled):
-		task.finish(TaskCancelled, nil)
 	case task.currentStatus() == TaskCancelled:
 		task.finish(TaskCancelled, nil)
+	case errors.Is(enqueueErr, context.Canceled):
+		task.fail(errors.New(stopMessage))
 	case enqueueErr != nil:
 		task.fail(enqueueErr)
 	case closeErr != nil:
 		task.fail(closeErr)
 	case task.ctx.Err() != nil:
-		task.fail(errors.New("download stopped after output or persistence failure"))
+		task.fail(errors.New(stopMessage))
 	case task.currentCounts().Failure > 0 && task.currentCounts().Success == 0 && !task.preserveOutput:
 		task.fail(errors.New("task finished with no successful tiles"))
 	case task.currentCounts().Failure > 0:
@@ -1273,6 +1289,21 @@ func prepareTileURL(t maptile.Tile, url string) string {
 	url = strings.ReplaceAll(url, "{-y}", strconv.Itoa(maxY-int(t.Y)))
 	url = strings.ReplaceAll(url, "{z}", strconv.Itoa(int(t.Z)))
 	return url
+}
+
+func configuredNonNegative(key string, fallback int) int {
+	if !viper.IsSet(key) {
+		return fallback
+	}
+	return maxInt(viper.GetInt(key), 0)
+}
+
+func (task *Task) isRetryable(err error) bool {
+	if status := extractHTTPStatusCode(err); status > 0 && task.policy.RetryStatuses != nil {
+		_, ok := task.policy.RetryStatuses[status]
+		return ok
+	}
+	return isRetryable(err)
 }
 
 func isRetryable(err error) bool {

@@ -17,14 +17,14 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7.1.0
         with:
-          node-version: "22"
+          node-version-file: .node-version
 
       - name: Validate commit messages
         shell: bash
@@ -52,25 +52,25 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7.0.0
         with:
           go-version-file: apps/admin-region-tiler/go.mod
           cache-dependency-path: apps/admin-region-tiler/go.sum
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7.1.0
         with:
-          node-version: "22"
+          node-version-file: .node-version
 
       - name: Install browser automation dependency
         run: |
-          npm install -g playwright
+          npm ci --no-audit --no-fund
           npx playwright install --with-deps chromium
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7.1.0
         with:
           python-version: "3.13"
 
@@ -82,6 +82,9 @@ jobs:
 
       - name: Run release preflight
         run: node ./scripts/release_preflight.mjs
+
+      - name: Documentation contracts
+        run: node ../../scripts/check_docs.mjs
 
       - name: Race and vet checks
         run: |
@@ -99,8 +102,8 @@ jobs:
         working-directory: apps/admin-region-tiler
         shell: bash
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.1.0
         with:
           python-version: "3.13"
       - name: Test locked environment
@@ -129,14 +132,17 @@ jobs:
         working-directory: apps/admin-region-tiler
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7.0.0
         with:
-          go-version: "1.25.3"
+          go-version-file: apps/admin-region-tiler/go.mod
           cache-dependency-path: apps/admin-region-tiler/go.sum
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version-file: .node-version
+      - uses: actions/setup-python@v7.1.0
         with:
           python-version: "3.13"
       - name: Build twice and verify native package

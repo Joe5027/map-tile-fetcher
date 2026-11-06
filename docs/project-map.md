@@ -15,14 +15,14 @@ Out of scope unless the user explicitly changes direction:
 
 - old restored source folders
 - retired .NET runtime code
-- release packages, screenshots, UI design packages, temporary directories
+- release packages, runtime screenshots, UI design packages, temporary directories
 - runtime databases, downloaded tiles, logs, archives, and local secrets
 
 ## Application
 
 | Path | Stack | Primary role | Entry points | Narrow validation |
 | --- | --- | --- | --- | --- |
-| `apps/admin-region-tiler` | Go 1.25+, Gin, SQLite, static frontend | Unified map tile downloader with bbox range mode, administrative-region mode, persistent tasks, scheduled runs, multiple map sources, failures, artifacts, and deploy assets | `main.go`, `server.go`, `runtime.go`, `task.go`, `db.go`, `static/script.js`, `scripts/smoke_ui.mjs`, `scripts/release_preflight.mjs` | `go test ./...`; `node --check .\static\script.js` when frontend JS changes; `node .\scripts\smoke_ui.mjs` for UI smoke; `node .\scripts\release_preflight.mjs` for full preflight |
+| `apps/admin-region-tiler` | Go 1.27.3, Gin, SQLite, static frontend | Unified map tile downloader with bbox range mode, administrative-region mode, persistent tasks, scheduled runs, multiple map sources, failures, artifacts, and deploy assets | `main.go`, `server.go`, `runtime.go`, `task.go`, `db.go`, `static/script.js`, `scripts/smoke_ui.mjs`, `scripts/release_preflight.mjs` | `go test ./...`; `node --check .\static\script.js` when frontend JS changes; `node .\scripts\smoke_ui.mjs` for UI smoke; `node .\scripts\release_preflight.mjs` for full preflight |
 
 ## Admin Region Tiler Map
 
@@ -31,10 +31,12 @@ Out of scope unless the user explicitly changes direction:
     manager, and HTTP server
   - supports worker mode via runtime flags/environment
 - `internal/`
-  - the two implemented packages shared by the main application
+  - the three implemented packages shared by the main application
   - `internal/area` validates bbox and region area selectors plus zoom ranges
   - `internal/downloader` contains bbox tile math shared by API validation and
     range UI estimates
+  - `internal/terrain` decodes Terrarium, samples shared boundaries, emits gzip
+    quantized-mesh and validates complete ancestor availability
   - task normalization, authentication and artifact management remain in the
     main package; unused extraction scaffolding has been removed
 - `server.go`
@@ -60,6 +62,19 @@ Out of scope unless the user explicitly changes direction:
 - `worker_process.go`
   - isolated worker execution, run-progress persistence, artifact finalization,
     and failure-record persistence
+- `recovery_runtime.go`, `run_phase.go`
+  - parent pipe lifecycle, run ownership/locks, same-run restart recovery,
+    persisted phases, pause intent and slot release
+- `mbtiles_batch.go`, `storage_space.go`
+  - one SQLite writer with 256-tile/250 ms bounded transactions; count success
+    only after commit; account for phase-specific additional disk space
+- `terrain_pipeline.go`, `terrain_routes.go`
+  - source metadata persists inside child levels; raw PNG and derived terrain
+    remain separate, with bounded raster cache, reusable meshes and authenticated
+    EPSG:3857/TMS preview routes
+- `task_page.go`
+  - 50-parent pages, effective global status counts and eight batch queries;
+    legacy `/api/tasks` remains an array API
 - `artifact_lifecycle.go`, `integrity.go`, `reconcile.go`, `disk_*.go`
   - run-isolated output paths, retryable deletion manifests, cumulative retry
     baselines, failure resolution, recoverable publication and explicit local
@@ -70,6 +85,12 @@ Out of scope unless the user explicitly changes direction:
 - `api_lifecycle_test.go`, `retry_integration_test.go`, `recovery_edges_test.go`
   - real application/worker processes and local tile fixtures; cumulative
     ZIP/MBTiles coordinates, migration copies and recovery edge cases
+- `recovery_process_test.go`, `terrain_pipeline_test.go`, `task_page_test.go`
+  - parent-kill recovery, paused capacity, actual elevation worker output and
+    1,000-parent history fixtures
+- `performance_fixture_test.go`, `scripts/benchmark_download.py`
+  - the same 256-tile loopback workload across Git revisions; sampled heap/disk,
+    first committed tile, elapsed time and connection count (ZIP packing excluded)
 - `repair_contract_test.go`
   - portable assertions runnable against both archived pre-repair code and the
     current app; evidence is indexed in `docs/repair-acceptance-2026-09-11.md`
@@ -89,9 +110,10 @@ Out of scope unless the user explicitly changes direction:
 - `static/`
   - browser UI for authentication, task creation, progress, task controls,
     map-source and region selection
-  - exposes two creation modes: administrative-region downloads through the
-    existing region catalog flow, and bounding-box Tianditu range downloads
-    through the unified `/api/tasks` path
+  - administrative-region and rectangle/polygon modes share the source catalogue
+    and `/api/tasks`; keyed task-page updates preserve interaction state
+  - `terrain-preview.html/js` loads local Cesium assets prepared by locked npm
+    dependencies; no ion or online imagery is needed
 - `deploy/`
   - Linux, Nginx, and systemd deployment references
 - `scripts/smoke_ui.mjs`
@@ -119,9 +141,11 @@ Important endpoints:
 - protected `GET /api/auth/me`
 - protected `POST /api/tasks`
 - protected `GET /api/tasks`, `GET /api/tasks/:id`
+- protected `GET /api/tasks/page?limit=50&offset=0&status=all`
 - protected `PUT /api/tasks/:id/pause|resume`
 - protected `DELETE /api/tasks/:id`, `DELETE /api/tasks/:id/purge`
 - protected `GET /api/tasks/:id/download`
+- protected `GET /api/tasks/:id/terrain-info`, `GET /api/tasks/:id/terrain/*path`
 - protected `GET /api/tasks/:id/failures`
 - protected `POST /api/tasks/:id/retry-failures|reconcile|recreate`
 - protected `GET /api/config/limits`
@@ -155,12 +179,11 @@ See `docs/range-migration.md` for the historical note.
   not reset by changing initial-user settings.
 - Generated or local-only paths stay out of Git: `.env`, `data/`, `output/`,
   `tiles/`, `bin/`, `obj/`, `publish*/`, logs, binaries, and archives.
-- Browser UI smoke validation uses an optional local or global browser
-  automation package. If that package is unavailable, run the relevant
-  `node --check` command, perform a manual browser check for the touched flow,
-  and record the missing automated smoke as a validation limit.
-- UI smoke runs should not commit screenshots, traces, runtime databases, or
-  generated downloads.
+- Browser UI checks use project-local Playwright from `package-lock.json`.
+  Run `npm ci` and install its Chromium; do not depend on global packages.
+- Runtime screenshots, traces, databases and downloads stay ignored. Reviewed
+  fixture-based documentation images may enter `docs/assets/` with reproduction
+  instructions, as specified by `AGENTS.md`.
 
 ## AI Control Surface Map
 

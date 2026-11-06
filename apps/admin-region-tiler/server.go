@@ -17,7 +17,6 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
-	"github.com/paulmach/orb"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 	"github.com/teris-io/shortid"
@@ -27,21 +26,23 @@ import (
 )
 
 type LevelRequest struct {
-	MinZoom      int          `json:"minZoom" binding:"required"`
-	MaxZoom      int          `json:"maxZoom" binding:"required"`
-	Geojson      string       `json:"geojson,omitempty"`
-	URL          string       `json:"url"`
-	Mode         string       `json:"mode,omitempty"`
-	BBox         *BBoxRequest `json:"bbox,omitempty"`
-	OutputFormat string       `json:"outputFormat,omitempty"`
+	Source       *SourceMetadata `json:"source,omitempty"`
+	MinZoom      int             `json:"minZoom"`
+	MaxZoom      int             `json:"maxZoom"`
+	Geojson      string          `json:"geojson,omitempty"`
+	URL          string          `json:"url"`
+	Mode         string          `json:"mode,omitempty"`
+	BBox         *BBoxRequest    `json:"bbox,omitempty"`
+	OutputFormat string          `json:"outputFormat,omitempty"`
 }
 
 type SourceRequest struct {
-	ID     int    `json:"id"`
-	Name   string `json:"name"`
-	URL    string `json:"url" binding:"required"`
-	Format string `json:"format" binding:"required"`
-	Schema string `json:"schema"`
+	Metadata *SourceMetadata `json:"metadata,omitempty"`
+	ID       int             `json:"id"`
+	Name     string          `json:"name"`
+	URL      string          `json:"url" binding:"required"`
+	Format   string          `json:"format" binding:"required"`
+	Schema   string          `json:"schema"`
 }
 
 type BBoxRequest struct {
@@ -105,12 +106,13 @@ type TaskAreaResponse struct {
 }
 
 type TaskSourceResponse struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Layer  string `json:"layer,omitempty"`
-	URL    string `json:"url"`
-	Format string `json:"format"`
-	Schema string `json:"schema"`
+	Metadata *SourceMetadata `json:"metadata,omitempty"`
+	ID       string          `json:"id"`
+	Name     string          `json:"name"`
+	Layer    string          `json:"layer,omitempty"`
+	URL      string          `json:"url"`
+	Format   string          `json:"format"`
+	Schema   string          `json:"schema"`
 }
 
 type TaskProgressResponse struct {
@@ -136,6 +138,7 @@ type TaskFailureSummaryResponse struct {
 }
 
 type TaskResponse struct {
+	Phase                 RunPhase                   `json:"phase"`
 	Queue                 QueueState                 `json:"queue"`
 	EffectiveWorkers      int                        `json:"effectiveWorkers"`
 	EffectiveTimeDelay    int                        `json:"effectiveTimeDelay"`
@@ -205,13 +208,21 @@ type TiandituPreviewTokenRequest struct {
 }
 
 type TileMapConfig struct {
-	ID      int    `json:"id"`
-	Name    string `json:"name"`
-	URL     string `json:"url"`
-	Format  string `json:"format"`
-	Schema  string `json:"schema"`
-	MinZoom int    `json:"min_zoom"`
-	MaxZoom int    `json:"max_zoom"`
+	Metadata    *SourceMetadata   `json:"metadata,omitempty"`
+	ID          int               `json:"id"`
+	Name        string            `json:"name"`
+	URL         string            `json:"url"`
+	Format      string            `json:"format"`
+	Schema      string            `json:"schema"`
+	MinZoom     int               `json:"min_zoom"`
+	MaxZoom     int               `json:"max_zoom"`
+	FetchPolicy SourceFetchLimits `json:"fetch_policy"`
+}
+
+// Expose effective limits without exposing source headers or proxy credentials.
+type SourceFetchLimits struct {
+	WorkerCount int `json:"worker_count"`
+	BaseDelayMS int `json:"base_delay_ms"`
 }
 
 type DownloadRegionConfig struct {
@@ -332,6 +343,7 @@ func initServer() {
 			c.JSON(200, gin.H{"maxTiles": maxTaskTiles(), "maxActive": maxActiveTasks(), "defaultWorkers": 3, "minWorkers": 1, "maxWorkers": 50})
 		})
 		protected.GET("/tasks", listTasks)
+		protected.GET("/tasks/page", listTaskPage)
 		protected.GET("/tasks/:id", getTask)
 		protected.GET("/tasks/:id/area", getTaskArea)
 		protected.PUT("/tasks/:id/pause", pauseTask)
@@ -339,6 +351,8 @@ func initServer() {
 		protected.DELETE("/tasks/:id", cancelTask)
 		protected.DELETE("/tasks/:id/purge", purgeTask)
 		protected.GET("/tasks/:id/download", downloadTaskArtifact)
+		protected.GET("/tasks/:id/terrain-info", getTerrainInfo)
+		protected.GET("/tasks/:id/terrain/*path", getTerrainFile)
 		protected.GET("/tasks/:id/failures", getTaskFailures)
 		protected.POST("/tasks/:id/reconcile", reconcileTask)
 		protected.POST("/tasks/:id/recreate", recreateTask)
@@ -843,20 +857,23 @@ func artifactDownloadURL(taskID string, run *TaskRunRecord) string {
 	artifactDownloadGrants.Lock()
 	defer artifactDownloadGrants.Unlock()
 
-	for token, grant := range artifactDownloadGrants.values {
-		if grant.ExpiresAt.After(now) {
-			continue
+	if now.Sub(artifactDownloadGrantLastSweep) >= time.Minute {
+		for token, grant := range artifactDownloadGrants.values {
+			if grant.ExpiresAt.After(now) {
+				continue
+			}
+			delete(artifactDownloadGrants.values, token)
+			key := grant.TaskID + "\x00" + grant.RunID
+			if artifactDownloadGrants.byRun[key] == token {
+				delete(artifactDownloadGrants.byRun, key)
+			}
 		}
-		delete(artifactDownloadGrants.values, token)
-		key := grant.TaskID + "\x00" + grant.RunID
-		if artifactDownloadGrants.byRun[key] == token {
-			delete(artifactDownloadGrants.byRun, key)
-		}
+		artifactDownloadGrantLastSweep = now
 	}
 
 	if token := artifactDownloadGrants.byRun[runKey]; token != "" {
 		grant, exists := artifactDownloadGrants.values[token]
-		if exists && grant.ArtifactPath == run.ArtifactPath && grant.ArtifactName == run.ArtifactName {
+		if exists && grant.ExpiresAt.After(now) && grant.ArtifactPath == run.ArtifactPath && grant.ArtifactName == run.ArtifactName {
 			return "/api/downloads/" + token
 		}
 		delete(artifactDownloadGrants.values, token)
@@ -1092,24 +1109,6 @@ func buildTaskRecordsFromRequest(userID int64, req CreateTaskRequest) (*TaskReco
 	if err != nil {
 		return nil, nil, err
 	}
-	if len(req.Area.Polygon) > 0 && req.Zoom != nil {
-		points, err := normalizePolygonCoordinates(req.Area.Polygon)
-		if err != nil {
-			return nil, nil, err
-		}
-		bound := orb.Bound{Min: orb.Point{points[0].Lon, points[0].Lat}, Max: orb.Point{points[0].Lon, points[0].Lat}}
-		for _, p := range points {
-			bound = bound.Extend(orb.Point{p.Lon, p.Lat})
-		}
-		n, err := boundBudget(bound, req.Zoom.Min, req.Zoom.Max)
-		if err != nil {
-			return nil, nil, err
-		}
-		n *= int64(len(sources))
-		if n > maxTaskTiles() {
-			return nil, nil, &TileBudgetError{Estimated: n, Limit: maxTaskTiles(), Conservative: true}
-		}
-	}
 	outputFormat, err := normalizeOutputFormat(req.Output.Format)
 	if err != nil {
 		return nil, nil, err
@@ -1131,6 +1130,9 @@ func buildTaskRecordsFromRequest(userID int64, req CreateTaskRequest) (*TaskReco
 		}
 		normalized.OutputFormat = outputFormat
 		levels = append(levels, normalized)
+	}
+	if err := validateTerrainRequest(outputFormat, sources, levels); err != nil {
+		return nil, nil, err
 	}
 
 	if _, err := validateTaskBudget(levels, len(sources)); err != nil {
@@ -1159,6 +1161,7 @@ func buildTaskRecordsFromRequest(userID int64, req CreateTaskRequest) (*TaskReco
 
 	children := make([]*TaskRecord, 0, len(sources))
 	for _, source := range sources {
+		childLevels := cloneLevelsWithSource(levels, source.Metadata)
 		id, err := shortid.Generate()
 		if err != nil {
 			return nil, nil, fmt.Errorf("generate child task id: %w", err)
@@ -1179,7 +1182,7 @@ func buildTaskRecordsFromRequest(userID int64, req CreateTaskRequest) (*TaskReco
 			ScheduleMode: mode,
 			RunAt:        runAt,
 			Status:       TaskRecordScheduled,
-			Levels:       levels,
+			Levels:       childLevels,
 		})
 	}
 
@@ -1363,6 +1366,9 @@ func formatFloat6(value float64) string {
 }
 
 func normalizeSources(req CreateTaskRequest) ([]SourceRequest, error) {
+	if len(req.Sources) == 0 && strings.TrimSpace(req.URL) == "" && strings.EqualFold(req.Output.Format, "cesium") {
+		req.Sources = []SourceRequest{{Name: "公开高程 Terrarium", URL: defaultTerrariumURL, Format: PNG, Schema: "xyz", Metadata: defaultTerrainSource()}}
+	}
 	sources := make([]SourceRequest, 0, len(req.Sources))
 	for _, source := range req.Sources {
 		var err error
@@ -1373,6 +1379,7 @@ func normalizeSources(req CreateTaskRequest) ([]SourceRequest, error) {
 		source.Format = strings.ToLower(strings.TrimSpace(source.Format))
 		source.Schema = strings.ToLower(strings.TrimSpace(source.Schema))
 		source.Name = strings.TrimSpace(source.Name)
+		source.Metadata = normalizedSourceMetadata(source.URL, source.Metadata)
 		if !isSupportedFormat(source.Format) {
 			return nil, errors.New("unsupported source format")
 		}
@@ -1400,6 +1407,7 @@ func normalizeSources(req CreateTaskRequest) ([]SourceRequest, error) {
 			return nil, err
 		}
 		legacy.URL = normalizedURL
+		legacy.Metadata = normalizedSourceMetadata(legacy.URL, nil)
 		if !isSupportedFormat(legacy.Format) {
 			return nil, errors.New("unsupported output format")
 		}
@@ -1514,8 +1522,8 @@ func normalizeOutputFormat(format string) (string, error) {
 	if normalized == "" || normalized == "file" || normalized == "zip" {
 		return "zip", nil
 	}
-	if normalized == "mbtiles" {
-		return "mbtiles", nil
+	if normalized == "mbtiles" || normalized == "cesium" {
+		return normalized, nil
 	}
 	return "", errors.New("unsupported output format")
 }
@@ -1535,9 +1543,19 @@ func taskResponseFromRecord(plan *TaskRecord) TaskResponse {
 		RunAt:          plan.RunAt.Format(time.RFC3339),
 		ArtifactStatus: ArtifactNone,
 	}
-	if store != nil {
+	if isTerrainPlan(plan) {
+		response.Artifact.Format = "cesium"
+	}
+	if plan.responseView != nil {
+		response.Integrity = plan.responseView.Integrity
+		response.Queue = plan.responseView.Queue
+		response.Phase = plan.responseView.Phase
+	} else if store != nil {
 		response.Integrity = store.integrityState(plan.ID)
 		response.Queue = store.queueState(plan.ID)
+		if plan.LastRun != nil {
+			response.Phase = store.runPhase(plan.LastRun.ID)
+		}
 	}
 	policy := defaultFetchPolicy(plan.URL, plan.SourceName)
 	response.EffectiveWorkers = effectiveWorkers(plan.Workers, policy)
@@ -1583,7 +1601,7 @@ func taskResponseFromRecord(plan *TaskRecord) TaskResponse {
 		} else if response.Integrity.Missing > 0 {
 			response.Integrity.Status = "incomplete"
 		}
-		applyFailureSummary(plan.ID, &response)
+		applyRecordFailureSummary(plan, &response)
 		applyProgressAndArtifact(&response)
 		return response
 	}
@@ -1610,14 +1628,18 @@ func taskResponseFromRecord(plan *TaskRecord) TaskResponse {
 		}
 	}
 
-	if store != nil {
-		if published, err := store.publishedRun(plan.ID); err == nil {
-			response.ArtifactStatus = ArtifactReady
-			response.ArtifactName = published.ArtifactName
-			response.DownloadURL = artifactDownloadURL(plan.ID, published)
-		}
+	var published *TaskRunRecord
+	if plan.responseView != nil {
+		published = plan.responseView.Published
+	} else if store != nil {
+		published, _ = store.publishedRun(plan.ID)
 	}
-	applyFailureSummary(plan.ID, &response)
+	if published != nil {
+		response.ArtifactStatus = ArtifactReady
+		response.ArtifactName = published.ArtifactName
+		response.DownloadURL = artifactDownloadURL(plan.ID, published)
+	}
+	applyRecordFailureSummary(plan, &response)
 	applyProgressAndArtifact(&response)
 	return response
 }
@@ -1653,6 +1675,7 @@ func applyProgressAndArtifact(response *TaskResponse) {
 		Ratio:   ratio,
 	}
 	response.Artifact = TaskArtifactResponse{
+		Format:      response.Artifact.Format,
 		Status:      response.ArtifactStatus,
 		Name:        response.ArtifactName,
 		DownloadURL: response.DownloadURL,
@@ -1704,17 +1727,22 @@ func taskSourcesFromRecord(plan *TaskRecord) []TaskSourceResponse {
 }
 
 func taskSourceFromRecord(plan *TaskRecord) TaskSourceResponse {
+	var metadata *SourceMetadata
+	if len(plan.Levels) > 0 {
+		metadata = plan.Levels[0].Source
+	}
 	name := strings.TrimSpace(plan.SourceName)
 	if name == "" {
 		name = strings.TrimSpace(plan.Name)
 	}
 	return TaskSourceResponse{
-		ID:     plan.ID,
-		Name:   name,
-		Layer:  inferLayerName(name, plan.URL),
-		URL:    plan.URL,
-		Format: plan.Format,
-		Schema: plan.Schema,
+		Metadata: metadata,
+		ID:       plan.ID,
+		Name:     name,
+		Layer:    inferLayerName(name, plan.URL),
+		URL:      plan.URL,
+		Format:   plan.Format,
+		Schema:   plan.Schema,
 	}
 }
 
@@ -1809,13 +1837,14 @@ func getConfiguredMaps(c *gin.Context) {
 	var tileMaps []TileMapConfig
 
 	type ConfigTileMap struct {
-		ID      int    `mapstructure:"id"`
-		Name    string `mapstructure:"name"`
-		URL     string `mapstructure:"url"`
-		Format  string `mapstructure:"format"`
-		Schema  string `mapstructure:"schema"`
-		MinZoom int    `mapstructure:"min_zoom"`
-		MaxZoom int    `mapstructure:"max_zoom"`
+		Metadata *SourceMetadata `mapstructure:"metadata"`
+		ID       int             `mapstructure:"id"`
+		Name     string          `mapstructure:"name"`
+		URL      string          `mapstructure:"url"`
+		Format   string          `mapstructure:"format"`
+		Schema   string          `mapstructure:"schema"`
+		MinZoom  int             `mapstructure:"min_zoom"`
+		MaxZoom  int             `mapstructure:"max_zoom"`
 	}
 
 	var configTileMaps []ConfigTileMap
@@ -1826,14 +1855,17 @@ func getConfiguredMaps(c *gin.Context) {
 	}
 
 	for _, tm := range configTileMaps {
+		policy := defaultFetchPolicy(tm.URL, tm.Name)
 		tileMaps = append(tileMaps, TileMapConfig{
-			ID:      tm.ID,
-			Name:    tm.Name,
-			URL:     tm.URL,
-			Format:  tm.Format,
-			Schema:  tm.Schema,
-			MinZoom: tm.MinZoom,
-			MaxZoom: tm.MaxZoom,
+			Metadata:    normalizedSourceMetadata(tm.URL, tm.Metadata),
+			ID:          tm.ID,
+			Name:        tm.Name,
+			URL:         tm.URL,
+			Format:      tm.Format,
+			Schema:      tm.Schema,
+			MinZoom:     tm.MinZoom,
+			MaxZoom:     tm.MaxZoom,
+			FetchPolicy: SourceFetchLimits{WorkerCount: policy.WorkerCount, BaseDelayMS: policy.BaseDelayMS},
 		})
 	}
 	c.JSON(http.StatusOK, tileMaps)

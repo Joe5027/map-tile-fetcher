@@ -29,6 +29,24 @@ graph TD
   AT --> ATUI["static unified UI"]
   AT --> ATGeo["geojson region resources"]
   AT --> ATDeploy["Docker, Nginx, systemd deploy assets"]
+  ATUI --> Area["Region / rectangle / polygon"]
+  ATUI --> Sources["Shared raster / vector / elevation catalogue"]
+  Area --> Plans["Parent plan and source children"]
+  Sources --> Plans
+  Plans --> Queue["Durable queue and aggregate actual budget"]
+  Queue --> Worker["Owned worker + parent pipe + run lock"]
+  Worker --> Coordinates["Stream bbox / cached unique coordinates"]
+  Coordinates --> Raw["Committed PNG/PBF/MBTiles"]
+  Raw --> Recovery["Same run restart; only missing/invalid work"]
+  Recovery --> Queue
+  Raw --> Terrain["Terrarium -> global sampling -> quantized mesh"]
+  Terrain --> ManifestTerrain["Root + ancestors + TMS layer.json"]
+  Raw --> Artifact["Validated cumulative artifact"]
+  ManifestTerrain --> Artifact
+  Artifact --> Publication["Publish atomically; keep previous output until ready"]
+  Publication --> Preview["Authenticated local Cesium / signed download"]
+  ATUI --> Pages["50 parents / 8 batch queries / keyed refresh"]
+  Pages --> ATDB
 
   Merge --> Base["Single Go backend"]
   Base --> Contracts["Task, area, source, artifact, failure contracts"]
@@ -48,8 +66,9 @@ graph TD
 
 ## Relationship Notes
 
-- The global charter authorizes proactive workspace improvement, but project
-  facts belong in this repository, not in global `.codex` docs.
+- Current user authorization and `AGENTS.md` govern actions. Project facts
+  belong in this repository, not in global `.codex` docs; historical notes do
+  not grant permission for a new deployment or external write.
 - `docs/ai-operating-handbook.md` is the compact route for repository-local AI
   enhancement and control-surface work.
 - `docs/project-map.md` is the first durable context packet for future sessions.
@@ -60,3 +79,15 @@ graph TD
   `docs/range-migration.md`.
 - Validation is Go and frontend-script specific. Do not replace `go test` or
   changed-JS `node --check` with generic prose review when the commands can run.
+- Raw elevation cache is the retry/recovery baseline; the terrain mesh directory
+  is a derived artifact. Mesh integrity and raw source coverage are different
+  counts and must not overwrite each other's coordinates.
+- A manual pause is durable intent, while a killed service is recoverable
+  execution. Queue capacity applies when resuming too; paused work releases slots.
+- Geometric bounding boxes provide estimates. Complex/overlapping regions use
+  actual unique coordinates before reserving the parent budget.
+- `go.mod`, `.node-version`, `package-lock.json` and the Python wheel hash lock
+  feed CI and packaging; [dependency decisions](dependencies-2026-11.md) explain
+  why versions changed or stayed.
+- [Upgrade evidence](upgrade-2026-11.md) separates measured fixture results,
+  browser interoperability, native packages and production verification.

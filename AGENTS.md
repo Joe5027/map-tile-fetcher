@@ -10,10 +10,47 @@ These rules apply to every Codex or AI-assisted change in this repository.
   ported into the Go app. Keep historical notes in `docs/range-migration.md`
   instead of reintroducing runtime code.
 - Do not import old local source folders, release packages, UI design packages,
-  temporary directories, screenshots, runtime databases, downloaded tiles, or
+  temporary directories, runtime screenshots, databases, downloaded tiles, or
   machine-local run data.
+- Reviewed, sanitized documentation images in `docs/assets/` are allowed. Use
+  local fixtures, record how to reproduce them, and refresh affected images
+  when the user flow changes.
 - Keep generated files out of Git, including `.env`, `data/`, `output/`,
   `tiles/`, `bin/`, `obj/`, `publish*/`, logs, binaries, and archives.
+
+## Functionality, Performance, And Dependencies
+
+- Prioritize usable functionality and measured performance. Reproduce a reported
+  failure before changing its owner; retain only validation needed for correct
+  data, actual resource constraints, or explicit business rules. Do not block a
+  valid workflow with speculative checks or silently ignore user settings.
+- Keep the Go backend, SQLite, and static frontend unless a requested capability
+  demonstrates a need to change them. Prefer small changes over new frameworks
+  or parallel abstractions.
+- At the start of each development task, check the latest stable versions and
+  official release notes for the project's dependencies and build/test tools;
+  reuse a dated review from the same task. Record current/candidate versions,
+  concrete project benefit, compatibility impact, and the upgrade decision.
+  Upgrade when the new version helps this project and validate the affected
+  flows; otherwise state why it is retained. Do not use prereleases by default.
+- Lock validated dependency versions and keep development, CI, packaging, and
+  container toolchains consistent. A floating `latest` install is not an upgrade
+  record. Dependency review does not authorize production deployment.
+
+## Branch Completion
+
+- `main` is the only long-term branch. When work uses another branch, completion
+  includes integrating its changes into `main` without regressions and deleting
+  all other local and remote branches after their changes have been integrated.
+- Inspect actual remote refs and worktrees, reconcile unique commits, validate
+  the exact merge candidate, and follow existing branch protection. After the
+  resulting `main` checks pass, synchronize the local checkout and remove the
+  integrated branches. Do not force-delete unmerged work or bypass required checks.
+- Verify the final local and remote branch lists; cached `origin/*` refs alone
+  do not prove remote cleanup. If unfinished work or unavailable remote access
+  prevents completion, report the remaining branch and next action explicitly.
+- Use [the merge procedure](docs/merge-plan.md); preserve unrelated user work
+  and existing authorization boundaries for remote operations.
 
 ## Commit Requirements
 
@@ -54,6 +91,9 @@ not run.
 - For `apps/admin-region-tiler`, prefer: `go test ./...`.
 - For frontend script edits, run `node --check` on the changed JavaScript file.
 - If a check cannot be run, state the exact environment limit.
+- Run `node scripts/check_docs.mjs` from the repository root for documentation,
+  local rules, or skill changes. Update affected README/manual/config/API
+  explanations and documentation images in the same behavior change batch.
 
 ## Local AI Control Surfaces
 

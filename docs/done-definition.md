@@ -17,6 +17,10 @@ with the required bilingual commit message.
   environment limit.
 - Each validated change batch is committed before the next implementation batch
   starts.
+- The dependency review records official sources, date, current/candidate
+  versions, benefit, compatibility, decision, and actual validation.
+- Development branches have been integrated into checked `main` and removed
+  locally and remotely under [the merge procedure](merge-plan.md).
 
 ## Validation Matrix
 
@@ -24,11 +28,14 @@ with the required bilingual commit message.
 | --- | --- |
 | `apps/admin-region-tiler` Go backend | From `apps/admin-region-tiler`: `go test ./...` |
 | `apps/admin-region-tiler/static/script.js` | `node --check .\static\script.js`, plus `go test ./...` if API contracts changed |
-| `apps/admin-region-tiler/scripts/smoke_ui.mjs` | `node --check .\scripts\smoke_ui.mjs`, then `node .\scripts\smoke_ui.mjs` with local or global Playwright available |
+| `apps/admin-region-tiler/scripts/smoke_ui.mjs` | `node --check .\scripts\smoke_ui.mjs`, then `node .\scripts\smoke_ui.mjs` with the project-locked Playwright installed through `npm ci` |
+| Terrain pipeline or preview | Go terrain and recovery cases; actual local Cesium mesh/sample/camera checks in the browser smoke, external requests blocked |
+| Documentation images | `node scripts/capture_docs.mjs` from the app; inspect images and source hashes in `docs/assets/screenshots.json` |
 | `apps/admin-region-tiler/scripts/release_preflight.mjs` or CI workflow | `node --check .\scripts\release_preflight.mjs`, then `node .\scripts\release_preflight.mjs`; this includes Go tests, JS checks, UI smoke, sensitive-value scan, and tracked generated-file scan |
 | `apps/admin-region-tiler/static/styles.css` or HTML-only polish | Browser or static inspection when available; otherwise state manual UI check missing |
-| Config, release, or repository docs | Source-to-doc comparison plus the sensitive-value scan below |
-| Local AI control-surface docs or skills | Workspace audit plus Markdown/source inspection; validate handoff docs with the handoff validator |
+| Config, release, or repository docs | `node scripts/check_docs.mjs` from the repository root, source-to-doc comparison, and the sensitive-value scan below |
+| Local AI control-surface docs or skills | The same portable documentation check and source inspection; an active environment skill may require an additional audit |
+| `scripts/check_docs.mjs` | `node --check scripts/check_docs.mjs` and `node scripts/check_docs.mjs` from the repository root |
 
 Sensitive-value scan:
 
@@ -50,6 +57,11 @@ Documentation changes are done only when:
 - merge guidance still matches `docs/merge-plan.md`
 - long-running decisions are reflected in `docs/long-term-memory.md` when they
   affect future sessions
+- affected user flows and documentation images match the validated application;
+  reviewed images use local fixtures, contain no private data, and include
+  reproducible capture instructions
+- documentation validation can run from a fresh checkout without personal paths
+  or a globally installed AI skill
 
 ## Automation Done
 

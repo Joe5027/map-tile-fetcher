@@ -44,13 +44,25 @@ Keep `apps/admin-region-tiler` as the base for:
 
 ## Branch Convergence
 
-`main` is the only long-term branch. PR #3 was merged as `8b0933b`; its main CI
-passed and `agent/audit-hardening` was deleted. README follow-up PR #4 was merged
-as `37cfe7c`, with main CI passing and its temporary branch removed.
+`main` is the only long-term branch. Source convergence on 2026-11-06 is in
+`450f40d`; current implementation/validation status belongs in
+[the handoff](long-term-memory.md).
 
-For future batches, keep strict required checks (`Commit Message`,
-`Admin Region Tiler`) enabled. Merge only the checked PR head with a complete
-bilingual merge message, wait for the resulting `main` CI, then remove that
-temporary branch and synchronize the local checkout. Preserve historical CI
-failures and commit history. Current cleanup findings are tracked in
-[the maintenance audit](maintenance-audit-2026-09-11.md).
+1. Inspect status, local branches, and worktrees. Within granted remote access,
+   inspect actual heads with `git ls-remote --heads origin` and synchronize refs
+   before comparing commits.
+2. Account for every non-main local/remote branch and integrate unique changes
+   into `main`. Preserve unrelated work, resolve conflicts, and validate the
+   exact candidate. Report unfinished work instead of discarding it.
+3. Follow current remote protection and required checks. Use a checked PR head
+   when required and a bilingual merge message; do not bypass protection or
+   assume historical branch settings still apply.
+4. Verify the resulting `main` checks, synchronize local `main`, and detach
+   integrated branches from their worktrees before deleting them locally and
+   remotely. Preserve user changes and history; never force-delete unmerged work.
+5. Verify local branches and actual remote heads contain only `main`, then
+   prune stale tracking refs. Record final commit, checks, cleanup, and any
+   remaining blocker in the handoff.
+
+Code delivery does not itself authorize production deployment. Verify current
+production state separately when deployment is requested.

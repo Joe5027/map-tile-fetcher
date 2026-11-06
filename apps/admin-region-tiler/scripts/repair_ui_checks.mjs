@@ -17,6 +17,7 @@ export async function runRepairUIChecks(page) {
   assert.equal(missingState.code,"boundary_attachment_required");
   assert(missingState.disabled && missingState.text.includes("附图"),"missing boundary reason or disable state missing");
   const task={id:"ui-task",kind:"single",name:'长名称'.repeat(30)+'<img src=x onerror="window.injected=1">',status:"completed",artifactStatus:"ready",downloadUrl:"/api/tasks/ui-task/download",total:4,current:4,successCount:4,integrity:{status:"complete",available:4,expected:4},effectiveWorkers:3,effectiveTimeDelay:80};
+  await page.route("**/api/tasks/page?*",route=>route.fulfill({json:{items:[task],total:1,counts:{all:1,completed:1}}}));
   if (process.env.TILER_REPAIR_BASELINE) {
     const oldCSS=execFileSync("git",["show",`${process.env.TILER_REPAIR_BASELINE}:apps/admin-region-tiler/static/styles.css`],{encoding:"utf8"});
     await page.setViewportSize({width:390,height:1000});
@@ -26,6 +27,7 @@ export async function runRepairUIChecks(page) {
     assert(oldWidth>392,`baseline did not reproduce mobile overflow: ${oldWidth}`);
     console.log(`Baseline mobile defect reproduced: 390px viewport, ${oldWidth}px document`);
   }
+  await runTaskPaginationChecks(page);
   for(const width of [390,768,1440]) {
     await page.setViewportSize({width,height:1000});
     for(const mode of ["region","bbox","tasks"]) {
@@ -56,6 +58,7 @@ export async function runRepairUIChecks(page) {
     await Promise.all([a,b]);
     const features=taskAreaPreviewLayer.toGeoJSON().features.length;
     const west=taskAreaPreviewLayer.getBounds().getWest();
+    if (document.getElementById("taskPreviewControls").getBoundingClientRect().height > 160) throw new Error("Task preview controls consumed the map's available height");
     setTaskMode("bbox");
     return {features,west,cleared:taskAreaPreviewLayer===null,selectionUnchanged:before===JSON.stringify(rangeClickPoints)};
   });
@@ -77,24 +80,26 @@ export async function runRepairUIChecks(page) {
   await page.evaluate(async()=>{resetPreviewCredentials();await ensureTiandituPreviewToken("other-account-token");});
   assert.equal(registrations,4,"account cache was reused");
   let active=0,maxActive=0,taskRequests=0;
-  await page.route("**/api/tasks",async route=>{
+  await page.route("**/api/tasks/page?*",async route=>{
     taskRequests++;active++;maxActive=Math.max(maxActive,active);
     await new Promise(r=>setTimeout(r,50));
-    active--;await route.fulfill({json:[]});
+    active--;await route.fulfill({json:{items:[],total:0,counts:{all:0}}});
   });
   await page.evaluate(async()=>{await Promise.all(Array.from({length:8},()=>loadTasks()));});
   assert.equal(taskRequests,1,"overlapping task refreshes were not coalesced");
   assert.equal(maxActive,1);
-  await page.route("**/api/tasks", route=>route.fulfill({status:401,json:{error:"session expired"}}));
+  await page.route("**/api/tasks/page?*", route=>route.fulfill({status:401,json:{error:"session expired"}}));
   await page.evaluate(()=>loadTasks());
   assert(await page.evaluate(()=>!authenticated&&taskPollingTimer===null&&rangeTiandituPreviewTokenId===""),"401 retained polling or preview cache");
-  await page.unroute("**/api/tasks");
+  await page.unroute("**/api/tasks/page?*");
   let pollRequests=0;
-  await page.route("**/api/tasks",route=>{pollRequests++;return route.fulfill({json:[]});});
+  await page.route("**/api/tasks/page?*",route=>{pollRequests++;return route.fulfill({json:{items:[],total:0,counts:{all:0}}});});
   await page.locator('#loginForm [name="username"]').fill("admin");
   await page.locator('#loginForm [name="password"]').fill("adminmap");
   await page.locator('#loginForm button[type="submit"]').click();
-  await page.waitForFunction(()=>authenticated&&taskPollingTimer!==null);
+  await page.waitForFunction(()=>authenticated);
+  await page.evaluate(()=>setTaskMode("tasks"));
+  await page.waitForFunction(()=>taskPollingTimer!==null);
   await page.waitForFunction(()=>taskLoadPromise===null);
   pollRequests=0;
   await page.clock.fastForward(5000);
@@ -104,6 +109,81 @@ export async function runRepairUIChecks(page) {
   await page.evaluate(()=>logout());
   assert(await page.evaluate(()=>!authenticated&&taskPollingTimer===null),"logout left polling active");
   console.log("Repair UI checks passed: 390/768/1440px, preview ordering, full geometry, expiry, account reset, 401/re-login, polling");
+}
+
+async function runTaskPaginationChecks(page) {
+  const tasks = Array.from({length:63},(_,index)=>({id:`history-${index}`,kind:"single",name:`History ${index}`,status:"completed",current:10,total:10,phase:{name:"completed",current:10,total:10}}));
+  tasks[0] = {...tasks[0],kind:"group",status:"running",totalChildren:1,children:[{id:"history-child",kind:"child",name:"Source",sourceName:"Source",status:"running",total:10,current:7,phase:{name:"downloading",current:7,total:10}}]};
+  let requests=0;
+  const handler=async route=>{
+    requests++;
+    const params=new URL(route.request().url()).searchParams;
+    const status=params.get("status");
+    const filtered=status==="all"?tasks:tasks.filter(task=>task.status===status);
+    const offset=Number(params.get("offset"));
+    await route.fulfill({json:{items:filtered.slice(offset,offset+Number(params.get("limit"))),total:filtered.length,counts:{all:tasks.length,running:1,completed:tasks.length-1}}});
+  };
+  await page.route("**/api/tasks/page?*",handler);
+  try {
+    await page.evaluate(()=>{currentTaskFilter="all";taskPageOffset=0;setTaskMode("tasks");});
+    await page.waitForFunction(()=>document.querySelectorAll("#taskList > .task-card").length===50);
+    assert((await page.locator("#taskPageInfo").innerText()).includes("1/2"));
+    assert.equal(await page.locator('[data-task-filter="all"] small').innerText(),"63");
+    await page.evaluate(()=>{
+      const group=document.querySelector('[data-group-task-id="history-0"]');
+      group.open=true;expandedGroupTasks.add("history-0");
+      const child=group.querySelector("details[data-child-task-id]");child.open=true;expandedChildTasks.add("history-child");
+      selectedTaskIds.add("history-0");group.querySelector(".task-select").checked=true;
+      document.getElementById("menu-history-0").classList.remove("is-hidden");
+      group.querySelector('[data-task-action="pause"]').focus();
+      window.historyStableCard=document.querySelector('[data-group-task-id="history-1"]');
+      window.historyFocus=document.activeElement;
+    });
+    await page.evaluate(()=>loadTasks());
+    assert(await page.evaluate(()=>document.activeElement===window.historyFocus),"unchanged refresh replaced the focused node");
+    tasks[0].children[0].phase.current=8;
+    tasks[0].children[0].current=8;
+    await page.evaluate(()=>loadTasks());
+    const state=await page.evaluate(()=>({
+      same:document.querySelector('[data-group-task-id="history-1"]')===window.historyStableCard,
+      selected:document.querySelector('[data-group-task-id="history-0"] .task-select').checked,
+      focused:document.activeElement.dataset.taskAction,
+      menu:!document.getElementById("menu-history-0").classList.contains("is-hidden"),
+      expanded:document.querySelector('[data-group-task-id="history-0"]').open&&document.querySelector('[data-child-task-id="history-child"]').open,
+      phase:document.querySelector('[data-group-task-id="history-0"] .task-phase').textContent
+    }));
+    assert(state.same&&state.selected&&state.focused==="pause"&&state.menu&&state.expanded,"refresh lost task interaction state");
+    assert(state.phase.includes("下载瓦片")&&state.phase.includes("8/10"),"phase progress did not update");
+    await page.locator("#taskPageNext").click();
+    await page.waitForFunction(()=>document.querySelectorAll("#taskList > .task-card").length===13);
+    assert((await page.locator("#taskPageInfo").innerText()).includes("2/2"));
+    tasks.splice(49);
+    await page.evaluate(()=>loadTasks());
+    assert.equal(await page.locator("#taskList > .task-card").count(),49,"deleted last page did not return to the remaining page");
+    assert((await page.locator("#taskPageInfo").innerText()).includes("1/1"));
+    await page.locator('[data-task-filter="running"]').click();
+    await page.waitForFunction(()=>document.querySelectorAll("#taskList > .task-card").length===1);
+    assert.equal(await page.locator('[data-task-filter="all"] small').innerText(),"49","filter changed global statistics");
+    await page.evaluate(()=>setTaskMode("region"));
+    assert(await page.evaluate(()=>taskPollingTimer===null),"creation tab kept history polling active");
+    const before=requests;
+    await page.evaluate(()=>setTaskMode("tasks"));
+    await page.waitForFunction(()=>taskLoadPromise===null);
+    assert(requests>before,"returning to history did not refresh immediately");
+    await page.evaluate(()=>{
+      Object.defineProperty(document,"hidden",{configurable:true,get:()=>true});
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    assert(await page.evaluate(()=>taskPollingTimer===null),"hidden page kept polling active");
+    const hiddenRequests=requests;
+    await page.evaluate(()=>{delete document.hidden;document.dispatchEvent(new Event("visibilitychange"));});
+    await page.waitForFunction(()=>taskLoadPromise===null&&taskPollingTimer!==null);
+    assert(requests>hiddenRequests,"visible history did not refresh immediately");
+  } finally {
+    await page.unroute("**/api/tasks/page?*",handler);
+    await page.evaluate(()=>{currentTaskFilter="all";taskPageOffset=0;stopTaskPolling();delete window.historyStableCard;delete window.historyFocus;});
+  }
+  console.log("Task history passed: paging, global counts, deletion, keyed updates, focus/menu/selection/expansion, phases and visible-only polling");
 }
 
 async function runPasswordUIChecks(page, screenshots) {

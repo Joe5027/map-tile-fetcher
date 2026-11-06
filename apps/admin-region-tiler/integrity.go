@@ -47,12 +47,23 @@ func (s *SQLiteStore) initIntegritySchema() error {
 		`CREATE TABLE IF NOT EXISTS task_integrity(plan_id TEXT PRIMARY KEY,status TEXT NOT NULL DEFAULT 'unchecked',expected INTEGER NOT NULL DEFAULT 0,available INTEGER NOT NULL DEFAULT 0,missing INTEGER NOT NULL DEFAULT 0,error_message TEXT NOT NULL DEFAULT '',run_id TEXT NOT NULL DEFAULT '')`,
 		`CREATE TABLE IF NOT EXISTS run_coverage(run_id TEXT NOT NULL,z INTEGER NOT NULL,x INTEGER NOT NULL,y INTEGER NOT NULL,url TEXT NOT NULL,PRIMARY KEY(run_id,z,x,y,url))`,
 		`CREATE TABLE IF NOT EXISTS pending_publications(run_id TEXT PRIMARY KEY,record_json TEXT NOT NULL,integrity_json TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS task_budgets(plan_id TEXT PRIMARY KEY,parent_id TEXT NOT NULL,tiles INTEGER NOT NULL)`,
+		`CREATE INDEX IF NOT EXISTS idx_task_budgets_parent ON task_budgets(parent_id)`,
 	} {
 		if _, err := s.db.Exec(statement); err != nil {
 			return err
 		}
 	}
-	return nil
+	queueColumns, err := s.tableColumnSet("execution_queue")
+	if err != nil {
+		return err
+	}
+	if !queueColumns["owner_token"] {
+		if _, err := s.db.Exec(`ALTER TABLE execution_queue ADD COLUMN owner_token TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
+	return s.initRunPhaseSchema()
 }
 
 func (s *SQLiteStore) integrityState(planID string) IntegrityState {
@@ -136,12 +147,30 @@ func (r *tileOutputReader) read(tile maptile.Tile) ([]byte, error) {
 	if r.db != nil || strings.EqualFold(r.schema, "tms") {
 		y = uint32(1<<tile.Z) - 1 - y
 	}
+	name := fmt.Sprintf("%d/%d/%d.%s", tile.Z, tile.X, y, r.format)
+	if r.directory != "" {
+		path, err := ensurePathWithinRoot(filepath.Join(r.directory, filepath.FromSlash(name)), r.directory, false)
+		var data []byte
+		if err == nil {
+			var file *os.File
+			file, err = os.Open(path)
+			if err == nil {
+				data, err = readLimitedResponseBody(file, maxTileResponseBytes)
+				file.Close()
+			}
+		}
+		if err == nil && (r.archive == nil || validateTileResponse(data, r.format) == nil) {
+			return data, nil
+		}
+		if r.archive == nil && r.db == nil {
+			return data, err
+		}
+	}
 	if r.db != nil {
 		var data []byte
 		err := r.db.QueryRow(`SELECT tile_data FROM tiles WHERE zoom_level=? AND tile_column=? AND tile_row=?`, tile.Z, tile.X, y).Scan(&data)
 		return data, err
 	}
-	name := fmt.Sprintf("%d/%d/%d.%s", tile.Z, tile.X, y, r.format)
 	var source io.ReadCloser
 	var err error
 	if r.archive != nil {
@@ -193,6 +222,7 @@ func (s *SQLiteStore) inspectOutput(plan *TaskRecord, task *Task, run *TaskRunRe
 			if err := tx.Commit(); err != nil {
 				return err
 			}
+			_, _ = s.db.Exec(`UPDATE run_phases SET current=? WHERE run_id=? AND phase='verifying'`, state.Expected, run.ID)
 			coverage = coverage[:0]
 			return nil
 		})
@@ -230,6 +260,7 @@ func (s *SQLiteStore) inspectOutput(plan *TaskRecord, task *Task, run *TaskRunRe
 	if state.Missing == 0 && state.Expected > 0 {
 		state.Status = "complete"
 	}
+	_, _ = s.db.Exec(`UPDATE run_phases SET current=? WHERE run_id=? AND phase='verifying'`, state.Expected, run.ID)
 	return state, nil
 }
 
@@ -244,6 +275,16 @@ func (s *SQLiteStore) validateRetryBaseline(plan *TaskRecord) (*TaskRunRecord, e
 
 func (s *SQLiteStore) validateRetryBaselineWithTask(plan *TaskRecord, task *Task) (*TaskRunRecord, error) {
 	run, err := s.publishedRun(plan.ID)
+	if errors.Is(err, sql.ErrNoRows) && task.outformat == "cesium" {
+		// A missing terrain root can prevent publication while other raw DEM
+		// tiles are already valid. Preserve that cache and still validate every
+		// expected coordinate below before admitting an incremental retry.
+		var id string
+		err = s.db.QueryRow(`SELECT id FROM task_runs WHERE plan_id=? AND output_path<>'' AND status IN ('completed','partial_failed','failed') ORDER BY created_at DESC,rowid DESC LIMIT 1`, plan.ID).Scan(&id)
+		if err == nil {
+			run, err = s.getRun(id)
+		}
+	}
 	var reader *tileOutputReader
 	if err == nil {
 		reader, err = openTileOutput(plan, run)
@@ -296,11 +337,7 @@ func copyRetryBaseline(plan *TaskRecord, task *Task, previous *TaskRunRecord) er
 	}
 	defer reader.Close()
 	var size uint64
-	if reader.archive != nil {
-		for _, entry := range reader.archive.File {
-			size += entry.UncompressedSize64
-		}
-	} else if reader.directory != "" {
+	if reader.directory != "" {
 		err = filepath.Walk(reader.directory, func(path string, info os.FileInfo, err error) error {
 			if err := task.ctx.Err(); err != nil {
 				return err
@@ -319,6 +356,10 @@ func copyRetryBaseline(plan *TaskRecord, task *Task, previous *TaskRunRecord) er
 		if err != nil {
 			return err
 		}
+	} else if reader.archive != nil {
+		for _, entry := range reader.archive.File {
+			size += entry.UncompressedSize64
+		}
 	} else {
 		var bytes int64
 		if err := reader.db.QueryRow(`SELECT COALESCE(SUM(length(tile_data)),0) FROM tiles`).Scan(&bytes); err != nil {
@@ -326,15 +367,22 @@ func copyRetryBaseline(plan *TaskRecord, task *Task, previous *TaskRunRecord) er
 		}
 		size = uint64(bytes)
 	}
-	free, err := availableDiskBytes(filepath.Dir(task.File))
-	if err != nil {
+	if err := requireOutputSpace(filepath.Dir(task.File), "baseline copy", size); err != nil {
 		return err
-	}
-	if free < size+(1<<30) {
-		return errors.New("insufficient disk space for baseline copy plus 1 GiB reserve")
 	}
 	if err := task.setupOutput(); err != nil {
 		return err
+	}
+	batch := make([]Tile, 0, mbtilesBatchSize)
+	flush := func() error {
+		if len(batch) == 0 {
+			return nil
+		}
+		if err := writeMBTileBatch(task.db, batch); err != nil {
+			return err
+		}
+		batch = batch[:0]
+		return nil
 	}
 	err = task.forEachExpected(func(job TileJob) error {
 		if err := task.ctx.Err(); err != nil {
@@ -347,8 +395,19 @@ func copyRetryBaseline(plan *TaskRecord, task *Task, previous *TaskRunRecord) er
 		if err := validateTileResponse(data, plan.Format); err != nil {
 			return nil
 		}
-		return task.saveTile(Tile{T: job.Tile, C: data, URL: job.URL})
+		tile := Tile{T: job.Tile, C: data, URL: job.URL}
+		if task.outformat == "mbtiles" {
+			batch = append(batch, tile)
+			if len(batch) == cap(batch) {
+				return flush()
+			}
+			return nil
+		}
+		return task.saveTile(tile)
 	})
+	if err == nil {
+		err = flush()
+	}
 	closeErr := task.closeOutput()
 	if err != nil {
 		return err
@@ -465,17 +524,18 @@ func (s *SQLiteStore) recoverPublications() error {
 			}
 			continue
 		}
-		path, err := ensurePathWithinRoot(item.run.ArtifactPath, viper.GetString("output.directory"), false)
-		if err != nil {
-			return err
+		path, artifactErr := ensurePathWithinRoot(item.run.ArtifactPath, viper.GetString("output.directory"), false)
+		if artifactErr == nil {
+			_, artifactErr = os.Stat(path)
 		}
-		if strings.HasSuffix(path, ".zip") {
-			if err := validateArchive(path); err != nil {
+		if artifactErr == nil && strings.HasSuffix(path, ".zip") {
+			artifactErr = validateArchive(path)
+		}
+		if artifactErr != nil {
+			if err := s.recoverInvalidPublication(&item.run, artifactErr); err != nil {
 				return err
 			}
-		}
-		if _, err := os.Stat(path); err != nil {
-			return err
+			continue
 		}
 		if err := s.commitPublication(&item.run, item.state); err != nil {
 			return err
@@ -483,4 +543,25 @@ func (s *SQLiteStore) recoverPublications() error {
 	}
 	_, err = s.db.Exec(`UPDATE task_integrity SET status='interrupted',error_message='service restarted during reconciliation' WHERE status='checking'`)
 	return err
+}
+
+// A damaged staged artifact is a run-level failure, not a database startup
+// failure. Keep the previous publication and reuse this run's raw output when
+// the normal interrupted-run recovery below schedules it again.
+func (s *SQLiteStore) recoverInvalidPublication(run *TaskRunRecord, cause error) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`UPDATE task_runs SET status=CASE WHEN id=(SELECT last_run_id FROM plans WHERE id=task_runs.plan_id AND status<>'cancelled') THEN 'pending' ELSE 'failed' END,artifact_status='none',artifact_path='',artifact_name='',error_message=?,finished_at=0,updated_at=? WHERE id=?`, "artifact needs rebuilding: "+cause.Error(), time.Now().Unix(), run.ID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM artifacts WHERE run_id=?`, run.ID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM pending_publications WHERE run_id=?`, run.ID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

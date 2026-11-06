@@ -42,20 +42,24 @@ about region resources.
 - Do not reintroduce the retired .NET range downloader runtime code; keep
   historical context in `docs/range-migration.md`.
 - Do not import old local source folders, release packages, UI packages,
-  screenshots, runtime databases, downloaded tiles, logs, binaries, archives, or
+  temporary screenshots, runtime databases, downloaded tiles, logs, binaries, archives, or
   machine-local run data.
+- Reviewed documentation images follow `AGENTS.md` and stay in `docs/assets/`.
 - Keep placeholders for service tokens; do not commit real tokens.
 - Preserve the detailed bilingual commit-message requirement.
+- Apply the functionality/performance and stable-dependency review rules in
+  `AGENTS.md`; document concrete benefit and compatibility before upgrading.
 
 ## Validation Route
 
 - Admin region tiler code: run `go test ./...` from
   `apps/admin-region-tiler`.
 - Changed frontend JavaScript: run `node --check` on the changed file.
-- Repository docs or local skill changes: run the workspace audit, source
-  consistency checks, and sensitive-value scan from `docs/validation-chain.md`.
-- Handoff-memory changes: validate `docs/long-term-memory.md` with the global
-  handoff validator.
+- Repository docs, local skill, or handoff changes: run
+  `node scripts/check_docs.mjs` from the repository root, compare with source,
+  and use the sensitive-value scan in `docs/validation-chain.md`.
+- Environment-owned audits may supplement these checks when available; do not
+  require a personal home directory or global skill to validate this repository.
 
 ## Merge Guidance
 
@@ -65,6 +69,9 @@ about region resources.
   range workflow.
 - Keep contracts for map sources, area selection, task creation, task status,
   retry records, and artifacts explicit when changing the unified app.
+- Complete the `AGENTS.md` branch rule through `docs/merge-plan.md`: merge and
+  validate all development work on `main`, then remove integrated non-main
+  branches locally and remotely and verify the actual final branch lists.
 
 ## Output Expectation
 

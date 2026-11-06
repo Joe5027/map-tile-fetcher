@@ -1,0 +1,92 @@
+{
+  "generatedAt": "2026-11-06T11:58:12.672Z",
+  "sourceCommit": "9ca929aacc31682d88e20ee24ef42e4b2d79aa24",
+  "workingTreeDirty": true,
+  "sourceHashes": {
+    "apps/admin-region-tiler/static/index.html": "f82ef47ff5a67594a21c2fefdd0a389c71b55a6f1f5feb35058e9b5b69122b2e",
+    "apps/admin-region-tiler/static/script.js": "ae72a3affae9b59ef0bbd3319a20c0baf1e9187813b0159e8da2c0263c15da2f",
+    "apps/admin-region-tiler/static/styles.css": "309eb591c44b0765209554d8f8541c6dd830e574a3bed23c6adbce44b6ed454a",
+    "apps/admin-region-tiler/static/terrain-preview.html": "eaed6f49052911494b8dcd919ab37c98499dc358a1a2f3fdf3044e399dbbd45d",
+    "apps/admin-region-tiler/static/terrain-preview.js": "561240559fa5b417834ba78b8989d5b2d8aacbab821ed9e58466bf1a80cbe849"
+  },
+  "reproduce": "cd apps/admin-region-tiler && npm ci && npx playwright install chromium && node scripts/capture_docs.mjs",
+  "versions": {
+    "playwright": "1.65.0",
+    "cesium": "1.147.0"
+  },
+  "viewport": {
+    "width": 1440,
+    "height": 1000
+  },
+  "fixture": "本地合成高程夹具，非真实地区 DEM。85 generated quantized-mesh tiles (z0–3); base=600+400*sin(lonRadians)*cos(latRadians), local peaks=2000*exp(-((lonDegrees-115)^2+(latDegrees-35)^2)/3)*sin((lonDegrees-112)*PI/2)^2. No external terrain or imagery requests.",
+  "images": [
+    "dashboard-overview.png",
+    "bbox-task-creation.png",
+    "artifact-download.png",
+    "terrain-preview.png"
+  ],
+  "verification": {
+    "finiteRoot": true,
+    "rootVertices": 31395,
+    "rootRadius": 6378737.077466018,
+    "heights": [
+      316.247067442447,
+      600,
+      884.0872581015434
+    ],
+    "cesium": "1.147.0",
+    "tileRequests": 29,
+    "views": [
+      {
+        "longitude": null,
+        "tiles": 16,
+        "meshTiles": 16,
+        "centerPixel": [
+          143,
+          181,
+          159,
+          255
+        ]
+      },
+      {
+        "longitude": -120,
+        "tiles": 13,
+        "meshTiles": 13,
+        "centerPixel": [
+          73,
+          135,
+          87,
+          255
+        ]
+      },
+      {
+        "longitude": 0,
+        "tiles": 8,
+        "meshTiles": 8,
+        "centerPixel": [
+          95,
+          136,
+          86,
+          255
+        ]
+      },
+      {
+        "longitude": 120,
+        "tiles": 13,
+        "meshTiles": 13,
+        "centerPixel": [
+          118,
+          136,
+          85,
+          255
+        ]
+      }
+    ],
+    "externalRequests": 0,
+    "responsiveWidths": [
+      390,
+      768,
+      1440
+    ]
+  }
+}
