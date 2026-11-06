@@ -77,13 +77,14 @@ type SessionRecord struct {
 }
 
 type LevelConfig struct {
-	MinZoom      int          `json:"minZoom"`
-	MaxZoom      int          `json:"maxZoom"`
-	Geojson      string       `json:"geojson"`
-	URL          string       `json:"url,omitempty"`
-	Mode         string       `json:"mode,omitempty"`
-	BBox         *BBoxRequest `json:"bbox,omitempty"`
-	OutputFormat string       `json:"outputFormat,omitempty"`
+	Source       *SourceMetadata `json:"source,omitempty"`
+	MinZoom      int             `json:"minZoom"`
+	MaxZoom      int             `json:"maxZoom"`
+	Geojson      string          `json:"geojson"`
+	URL          string          `json:"url,omitempty"`
+	Mode         string          `json:"mode,omitempty"`
+	BBox         *BBoxRequest    `json:"bbox,omitempty"`
+	OutputFormat string          `json:"outputFormat,omitempty"`
 }
 
 type TaskRecord struct {

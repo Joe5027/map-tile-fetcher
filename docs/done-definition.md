@@ -28,7 +28,9 @@ with the required bilingual commit message.
 | --- | --- |
 | `apps/admin-region-tiler` Go backend | From `apps/admin-region-tiler`: `go test ./...` |
 | `apps/admin-region-tiler/static/script.js` | `node --check .\static\script.js`, plus `go test ./...` if API contracts changed |
-| `apps/admin-region-tiler/scripts/smoke_ui.mjs` | `node --check .\scripts\smoke_ui.mjs`, then `node .\scripts\smoke_ui.mjs` with local or global Playwright available |
+| `apps/admin-region-tiler/scripts/smoke_ui.mjs` | `node --check .\scripts\smoke_ui.mjs`, then `node .\scripts\smoke_ui.mjs` with the project-locked Playwright installed through `npm ci` |
+| Terrain pipeline or preview | Go terrain and recovery cases; actual local Cesium mesh/sample/camera checks in the browser smoke, external requests blocked |
+| Documentation images | `node scripts/capture_docs.mjs` from the app; inspect images and source hashes in `docs/assets/screenshots.json` |
 | `apps/admin-region-tiler/scripts/release_preflight.mjs` or CI workflow | `node --check .\scripts\release_preflight.mjs`, then `node .\scripts\release_preflight.mjs`; this includes Go tests, JS checks, UI smoke, sensitive-value scan, and tracked generated-file scan |
 | `apps/admin-region-tiler/static/styles.css` or HTML-only polish | Browser or static inspection when available; otherwise state manual UI check missing |
 | Config, release, or repository docs | `node scripts/check_docs.mjs` from the repository root, source-to-doc comparison, and the sensitive-value scan below |

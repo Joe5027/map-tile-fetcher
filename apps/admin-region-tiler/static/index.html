@@ -155,9 +155,12 @@
                                             <select name="outputFormat">
                                                 <option value="zip" selected>ZIP 文件树</option>
                                                 <option value="mbtiles">MBTiles</option>
+                                                <option value="cesium">Cesium 三维地形包</option>
                                             </select>
                                         </label>
                                     </section>
+                                    <p id="outputFormatHint" class="source-help" role="status"></p>
+                                    <p id="savePipeHint" class="source-help is-hidden">MBTiles 使用一个保存线程，批量写入；下载线程仍按所选地图源的并发策略执行。</p>
 
                                     <section class="section-card schedule-panel">
                                         <div class="section-card__header">
@@ -192,10 +195,10 @@
                                 <section id="rangeModePanel" class="section-card range-panel task-config-control is-hidden">
                             <div class="section-card__header">
                                 <h3>范围框选配置</h3>
-                                <p>使用矩形或多边形选择下载范围，按 Tianditu img / cia / vec 创建子任务</p>
+                                <p>使用矩形或多边形选择范围，下载上方已选地图源；两种区域模式共用来源和凭证。</p>
                             </div>
 
-                            <div class="range-layer-grid" aria-label="天地图图层">
+                            <div id="rangeTiandituShortcuts" class="range-layer-grid" aria-label="天地图快捷图层">
                                 <label class="range-layer">
                                     <input class="range-layer-option" type="checkbox" name="rangeLayers" value="img" checked>
                                     <span>img 卫星图</span>
@@ -207,6 +210,14 @@
                                 <label class="range-layer">
                                     <input class="range-layer-option" type="checkbox" name="rangeLayers" value="vec" checked>
                                     <span>vec 电子图</span>
+                                </label>
+                                <label class="range-layer">
+                                    <input class="range-layer-option" type="checkbox" name="rangeLayers" value="ter">
+                                    <span>ter 地形图</span>
+                                </label>
+                                <label class="range-layer">
+                                    <input class="range-layer-option" type="checkbox" name="rangeLayers" value="cta">
+                                    <span>cta 地形标注</span>
                                 </label>
                             </div>
 
@@ -242,6 +253,7 @@
                                 <span>总瓦片估算：<strong id="rangeTotalTileCount">-</strong></span>
                                 <span>估算体积：<strong id="rangeSizeEstimate">-</strong></span>
                             </div>
+                            <p id="rangeTerrainEstimate" class="source-help is-hidden">Cesium 地形还需下载祖先层级和接缝邻域；上方为所选范围估算，准备阶段会显示准确总量。</p>
                                 </section>
 
                                 <section id="regionConfigPanel" class="section-card region-config-panel task-config-control">
@@ -315,6 +327,7 @@
                                         <h3 id="taskCreateSummaryTitle">本次任务</h3>
                                         <div id="taskCreateSummary" aria-live="polite"></div>
                                     </section>
+                                    <p id="taskCreateNotice" class="message is-hidden" role="status"></p>
                                     <p id="taskError" class="message error is-hidden"></p>
                                     <button id="createTaskBtn" type="submit" class="primary-button wide">
                                         <img src="/static/assets/icons/task.svg" alt="">

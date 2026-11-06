@@ -5,6 +5,12 @@ this upgrade. These are reproducible choices, not a standing assertion that a
 version will remain latest. Future work checks the dependencies it touches and
 records the benefit of upgrading or the reason to retain them.
 
+The source baseline used Go 1.25.0 (local compiler 1.25.3), Gin 1.9.1, CORS
+1.4.0, Viper 1.7.1, modernc SQLite 1.47.0, Logrus 1.6.0 and a 2019 x/image
+pseudo-version. Playwright was globally resolved and Cesium was absent. Shapely
+was 2.1.2; the Docker runtime used floating `alpine:latest`. The table below
+records the reviewed candidates selected for this change.
+
 | Dependency | Locked decision | Relevant benefit and validation |
 | --- | --- | --- |
 | Go | 1.27.3 in `go.mod`, CI and Docker | Current stable toolchain; required by the upgraded network stack. Full tests, vet, native packages and Linux race. [Releases](https://go.dev/doc/devel/release) |
@@ -26,8 +32,9 @@ Retained deliberately:
   migrating to a prerelease adds no needed capability. [Release](https://github.com/Leaflet/Leaflet/releases/tag/v1.9.4)
 - `atlasdatatech/orb` 0.2.2 replacement: the downloader needs its streaming tile
   enumeration; replacing it blindly would remove used functionality.
-- NumPy 2.2.6: used by the Shapely environment, not directly by these scripts;
-  the newer linear algebra changes do not improve this workload.
+- NumPy 2.2.6 retained after reviewing 2.5.4: used by the Shapely environment,
+  not directly by these scripts; the newer linear algebra changes do not
+  improve this workload. [Release](https://github.com/numpy/numpy/releases/tag/v2.5.4)
 - nested-logrus-formatter 1.3.0: 1.3.1 changes trace-level color only; this app
   does not enable trace output. [Release](https://github.com/antonfisher/nested-logrus-formatter/releases/tag/v1.3.1)
 - `shortid` and `pb.v1`: registry lookup found no newer version on the selected

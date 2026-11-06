@@ -51,6 +51,8 @@ For browser UI smoke automation:
 
 ```powershell
 cd apps/admin-region-tiler
+npm ci --no-audit --no-fund
+npx playwright install chromium
 node --check .\scripts\smoke_ui.mjs
 node .\scripts\smoke_ui.mjs
 ```
@@ -81,6 +83,24 @@ regressions. Linux CI additionally runs `go test -race ./...` and `go vet ./...`
 Use [repair acceptance](repair-acceptance-2026-09-11.md) for issue mapping,
 baseline red/green commands, legacy migration and artifact coordinate evidence.
 
+New recovery/elevation changes require the relevant real-worker fixtures,
+not just the pure codec tests: parent termination, paused capacity, cumulative
+retry, missing root/child elevation, and authenticated compressed terrain
+delivery. `task_page_test.go` checks 1,000 parents with three children, fixed
+batch query count and equivalent legacy responses. Browser terrain acceptance
+must load the actual mesh with local Cesium and block external requests.
+
+Performance evidence is reproducible without contacting providers:
+
+```powershell
+python -B scripts/benchmark_download.py --ref 450f40d --ref HEAD --output tmp/performance.json
+go test -run '^$' -bench BenchmarkMBTilesWrites -benchtime=3x -count=1 .
+```
+
+The first fixture measures the download engine, excluding ZIP packing; heap and
+output peaks are sampled every 10 ms, not OS RSS. Compare exact revisions and
+record toolchain and machine details. Timing is evidence, not a flaky pass gate.
+
 For repository documentation, handoff state, rules, or local skills, run from
 the repository root:
 
@@ -90,7 +110,7 @@ node scripts/check_docs.mjs
 ```
 
 This checks repository-local Markdown links/images, required entrypoints, and
-the five ordered handoff sections. External URLs and historical absolute local
+canonical rule references plus the five ordered handoff sections. External URLs and historical absolute local
 links are not resolved; the latter are reported as skipped. Source-to-document
 comparison and visual inspection of changed documentation images remain required.
 Run an environment skill's audit when that skill requires it and is available;

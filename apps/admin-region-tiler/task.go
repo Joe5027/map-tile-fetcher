@@ -367,6 +367,9 @@ func buildTaskFromRequest(req CreateTaskRequest) (*Task, error) {
 	if task == nil {
 		return nil, errors.New("failed to create task")
 	}
+	if err := configureTerrainTask(task, req); err != nil {
+		return nil, err
+	}
 
 	return task, nil
 }

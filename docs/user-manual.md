@@ -8,6 +8,7 @@ From the Go app directory:
 
 ```powershell
 cd apps/admin-region-tiler
+npm ci --omit=dev --no-audit --no-fund
 go run .
 ```
 
@@ -51,7 +52,7 @@ files.
 5. Configure region levels. The default flow starts from world and China, then
    lets you choose province, city, and district levels when available.
 6. Choose worker count, save workers, request delay, output format, and schedule.
-7. Submit the task and confirm the summary dialog.
+7. Review the inline summary and submit. Submission is disabled while the request is pending.
 
 The app creates one parent task with child source tasks. Each selected layer runs
 as a child task under the same parent task.
@@ -62,15 +63,15 @@ Use this mode when the target area should be selected directly on the map.
 
 1. Choose **Range Download**.
 2. Enter a task name.
-3. Fill **Tianditu Token** in the shared Service Credentials section.
-4. Choose Tianditu layers: `img`, `cia`, and/or `vec`.
+3. Choose sources from the shared catalogue and fill credentials only when required.
+4. Use Tianditu shortcuts or choose imagery, vector or elevation sources directly.
 5. Select rectangle or polygon drawing mode.
 6. Click the map to define the range:
    - Rectangle: click two opposite corners.
    - Polygon: click at least three points.
 7. Confirm or edit the coordinate and zoom fields.
 8. Review the tile estimate, output format, and schedule.
-9. Submit the task and confirm the summary dialog.
+9. Review the inline summary and submit with the displayed worker, saver and delay settings.
 
 Range coordinates use WGS84 longitude/latitude with the Web Mercator tile
 scheme.
@@ -83,10 +84,14 @@ Each task supports:
 - **Once**: starts at the selected local date and time.
 
 Immediate, scheduled and retry runs share a durable queue (`queued`). The default
-limit is three running children; paused children retain their slot. Queued work
-survives restart, while interrupted downloads are not automatically repeated.
-The parent budget is 1,000,000 tiles across all selected sources. Geometry uses
-a conservative bounding estimate. Workers default to 3 and accept 1-50, capped
+limit is three running children. Paused children release their slot; resuming
+queues them until capacity is available. Restart automatically continues the
+original run, reusing valid committed tiles. Explicitly paused work stays paused.
+Conversion and packaging can resume after the old worker relinquishes ownership.
+The parent budget is 1,000,000 unique requests across all selected sources.
+Complex or overlapping geometry is deduplicated during preparation; a bounding
+estimate alone does not reject it. Terrain counts include ancestors and adjacent
+source rasters needed for sampling. Workers default to 3 and accept 1-50, capped
 by the source policy; effective delay is at least the source minimum.
 
 ## 6. Output Formats
@@ -96,14 +101,23 @@ The task creation form supports:
 - **ZIP file tree**: tile files are written to the filesystem and packaged as a
   ZIP artifact.
 - **MBTiles**: MBTiles output is exposed directly as the artifact.
+- **Cesium terrain**: convert Terrarium elevation to a quantized-mesh ZIP, with an offline 3D preview in the application.
+
+Terrain imagery remains ordinary ZIP/MBTiles data; Mapbox terrain vector tiles
+are not elevation. Choose the public Terrarium source for elevation, with maximum
+level 14 by default or 15 when needed. No AWS account is required. Open the child
+task's 3D preview or download its ZIP. See the [terrain guide](terrain.md).
 
 Artifacts are stored on disk and indexed in SQLite. SQLite stores control
 metadata only; raw tile payloads stay in the filesystem artifact paths.
 
 ## 7. Task Management
 
-The task list shows status, progress, child source tasks, failures, and artifact
-state.
+Task history shows 50 parents per page and supports status filtering. Counts
+cover the entire history. Only a visible task page polls every five seconds;
+returning refreshes immediately. Background updates preserve focus, selection,
+menus and expansion. Preparation, downloading, conversion, verification,
+packaging and publication have separate phase feedback.
 
 Available actions depend on task state:
 
@@ -130,13 +144,17 @@ Use **Retry Failed Tiles** from the task action menu when available. The retry
 run copies the previous usable output and fills unresolved retryable coordinates,
 then publishes a complete cumulative ZIP/MBTiles. Historical events are retained;
 resolved events leave current failure counts. Per-run progress and cumulative
-integrity are separate. Copying requires baseline size plus a 1 GiB free-space
-reserve; later writes can still exhaust space and fail without replacing the old artifact.
+integrity are separate. Disk checks use the additional bytes needed by copying
+and packaging, without an unconditional 1 GiB surcharge. An explicit
+`task.min_free_disk_bytes` reserve remains available. Unknown future tile sizes
+can still exhaust space; a failed write does not replace the published artifact.
 
 Use the task menu's local reconciliation action to verify historical output
-without downloading. Missing old successful tiles return `409 baseline_missing`;
-explicitly recreate a complete task to download again. Retry never silently
-expands into a full download. See [repair acceptance and migration notes](repair-acceptance-2026-09-11.md).
+without downloading. Retries first queue, then validate the baseline in the
+worker. A missing baseline produces a failed run with an actionable error;
+explicitly recreate a complete task to download again. A terrain run whose root
+failed can reuse its valid raw elevation cache. Retry never silently expands
+into a full download. See [upgrade evidence](upgrade-2026-11.md).
 
 Common failure categories:
 
@@ -159,7 +177,10 @@ Keep these out of Git:
 - `bin/`
 - `obj/`
 - `publish*/`
-- logs, databases, archives, binaries, screenshots, and downloaded tiles
+- logs, databases, archives, binaries, temporary runtime screenshots, and downloaded tiles
+
+Reviewed documentation images in `docs/assets/` are allowed when reproduced
+from sanitized local fixtures.
 
 Safe placeholders in docs and examples:
 

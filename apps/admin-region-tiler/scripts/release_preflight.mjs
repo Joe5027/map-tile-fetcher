@@ -25,6 +25,16 @@ const checks = [
     args: ["--check", "./scripts/smoke_ui.mjs"],
   },
   {
+    label: "Terrain preview script syntax",
+    command: "node",
+    args: ["--check", "./static/terrain-preview.js"],
+  },
+  {
+    label: "Documentation capture script syntax",
+    command: "node",
+    args: ["--check", "./scripts/capture_docs.mjs"],
+  },
+  {
     label: "Rendering safety contracts",
     command: "node",
     args: ["./scripts/security_ui_test.mjs"],

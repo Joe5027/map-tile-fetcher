@@ -58,6 +58,7 @@ export async function runRepairUIChecks(page) {
     await Promise.all([a,b]);
     const features=taskAreaPreviewLayer.toGeoJSON().features.length;
     const west=taskAreaPreviewLayer.getBounds().getWest();
+    if (document.getElementById("taskPreviewControls").getBoundingClientRect().height > 160) throw new Error("Task preview controls consumed the map's available height");
     setTaskMode("bbox");
     return {features,west,cleared:taskAreaPreviewLayer===null,selectionUnchanged:before===JSON.stringify(rangeClickPoints)};
   });

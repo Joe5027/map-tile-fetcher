@@ -10,6 +10,7 @@ import { dirname, join, resolve } from "node:path";
 import { rm } from "node:fs/promises";
 import process from "node:process";
 import { runRepairUIChecks } from "./repair_ui_checks.mjs";
+import { runTerrainPreviewChecks, captureMainScreenshots, writeScreenshotManifest } from "./capture_docs.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const appDir = resolve(scriptDir, "..");
@@ -49,12 +50,15 @@ function parseArgs(args) {
     timeoutMs: 60000,
     url: "",
     port: 0,
+    captureDocs: false,
   };
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--headed") {
       parsed.headed = true;
+    } else if (arg === "--capture-docs") {
+      parsed.captureDocs = true;
     } else if (arg === "--keep-server") {
       parsed.keepServer = true;
     } else if (arg === "--url") {
@@ -93,6 +97,7 @@ Options:
   --headed            Show the browser while running the smoke flow.
   --keep-server       Leave the started Go server running after the smoke run.
   --timeout-ms <ms>   Browser assertion timeout. Default: 60000.
+  --capture-docs      Refresh sanitized documentation screenshots and manifest.
 
 Playwright lookup:
   Uses the project's locked local dependency. Run npm ci, then
@@ -208,7 +213,8 @@ function waitForHTTP(baseURL, recentOutput) {
 async function runSmoke(baseURL) {
   const { chromium } = await loadPlaywright();
   const browser = await chromium.launch({ headless: !options.headed });
-  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const page = await context.newPage();
   const createdPayloads = [];
   const pendingCreates = [];
   const confirmMessages = [];
@@ -217,7 +223,7 @@ async function runSmoke(baseURL) {
   page.on("console", (message) => {
     if (message.type() === "error" && !isExpectedConsoleError(message.text()) &&
         !(message.location().url.endsWith("/api/auth/password") && message.text().includes("status of 403"))) {
-      consoleErrors.push(message.text());
+      consoleErrors.push(`${message.text()} (${message.location().url})`);
     }
   });
   page.on("pageerror", (error) => {
@@ -275,7 +281,11 @@ async function runSmoke(baseURL) {
     await login(page);
     await smokeRegionFlow(page, createdPayloads, pendingCreates);
     await smokeRangeFlow(page, createdPayloads, pendingCreates);
+    await smokeTerrainFlows(page, createdPayloads, pendingCreates);
     assert(confirmMessages.length === 0, "task creation should use the inline summary without confirmation dialogs");
+    if (options.captureDocs) await captureMainScreenshots(page);
+    const terrain = await runTerrainPreviewChecks(page.context(), baseURL, { capture: options.captureDocs });
+    if (options.captureDocs) await writeScreenshotManifest(terrain);
     await runRepairUIChecks(page);
 
     if (consoleErrors.length > 0) {
@@ -286,6 +296,7 @@ async function runSmoke(baseURL) {
       baseURL,
       payloads: createdPayloads,
       confirms: confirmMessages.length,
+      terrain,
     };
   } finally {
     pendingCreates.splice(0).forEach((release) => release());
@@ -396,9 +407,13 @@ async function smokeRangeFlow(page, createdPayloads, pendingCreates) {
   await page.locator("input[name='scheduleMode'][value='once']").check({ force: true });
   await page.locator("#runAtField").waitFor({ state: "visible", timeout: options.timeoutMs });
   await page.locator("input[name='runAt']").fill(formatDateTimeLocal(new Date(Date.now() + 60 * 60 * 1000)));
-  await page.locator("select[name='outputFormat']").selectOption("mbtiles");
   await page.locator("input[name='workers']").fill("8");
   await page.locator("select[name='savePipe']").selectOption("4");
+  await page.locator("select[name='outputFormat']").selectOption("mbtiles");
+  assert(await page.locator("select[name='savePipe']").isDisabled(), "MBTiles must display its actual single writer");
+  await page.locator("select[name='outputFormat']").selectOption("zip");
+  assert(await page.locator("select[name='savePipe']").inputValue() === "4", "switching back to ZIP must restore the user's save threads");
+  await page.locator("select[name='outputFormat']").selectOption("mbtiles");
   await page.locator("input[name='timeDelay']").fill("175");
 
   await waitForTextNotEqual(page.locator("#rangeTileCount"), "-");
@@ -406,13 +421,13 @@ async function smokeRangeFlow(page, createdPayloads, pendingCreates) {
 
   const beforeCount = createdPayloads.length;
   const summary = await page.locator("#taskCreateSummary").innerText();
-  assert(summary.includes("下载 8 线程") && summary.includes("保存 4 线程") && summary.includes("间隔 175ms") && summary.includes("MBTiles"),
+  assert(summary.includes("下载 8 线程") && summary.includes("保存 1 线程") && summary.includes("间隔 175ms") && summary.includes("MBTiles"),
     "range inline summary should show requested parameters and output before submission");
   await submitOnceWhilePending(page, createdPayloads, pendingCreates, beforeCount);
 
   const payload = createdPayloads.at(-1);
   assert(payload.mode === "bbox", "range payload should use bbox mode");
-  assert(payload.workers === 8 && payload.savePipe === 4 && payload.timeDelay === 175,
+  assert(payload.workers === 8 && payload.savePipe === 1 && payload.timeDelay === 175,
     "range payload should preserve the user-selected download parameters");
   assert(payload.area?.bbox, "range payload should include area.bbox");
   assert(payload.zoom?.min === 10 && payload.zoom?.max === 10, "range payload should include the requested zoom");
@@ -422,6 +437,64 @@ async function smokeRangeFlow(page, createdPayloads, pendingCreates) {
   assert(Array.isArray(payload.sources) && payload.sources.length === 1, "range payload should include the selected layer source");
   assert(String(payload.sources[0].name || "").includes("img"), "range payload should include the img layer source");
   assert(String(payload.sources[0].url || "").includes("smoke-test-token"), "range source URL should include the supplied token");
+}
+
+async function smokeTerrainFlows(page, createdPayloads, pendingCreates) {
+  await page.locator("[data-task-mode='bbox']").click();
+  await page.locator("input[name='name']").fill("地形图片回归夹具");
+  await page.locator("input[name='scheduleMode'][value='immediate']").check({force:true});
+  await page.locator("input[name='rangeLayers'][value='img']").uncheck();
+  await page.locator("input[name='rangeLayers'][value='ter']").check();
+  await page.locator("input[name='rangeLayers'][value='cta']").check();
+  await page.locator("select[name='outputFormat']").selectOption("cesium");
+  const beforeInvalid = createdPayloads.length;
+  await page.locator("#createTaskBtn").click();
+  await page.locator("#taskError").waitFor({state:"visible"});
+  assert((await page.locator("#taskError").innerText()).includes("请选择「高程数据」"), "raster Cesium mismatch should explain the right source and output choices");
+  assert(createdPayloads.length === beforeInvalid, "raster sources cannot be mislabeled as real elevation");
+  await page.locator("select[name='outputFormat']").selectOption("zip");
+  assert(await page.locator("select[name='savePipe']").inputValue() === "4", "MBTiles creation must retain the previous ZIP save-thread choice");
+  await submitOnceWhilePending(page, createdPayloads, pendingCreates, createdPayloads.length);
+  assert(createdPayloads.at(-1).sources.length === 2 && createdPayloads.at(-1).sources.every(source=>/[?&]T=(ter|cta)_w/.test(source.url)), "terrain imagery should use directory ter/cta sources");
+
+  await page.locator("[data-task-mode='bbox']").click();
+  await page.locator(".source-card__main[data-provider-select='高程数据']").click();
+  assert(await page.locator("input[name='rangeMinZoom']").inputValue() === "14" && await page.locator("input[name='rangeMaxZoom']").inputValue() === "14", "elevation should default to zoom 14");
+  assert(await page.locator("input[name='rangeMaxZoom']").getAttribute("max") === "15", "elevation must allow zoom 15");
+  assert(await page.locator("select[name='outputFormat']").inputValue() === "cesium", "elevation should select the Cesium output");
+  await page.locator("input[name='tiandituToken']").fill("");
+  await page.locator("input[name='name']").fill("真实高程范围夹具");
+  await page.locator("input[name='rangeMaxZoom']").fill("15");
+  await page.locator("input[name='timeDelay']").fill("0");
+  assert((await page.locator("#taskCreateSummary").innerText()).includes("祖先层级"), "terrain preparation should explain extra downloaded levels and neighbours");
+  await submitOnceWhilePending(page, createdPayloads, pendingCreates, createdPayloads.length);
+  const range = createdPayloads.at(-1);
+  assert(range.mode === "bbox" && range.output.format === "cesium" && range.zoom.min === 14 && range.zoom.max === 15, "bbox must submit selected Cesium zooms");
+  assert(range.sources.length === 1 && range.sources[0].metadata.kind === "elevation" && range.sources[0].metadata.encoding === "terrarium" && range.sources[0].format === "png", "bbox must retain the real-elevation source contract");
+  assert(range.workers === 8 && range.savePipe === 4 && range.timeDelay === 0, "elevation must preserve user's effective settings");
+  await page.locator("[data-task-mode='region']").click();
+  await page.locator("input[name='name']").fill("真实高程行政区夹具");
+  await submitOnceWhilePending(page, createdPayloads, pendingCreates, createdPayloads.length);
+  const region = createdPayloads.at(-1);
+  assert(!region.mode && region.output.format === "cesium" && region.sources[0].id === range.sources[0].id && region.levels.length > 0, "region and bbox must share the same elevation directory");
+
+  const task={id:"terrain-fixture",kind:"single",name:"地形产物示例",status:"completed",artifactStatus:"ready",artifact:{status:"ready",format:"cesium"},downloadUrl:"/api/tasks/terrain-fixture/download",area:{mode:"bbox",bbox:{minLon:112,minLat:32,maxLon:118,maxLat:38}},zoom:{min:3,max:3},sources:range.sources,total:85,current:85,successCount:85};
+  await page.route("**/api/tasks/terrain-fixture",route=>route.fulfill({json:task}));
+  await page.route("**/api/tasks/page?*",route=>route.fulfill({json:{items:[task],total:1,counts:{all:1,completed:1}}}));
+  const links = await page.evaluate(async task=>{cachedTasks=[task];setTaskMode("tasks");await loadTasks();stopTaskPolling();renderTaskList(cachedTasks);return [...document.querySelectorAll('#taskList a')].map(a=>a.getAttribute('href'));},task);
+  assert(links.includes("/static/terrain-preview.html?task=terrain-fixture") && links.includes(task.downloadUrl), "published Cesium tasks should offer both preview and download");
+  await page.locator('[data-group-task-id="terrain-fixture"]').evaluate(element=>{element.open=true;});
+  for (const width of [390,768,1440]) {
+    await page.setViewportSize({width,height:1000});
+    for (const selector of [".terrain-preview-link", ".artifact-link"]) {
+      const box=await page.locator(`#taskList ${selector}`).boundingBox();
+      assert(box && box.height < 45 && box.x >= 0 && box.x+box.width <= width, `${selector} should remain readable and inside the ${width}px viewport`);
+    }
+  }
+  await page.evaluate(()=>editTaskSource("terrain-fixture"));
+  assert(await page.locator("input[name='rangeMinLon']").inputValue() === "112" && await page.locator("input[name='rangeMaxLat']").inputValue() === "38", "changing source should preserve the original bbox");
+  assert((await page.locator("#taskCreateNotice").innerText()).includes("原任务与已有产物会保留"), "changing source should explain the retained original task");
+  console.log("Terrain UI passed: ter/cta imagery, mismatch guidance, shared region/bbox elevation metadata, zoom 14–15, preview/download and edit-source action");
 }
 
 async function submitOnceWhilePending(page, createdPayloads, pendingCreates, beforeCount) {
@@ -509,6 +582,7 @@ function printResult(result) {
   console.log(`- Region payload: ${regionPayload.sources.length} source(s), ${regionPayload.levels.length} level(s)`);
   console.log(`- Range payload: ${rangePayload.sources.length} source(s), zoom ${rangePayload.zoom.min}-${rangePayload.zoom.max}`);
   console.log(`- Confirm dialogs accepted: ${result.confirms}`);
+  console.log(`- Offline Cesium: ${JSON.stringify(result.terrain)}`);
 }
 
 function trimRecentOutput(value) {

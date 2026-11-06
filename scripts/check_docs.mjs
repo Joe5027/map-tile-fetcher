@@ -23,6 +23,19 @@ for (const file of required) {
   if (!existsSync(resolve(root, file))) errors.push(`${file}: required entrypoint is missing`);
 }
 
+// Keep local execution surfaces pointed at the canonical rule and validation
+// owners, instead of allowing a stale copied policy to drift independently.
+for (const [file, references] of Object.entries({
+  ".codex/skills/two-projects-handoff/SKILL.md": ["AGENTS.md", "docs/validation-chain.md", "docs/merge-plan.md"],
+  "docs/ai-operating-handbook.md": ["AGENTS.md", "validation-chain.md", "long-term-memory.md"],
+})) {
+  if (!existsSync(resolve(root, file))) continue;
+  const content = readFileSync(resolve(root, file), "utf8");
+  for (const reference of references) {
+    if (!content.includes(reference)) errors.push(`${file}: missing canonical reference ${reference}`);
+  }
+}
+
 for (const file of new Set(files)) {
   const absolute = resolve(root, file);
   if (!existsSync(absolute)) continue; // A tracked file may be intentionally deleted in this batch.

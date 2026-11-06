@@ -2,6 +2,7 @@ package main
 
 // TileMap describes one configured tile source and its fetch policy.
 type TileMap struct {
+	Metadata    *SourceMetadata
 	ID          int
 	Name        string
 	SourceName  string

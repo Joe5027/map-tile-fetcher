@@ -7,6 +7,7 @@ let selectedProvider = "";
 let selectedSourceIds = new Set();
 let taskMode = "region";
 let taskCreatePending = false;
+let sourceCapabilityKey = "";
 let activeMapMode = "region";
 let rangeMap = null;
 let rangeBaseLayer = null;
@@ -101,7 +102,9 @@ const FALLBACK_TILEMAPS = [
 const RANGE_LAYER_NAMES = {
     img: "天地图 img 卫星图",
     cia: "天地图 cia 路网",
-    vec: "天地图 vec 电子图"
+    vec: "天地图 vec 电子图",
+    ter: "天地图 ter 地形图",
+    cta: "天地图 cta 地形标注"
 };
 
 const ADMIN_REGION_LEVEL_CONFIG_IDS = {
@@ -177,6 +180,7 @@ function bindEvents() {
     document.getElementById("taskForm").addEventListener("submit", createTask);
     document.getElementById("taskForm").addEventListener("input", updateTaskCreateSummary);
     document.getElementById("taskForm").addEventListener("change", updateTaskCreateSummary);
+    document.querySelector('[name="outputFormat"]').addEventListener("change", () => { updateOutputSettings(); updateRangeEstimate(); });
     document.getElementById("refreshBtn").addEventListener("click", loadTasks);
     document.getElementById("taskPagePrev").addEventListener("click", () => changeTaskPage(Math.max(0, taskPageOffset - TASK_PAGE_LIMIT)));
     document.getElementById("taskPageNext").addEventListener("click", () => changeTaskPage(taskPageOffset + TASK_PAGE_LIMIT));
@@ -223,7 +227,14 @@ function bindEvents() {
     });
 
     document.querySelectorAll(".range-layer-option").forEach((element) => {
-        element.addEventListener("change", updateRangeEstimate);
+        element.addEventListener("change", () => {
+            const source = tilemaps.find((item) => tiandituLayer(item) === element.value);
+            if (source) {
+                if (element.checked) selectedSourceIds.add(String(source.id));
+                else selectedSourceIds.delete(String(source.id));
+            }
+            renderTilemapSelector();
+        });
     });
 
     document.getElementById("undoRangePointBtn").addEventListener("click", undoRangePoint);
@@ -517,7 +528,7 @@ function setTaskMode(mode) {
 
     document.getElementById("taskHistoryPanel").classList.toggle("is-hidden", !isTasksMode);
     document.querySelector(".task-left-column")?.classList.toggle("task-left-column--tasks", isTasksMode);
-    document.getElementById("sourceSection").classList.toggle("is-hidden", isTasksMode || taskMode !== "region");
+    document.getElementById("sourceSection").classList.toggle("is-hidden", isTasksMode);
     document.getElementById("regionConfigPanel").classList.toggle("is-hidden", isTasksMode || taskMode !== "region");
     document.getElementById("rangeModePanel").classList.toggle("is-hidden", isTasksMode || taskMode !== "bbox");
     document.getElementById("regionModePanel").classList.toggle("is-hidden", mapMode !== "region");
@@ -568,7 +579,7 @@ function syncScheduleControls() {
 
 function readDownloadSettings(formData) {
     const workers = Number(formData.get("workers"));
-    const savePipe = Number(formData.get("savePipe"));
+    const savePipe = formData.get("outputFormat") === "mbtiles" ? 1 : Number(formData.get("savePipe"));
     const rawDelay = String(formData.get("timeDelay") ?? "").trim();
     const timeDelay = Number(rawDelay);
     const workerInput = document.querySelector('[name="workers"]');
@@ -592,12 +603,7 @@ function updateTaskCreateSummary() {
     const schedule = readScheduleRequest(formData);
     const output = readOutputRequest(formData);
     const isRange = activeMapMode === "bbox";
-    const sources = isRange
-        ? getSelectedRangeLayers().map((layer) => {
-            const configured = tilemaps.find((item) => String(item.url || "").includes(`T=${layer}_w`));
-            return { ...configured, name: RANGE_LAYER_NAMES[layer] || layer };
-        })
-        : getSelectedTilemaps();
+    const sources = getSelectedTilemaps();
     const lines = [
         `${String(formData.get("name") || "未命名任务")} · ${isRange ? "范围框选" : "行政区划"}`,
         `图层：${sources.map((source) => source.name).join("、") || "尚未选择"}`
@@ -621,6 +627,7 @@ function updateTaskCreateSummary() {
         }
     }
     lines.push(`${schedule.error || schedule.label} · ${output.label}`);
+    if (output.format === "cesium") lines.push("准备阶段会计入祖先层级和接缝邻域，随后下载、转换并发布可预览的地形包。");
     summary.replaceChildren(...lines.map((line) => {
         const paragraph = document.createElement("p");
         paragraph.textContent = line;
@@ -655,6 +662,7 @@ function readScheduleRequest(formData) {
 
 function readOutputRequest(formData) {
     const format = String(formData.get("outputFormat") || "zip").trim().toLowerCase();
+    if (format === "cesium") return { format, label: "Cesium 三维地形包" };
     if (format === "mbtiles") {
         return {
             format: "mbtiles",
@@ -665,6 +673,20 @@ function readOutputRequest(formData) {
         format: "zip",
         label: "ZIP 文件树"
     };
+}
+
+function updateOutputSettings() {
+    const form = document.getElementById("taskForm");
+    const save = form.elements.savePipe;
+    const singleWriter = form.elements.outputFormat.value === "mbtiles";
+    if (singleWriter && !save.disabled) {
+        save.dataset.previousValue = save.value;
+        save.value = "1";
+    } else if (!singleWriter && save.disabled) {
+        save.value = save.dataset.previousValue || "1";
+    }
+    save.disabled = singleWriter;
+    document.getElementById("savePipeHint").classList.toggle("is-hidden", !singleWriter);
 }
 
 function readCredentialRequest(formData) {
@@ -2316,7 +2338,73 @@ function renderTilemapSelector() {
     const container = document.getElementById("tilemapSelector");
     const groups = getProviderGroups();
     container.innerHTML = groups.map((group) => renderProviderCard(group)).join("");
-    updateTaskCreateSummary();
+    updateSourceCapabilities();
+    updateRangeEstimate();
+}
+
+function tiandituLayer(source) {
+    return /[?&]T=(img|cia|vec|ter|cta)_w(?:&|$)/i.exec(String(source.url || ""))?.[1].toLowerCase() || "";
+}
+
+function isTerrariumSource(source) {
+    return source.metadata?.kind === "elevation" && source.metadata?.encoding === "terrarium"
+        && String(source.format).toLowerCase() === "png" && String(source.schema).toLowerCase() === "xyz";
+}
+
+function selectedZoomRange(sources = getSelectedTilemaps()) {
+    return {
+        min: Math.max(0, ...sources.map((source) => Number(source.metadata?.minZoom ?? source.min_zoom ?? 0))),
+        max: Math.min(20, ...sources.map((source) => Number(source.metadata?.maxZoom ?? source.max_zoom ?? 20)))
+    };
+}
+
+function updateSourceCapabilities() {
+    const sources = getSelectedTilemaps();
+    const terrarium = sources.length > 0 && sources.every(isTerrariumSource);
+    const key = sources.map((source) => source.id).join(",");
+    const range = selectedZoomRange(sources);
+    const preferredZoom = terrarium ? Math.min(range.max, sources[0].metadata.defaultZoom || 14) : range.min;
+    const form = document.getElementById("taskForm");
+    const output = form.elements.outputFormat;
+    if (key !== sourceCapabilityKey) {
+        if (terrarium) {
+            form.elements.rangeMinZoom.value = preferredZoom;
+            form.elements.rangeMaxZoom.value = preferredZoom;
+            output.value = "cesium";
+        } else if (output.value === "cesium") output.value = "zip";
+        sourceCapabilityKey = key;
+    }
+    for (const name of ["rangeMinZoom", "rangeMaxZoom"]) {
+        form.elements[name].min = range.min;
+        form.elements[name].max = range.max;
+    }
+    document.getElementById("outputFormatHint").textContent = terrarium
+        ? `真实高程：默认 ${preferredZoom} 级，最高 ${range.max} 级。Cesium 包可直接三维预览；ZIP / MBTiles 保留原始高程编码。`
+        : "图片地形使用 ZIP / MBTiles；需要可计算高程和三维地形时，请选择「高程数据」中的 Terrarium 源。";
+    document.getElementById("rangeTiandituShortcuts").classList.toggle("is-hidden", selectedProvider !== "天地图");
+    for (const checkbox of document.querySelectorAll(".range-layer-option")) {
+        const source = tilemaps.find((item) => tiandituLayer(item) === checkbox.value);
+        checkbox.disabled = !source;
+        checkbox.checked = Boolean(source && selectedSourceIds.has(String(source.id)));
+    }
+    document.getElementById("rangeTerrainEstimate").classList.toggle("is-hidden", output.value !== "cesium");
+    updateOutputSettings();
+}
+
+function validateOutputSources(sources, output) {
+    if (output.format === "cesium" && !sources.every(isTerrariumSource)) {
+        return "Cesium 三维地形需要 Terrarium 高程源。请选择「高程数据」；当前地图图片或矢量图层请使用 ZIP / MBTiles。";
+    }
+    return "";
+}
+
+function buildSelectedSources(sources, credentials) {
+    return sources.map((source, index) => ({
+        id: toNumericSourceId(source.id, index), name: source.name,
+        url: applySourceCredentials(source.url, credentials),
+        format: getTaskTilemapFormat(source), schema: source.schema,
+        ...(source.metadata ? {metadata: {...source.metadata}} : {})
+    }));
 }
 
 function renderProviderCard(group) {
@@ -2372,6 +2460,8 @@ function renderTilemapOption(tilemap) {
     const sourceHost = escapeHTML(formatTilemapHost(tilemap.url));
     const minZoom = Number.isFinite(Number(tilemap.min_zoom)) ? Number(tilemap.min_zoom) : 0;
     const maxZoom = Number.isFinite(Number(tilemap.max_zoom)) ? Number(tilemap.max_zoom) : 0;
+    const dataLabel = tilemap.metadata?.kind === "elevation" ? "真实高程 · Terrarium 编码"
+        : tilemap.format === "pbf" ? "矢量数据，非高程模型" : "地图图片";
     tilemap = {
         ...tilemap,
         id: escapeAttribute(tilemap.id),
@@ -2396,6 +2486,7 @@ function renderTilemapOption(tilemap) {
                     <span>${tilemap.min_zoom}-${tilemap.max_zoom}级</span>
                     <span>${sourceHost}</span>
                     <span>${tilemap.schema.toUpperCase()}</span>
+                    <span>${dataLabel}</span>
                 </span>
             </span>
         </label>
@@ -2424,8 +2515,9 @@ function getProviderGroups() {
 }
 
 function describeProvider(name, items) {
+    if (name === "高程数据") return "可计算高程 / Cesium 三维地形";
     if (name === "天地图") {
-        return "影像 & 动态影像地图";
+        return "影像、电子地图与地形图片";
     }
     if (name === "Google") {
         return "影像 & 动态影像地图";
@@ -2451,13 +2543,14 @@ function getRequestedImageFormat() {
 
 function getTaskTilemapFormat(tilemap) {
     const sourceFormat = String(tilemap.format || "").toLowerCase();
-    if (sourceFormat === "pbf") {
+    if (sourceFormat === "pbf" || tilemap.metadata?.kind === "elevation") {
         return sourceFormat;
     }
     return getRequestedImageFormat();
 }
 
 function getTilemapGroupName(tilemap) {
+    if (tilemap.metadata?.kind === "elevation") return "高程数据";
     const name = String(tilemap.name || "");
     const url = String(tilemap.url || "").toLowerCase();
 
@@ -2484,7 +2577,7 @@ function getTilemapGroupName(tilemap) {
 }
 
 function compareTilemapGroups(left, right) {
-    const priority = ["天地图", "Google", "Mapbox", "高德", "ArcGIS", "Bing Maps", "其他地图源"];
+    const priority = ["天地图", "高程数据", "Google", "Mapbox", "高德", "ArcGIS", "Bing Maps", "其他地图源"];
     const leftIndex = priority.indexOf(left);
     const rightIndex = priority.indexOf(right);
 
@@ -2516,8 +2609,9 @@ async function createRangeTask(event, formData, settings) {
         return;
     }
     const output = readOutputRequest(formData);
-
-    const sources = request.layers.map((layer, index) => buildTianDiTuSource(layer, request.credentials.tiandituToken, index));
+    const outputError = validateOutputSources(request.sources, output);
+    if (outputError) { showMessage("taskError", outputError); return; }
+    const sources = buildSelectedSources(request.sources, request.credentials);
 
     const response = await fetchJSON("/api/tasks", {
         method: "POST",
@@ -2543,7 +2637,7 @@ async function createRangeTask(event, formData, settings) {
         return;
     }
 
-    event.target.reset();
+    resetTaskFormKeepingOptions(event.target, formData);
     rangeClickPoints = [];
     syncScheduleControls();
     updateRangeEstimate();
@@ -2560,9 +2654,9 @@ function readRangeRequest(formData) {
         maxLat: Number(formData.get("rangeMaxLat"))
     };
     return {
-        name: String(formData.get("name") || "").trim() || "天地图范围下载任务",
+        name: String(formData.get("name") || "").trim() || "范围下载任务",
         credentials: readCredentialRequest(formData),
-        layers: getSelectedRangeLayers(),
+        sources: getSelectedTilemaps(),
         selectionMode: rangeDrawMode,
         bbox,
         polygon: getRangePolygonRequest(),
@@ -2571,10 +2665,6 @@ function readRangeRequest(formData) {
             max: Number.parseInt(formData.get("rangeMaxZoom"), 10)
         }
     };
-}
-
-function getSelectedRangeLayers() {
-    return Array.from(document.querySelectorAll(".range-layer-option:checked")).map((element) => element.value);
 }
 
 function getRangePolygonRequest() {
@@ -2600,12 +2690,9 @@ function validateRangeRequest(request) {
     if (nameError) {
         return nameError;
     }
-    if (!hasUsableCredential(request.credentials.tiandituToken, "YOUR_TIANDITU_TOKEN")) {
-        return "请输入真实的天地图 Token。";
-    }
-    if (request.layers.length === 0) {
-        return "请至少选择一个天地图图层。";
-    }
+    if (request.sources.length === 0) return "请至少选择一个地图源图层。";
+    const credentialError = validateSourceCredentials(request.sources, request.credentials);
+    if (credentialError) return credentialError;
     if (request.selectionMode === "polygon" && !isValidPolygon(request.polygon)) {
         return "请在地图上点击至少 3 个有效点形成多边形范围。";
     }
@@ -2615,8 +2702,9 @@ function validateRangeRequest(request) {
     if (!Number.isInteger(request.zoom.min) || !Number.isInteger(request.zoom.max)) {
         return "层级必须是整数。";
     }
-    if (request.zoom.min < 0 || request.zoom.max > 18 || request.zoom.min > request.zoom.max) {
-        return "天地图范围下载层级必须在 0 到 18 之间，且最小级别不能大于最大级别。";
+    const range = selectedZoomRange(request.sources);
+    if (request.zoom.min < range.min || request.zoom.max > range.max || request.zoom.min > request.zoom.max) {
+        return `所选来源层级范围为 ${range.min}～${range.max}，最小级别不能大于最大级别。`;
     }
     return "";
 }
@@ -2672,7 +2760,9 @@ function updateRangeEstimate() {
     const totalElement = document.getElementById("rangeTotalTileCount");
     const sizeElement = document.getElementById("rangeSizeEstimate");
 
-    if (!isValidRangeSelection(request) || !Number.isInteger(request.zoom.min) || !Number.isInteger(request.zoom.max) || request.zoom.min < 0 || request.zoom.max > 18 || request.zoom.min > request.zoom.max || request.layers.length === 0) {
+    const range = selectedZoomRange(request.sources);
+    document.getElementById("rangeTerrainEstimate").classList.toggle("is-hidden", document.getElementById("taskForm").elements.outputFormat.value !== "cesium");
+    if (!isValidRangeSelection(request) || !Number.isInteger(request.zoom.min) || !Number.isInteger(request.zoom.max) || request.zoom.min < range.min || request.zoom.max > range.max || request.zoom.min > request.zoom.max || request.sources.length === 0) {
         tileElement.textContent = "-";
         totalElement.textContent = "-";
         sizeElement.textContent = "-";
@@ -2680,10 +2770,11 @@ function updateRangeEstimate() {
     }
 
     const tileCount = calculateRangeTileCount(request.bbox, request.zoom);
-    const total = tileCount * request.layers.length;
+    const total = tileCount * request.sources.length;
     tileElement.textContent = String(tileCount);
     totalElement.textContent = String(total);
-    sizeElement.textContent = `${((total * 8) / 1024).toFixed(2)} MB`;
+    sizeElement.textContent = request.sources.some((source) => source.metadata?.kind === "elevation")
+        ? "以源瓦片和转换结果为准" : `${((total * 8) / 1024).toFixed(2)} MB`;
 }
 
 function calculateRangeTileCount(bbox, zoom) {
@@ -2712,20 +2803,11 @@ function clampInt(value, min, max) {
     return Math.min(max, Math.max(min, value));
 }
 
-function buildTianDiTuSource(layer, token, index) {
-    return {
-        id: index + 1,
-        name: RANGE_LAYER_NAMES[layer] || `天地图 ${layer}`,
-        url: `https://t0.tianditu.gov.cn/DataServer?T=${layer}_w&x={x}&y={y}&l={z}&tk=${encodeURIComponent(token)}`,
-        format: "png",
-        schema: "xyz"
-    };
-}
-
 async function createTask(event) {
     event.preventDefault();
     if (taskMode === "tasks" || taskCreatePending) return;
     hideMessage("taskError");
+    hideMessage("taskCreateNotice");
     const formData = new FormData(event.target);
     const settings = readDownloadSettings(formData);
     if (settings.error) {
@@ -2814,13 +2896,9 @@ async function createTaskFromForm(event, formData, settings) {
         return;
     }
 
-    const sources = selectedTilemaps.map((tilemap, index) => ({
-        id: toNumericSourceId(tilemap.id, index),
-        name: tilemap.name,
-        url: applySourceCredentials(tilemap.url, credentials),
-        format: getTaskTilemapFormat(tilemap),
-        schema: tilemap.schema
-    }));
+    const outputError = validateOutputSources(selectedTilemaps, output);
+    if (outputError) { showMessage("taskError", outputError); return; }
+    const sources = buildSelectedSources(selectedTilemaps, credentials);
 
 
     const response = await fetchJSON("/api/tasks", {
@@ -2843,7 +2921,7 @@ async function createTaskFromForm(event, formData, settings) {
         return;
     }
 
-    event.target.reset();
+    resetTaskFormKeepingOptions(event.target, formData);
     syncScheduleControls();
     selectedProvider = getProviderGroups()[0] ? getProviderGroups()[0].id : "";
     ensureProviderSelection();
@@ -2854,6 +2932,14 @@ async function createTaskFromForm(event, formData, settings) {
     void renderAdminRegionMap();
     await loadTasks();
     setWorkspaceTab("tasks");
+}
+
+function resetTaskFormKeepingOptions(form, formData) {
+    form.reset();
+    for (const name of ["workers","savePipe","timeDelay","outputFormat","tiandituToken","mapboxToken","mapboxSku","rangeMinZoom","rangeMaxZoom"]) {
+        form.elements[name].value = formData.get(name) ?? (name === "savePipe" ? "1" : "");
+    }
+    updateOutputSettings();
 }
 
 async function loadTasks() {
@@ -3059,6 +3145,7 @@ function renderGroupTask(task) {
                                 <button type="button" data-task-action="delete" data-task-id="${task.id}" data-task-status="${task.status}">删除任务</button>
                                 <button type="button" data-task-action="reconcile" data-task-id="${task.id}">核对本地产物</button>
                                 <button type="button" data-task-action="recreate" data-task-id="${task.id}">重新创建完整任务</button>
+                                <button type="button" data-task-action="editSource" data-task-id="${task.id}">修改来源后新建</button>
                             </div>
                         </div>
                         ${icon("chevron-down", "task-chevron")}
@@ -3085,8 +3172,10 @@ function renderStandaloneTask(task) {
     const progress = toPercent(task.progress);
     const riskHint = detectTaskRisk(task);
     const rawTaskID = String(task.id || "");
+    const terrainPreviewLink = renderTerrainPreviewLink(task);
     task = {
         ...task,
+        terrainPreviewLink,
         id: escapeAttribute(rawTaskID),
         name: escapeHTML(task.name),
         errorMessage: escapeHTML(task.errorMessage),
@@ -3137,6 +3226,7 @@ function renderStandaloneTask(task) {
                                 <button type="button" data-task-action="delete" data-task-id="${task.id}" data-task-status="${task.status}">删除任务</button>
                                 <button type="button" data-task-action="reconcile" data-task-id="${task.id}">核对本地产物</button>
                                 <button type="button" data-task-action="recreate" data-task-id="${task.id}">重新创建完整任务</button>
+                                <button type="button" data-task-action="editSource" data-task-id="${task.id}">修改来源后新建</button>
                             </div>
                         </div>
                         ${icon("chevron-down", "task-chevron")}
@@ -3168,7 +3258,7 @@ function renderStandaloneDetail(task) {
                 <div class="child-task__content">
                     <div class="child-task__footer">
                         <span class="artifact-text">${task.errorMessage || `开始：${task.startedAt ? formatDate(task.startedAt) : "-"} ｜ 完成：${task.finishedAt ? formatDate(task.finishedAt) : "-"}`}</span>
-                        ${artifactAction}
+                        ${task.terrainPreviewLink || ""}${artifactAction}
                     </div>
                 </div>
             </div>
@@ -3180,6 +3270,7 @@ function renderChildTask(task) {
     const progress = toPercent(task.progress);
     const riskHint = detectTaskRisk(task);
     const rawTaskID = String(task.id || "");
+    const terrainPreviewLink = renderTerrainPreviewLink(task);
     task = {
         ...task,
         id: escapeAttribute(rawTaskID),
@@ -3233,7 +3324,7 @@ function renderChildTask(task) {
                 <div class="child-task__footer">
                     ${renderIntegrity(task)}
                     <span class="artifact-text">${task.errorMessage || `开始：${task.startedAt ? formatDate(task.startedAt) : "-"} ｜ 完成：${task.finishedAt ? formatDate(task.finishedAt) : "-"}`}</span>
-                    ${artifactAction}
+                ${terrainPreviewLink}${artifactAction}
                 </div>
             </div>
         </details>
@@ -3338,6 +3429,11 @@ function managedDownloadURL(task) {
         return expected;
     }
     return typeof url === "string" && /^\/api\/downloads\/[a-f0-9]{64}$/.test(url) ? url : "";
+}
+
+function renderTerrainPreviewLink(task) {
+    if (task.artifact?.format !== "cesium" || (task.artifact?.status || task.artifactStatus) !== "ready") return "";
+    return `<a class="terrain-preview-link" href="/static/terrain-preview.html?task=${encodeURIComponent(String(task.id))}" target="_blank" rel="noopener">三维预览</a>`;
 }
 
 function renderTaskPhase(task) {
@@ -3489,9 +3585,56 @@ async function handleTaskAction(action, taskId, status) {
             await mutateTask(`/api/tasks/${encodeURIComponent(taskId)}/recreate`, "POST");
         }
         break;
+    case "editSource":
+        await editTaskSource(taskId);
+        break;
     default:
         break;
     }
+}
+
+async function editTaskSource(taskID) {
+    const response = await fetchJSON(`/api/tasks/${encodeURIComponent(taskID)}`);
+    if (!response.ok) { showMessage("taskListMessage", "读取原任务失败，请刷新后重试。"); return; }
+    const task = response.data;
+    const regionLevels = task.area?.levels || [];
+    const regionMatches = regionLevels.map((level) => regionCatalog.find((region) => String(region.geojson).replace(/^\.\//, "") === String(level.geojson).replace(/^\.\//, "")));
+    const isRange = task.area?.mode === "bbox" || task.mode === "bbox";
+    let polygon = null;
+    if (isRange && !task.area?.bbox) {
+        const area = await fetchJSON(`/api/tasks/${encodeURIComponent(taskID)}/area`);
+        const geometry = area.data?.features?.[0]?.geometry;
+        if (area.ok && geometry?.type === "Polygon" && geometry.coordinates.length === 1) polygon = geometry.coordinates[0];
+        if (!polygon) { showMessage("taskListMessage", "原任务范围不能直接编辑；可重新创建完整任务，或在新建页重新选择范围与来源。"); return; }
+    } else if (!isRange && (!regionLevels.length || regionLevels.length > REGION_LEVEL_RULES.length || regionMatches.some((region) => !region))) {
+        showMessage("taskListMessage", "原任务使用自定义区域文件；可重新创建完整任务，或在新建页重新选择区域与来源。");
+        return;
+    }
+    const form = document.getElementById("taskForm");
+    const originalSources = task.sources || [];
+    const matches = tilemaps.filter((source) => originalSources.some((original) => original.name === source.name));
+    if (matches.length) {
+        selectedProvider = getTilemapGroupName(matches[0]);
+        selectedSourceIds = new Set(matches.filter((source) => getTilemapGroupName(source) === selectedProvider).map((source) => String(source.id)));
+        expandedProviders.add(selectedProvider);
+    }
+    renderTilemapSelector();
+    form.elements.name.value = Array.from(`${task.name}（新来源）`).slice(0,80).join("");
+    if (isRange) {
+        const bbox = task.area?.bbox || {minLon:Math.min(...polygon.map((point)=>point[0])),maxLon:Math.max(...polygon.map((point)=>point[0])),minLat:Math.min(...polygon.map((point)=>point[1])),maxLat:Math.max(...polygon.map((point)=>point[1]))};
+        for (const [name,key] of [["rangeMinLon","minLon"],["rangeMaxLon","maxLon"],["rangeMinLat","minLat"],["rangeMaxLat","maxLat"]]) form.elements[name].value=bbox[key];
+        form.elements.rangeMinZoom.value=task.zoom?.min ?? task.minZoom;
+        form.elements.rangeMaxZoom.value=task.zoom?.max ?? task.maxZoom;
+        rangeDrawMode=polygon?"polygon":"rectangle";
+        rangeClickPoints=polygon?polygon.slice(0,-1).map(([lon,lat])=>L.latLng(lat,lon)):[];
+    } else {
+        initDefaultLevelConfigs();
+        activeLevelCount=regionLevels.length;
+        regionLevels.forEach((level,index)=>Object.assign(levelConfigs[index],{selectedRegionId:regionMatches[index].id,geojson:regionMatches[index].geojson,minZoom:level.minZoom,maxZoom:level.maxZoom,enabled:true}));
+        renderLevelConfigs();
+    }
+    setTaskMode(isRange?"bbox":"region");
+    showMessage("taskCreateNotice", "已载入原范围。选择新来源后创建，原任务与已有产物会保留。");
 }
 
 async function handleBulkAction(action) {
@@ -3926,8 +4069,7 @@ function defaultSelectedSourceIds(group) {
 
     return group.items
         .filter((item) => {
-            const name = String(item.name || "").toLowerCase();
-            return !name.includes("ter_w") && !name.includes("cva_w");
+            return ["img", "cia", "vec"].includes(tiandituLayer(item));
         })
         .map((item) => String(item.id));
 }

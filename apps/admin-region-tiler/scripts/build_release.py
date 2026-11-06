@@ -20,7 +20,14 @@ sys.dont_write_bytecode = True
 APP = "apps/admin-region-tiler"
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 RUNTIME_FILES = {"conf.toml", ".env.example", "README.md", "Dockerfile", "docker-compose.yml", ".dockerignore"}
-DOCS = {"docs/user-manual.md", "docs/user-manual-zh.md", "docs/password-recovery.md", "docs/region-gap-investigation-2026-09-11.md", "docs/build-and-install.md"}
+DOCS = {
+    "docs/user-manual.md", "docs/user-manual-zh.md", "docs/password-recovery.md",
+    "docs/region-gap-investigation-2026-09-11.md", "docs/build-and-install.md",
+    "docs/terrain.md", "docs/upgrade-2026-11.md", "docs/dependencies-2026-11.md",
+    "docs/assets/README.md", "docs/assets/screenshots.json",
+    "docs/assets/terrain-preview.png", "docs/assets/artifact-download.png",
+    "docs/assets/dashboard-overview.png", "docs/assets/bbox-task-creation.png",
+}
 
 
 def git(root, *args):

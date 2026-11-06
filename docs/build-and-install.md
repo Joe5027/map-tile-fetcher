@@ -37,7 +37,7 @@ python apps/admin-region-tiler/scripts/verify_package.py dist/verification/map-t
 不带 `--allow-dirty` 时工作区必须干净；正常构建从指定 Git 提交快照读取文件。
 开发脏构建只读取 Git 已跟踪文件，新文件应先加入暂存区。
 
-包包含配置示例、静态资源、区域资源、部署示例、许可证、手册、`build-info.json` 和
+包包含配置示例、静态资源（含离线 Cesium 及其许可证）、区域资源、部署示例、许可证、手册与地形配图、`build-info.json` 和
 `manifest.json`。输出目录另有 `SHA256SUMS`，不包含真实 `.env`、数据库、下载、日志和测试。
 固定源码、npm 锁文件和相同 Go/Node/Python/zlib 工具链下，排序、归档时间和 `-trimpath` 保证可重复校验和。
 `INCOMPLETE` 存在表示构建未完成，不作为可用安装包。脚本不推送、不建标签、不发布 Release。

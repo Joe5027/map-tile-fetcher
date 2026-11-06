@@ -10,11 +10,11 @@ fixtures; no user database or existing downloads are used.
 | --- | --- |
 | Portable rules, dependency review, main completion and handoff | Committed: `da33be6` |
 | Download configuration and format correctness | Committed: `32ab1ca`, `79d0184` |
-| Automatic recovery, queue slots and storage performance | Implemented; full Go suite and actual process interruption checks passed |
-| Dependency/toolchain upgrade | Locked and tested on an isolated source snapshot; native package/CI checks pending |
-| Cesium terrain generation and offline preview | Terrain codec and sampling tested; application integration in progress |
-| Source selection, paginated history and responsive interactions | Pagination and visible-page refresh tested; terrain source UI pending |
-| Manuals, reproducible images, native packages and final main checks | Pending |
+| Automatic recovery, queue slots and storage performance | `53b7af2`; full Go suite, precise staged recovery regressions and vet passed |
+| Dependency/toolchain upgrade | `9ca929a`; isolated tests and all six PR CI jobs passed, including Windows/Linux repeat packages |
+| Cesium terrain generation and offline preview | Codec, pipeline, process recovery and actual offline Cesium checks passed |
+| Source selection, paginated history and responsive interactions | Shared sources, parameters, pagination and responsive browser regressions passed |
+| Manuals, reproducible images, native packages and final main checks | Local preflight and reviewed images passed; exact platform/main state is linked below |
 
 ## Download Configuration Regressions
 
@@ -39,8 +39,8 @@ with non-default values and zero delay. The inline task summary replaces the
 creation confirmation dialog; duplicate submit events during an active request
 produce one POST. Responsive, password, preview and session regressions passed.
 
-Validation is recorded in each bilingual commit. Full upgrade acceptance,
-benchmarks and platform checks remain pending until their batches finish.
+Validation is recorded in each bilingual commit and in the acceptance evidence
+below; do not infer platform results from local checks alone.
 
 ## Terrain Core
 
@@ -52,10 +52,10 @@ No missing height is replaced with zero. `go test ./internal/terrain` and
 `go vet ./internal/terrain` passed with Go 1.27.3.
 
 The whole-world Mercator root cannot have a finite conservative horizon point.
-The encoder disables that optional culling through NaN for such coarse tiles;
-actual Cesium 1.147 multi-view validation is still required before delivery.
-Windows race verification is unavailable with the current CGO-disabled toolchain;
-Linux race verification remains part of final acceptance.
+The encoder disables that optional culling through NaN for such coarse tiles.
+Actual Cesium 1.147 multi-view validation passed, as recorded below. Windows
+race verification is unavailable with the local CGO-disabled toolchain;
+Linux race verification is part of CI acceptance.
 
 ## Task History Fixture
 
@@ -126,8 +126,103 @@ RSS are outside that fixture; whole-task measurements are reported separately.
 A second server using the same database is rejected before migration or
 scheduler recovery; worker processes retain the shared maintenance lock. The
 duplicate-server test reproduced the old concurrent startup and now passes.
-Missing/corrupt pending ZIPs return to the original run for rebuilding, keeping
-raw data, the previous artifact and unrelated valid publications. Both failure
-cases were reproduced before repair. The packing injection now waits up to 90
-seconds for an actual unfinished ZIP; the earlier 25-second deadline proved
-sensitive to slow disks and was not a product performance requirement.
+Missing/corrupt pending ZIPs are returned to the original run for rebuilding,
+preserving its raw data, the previous published artifact and unrelated valid
+publications. Both failure cases were reproduced before the repair.
+
+The packing-interruption fixture waits up to 90 seconds to reach an actual
+unfinished ZIP. A full concurrent run showed the earlier 25-second arrival
+window could expire on a slow disk; this is an injection deadline, not a
+performance requirement. The revised precise regression passes.
+
+## Terrain Integration And Browser Evidence
+
+The application persists source kind, encoding, projection, valid levels and
+attribution with child tasks. Public Terrarium defaults to level 14 and allows
+15. Terrain raster/annotation presets remain ZIP/MBTiles; vector terrain is
+labelled separately from elevation. One child terrain job cannot mix source
+encodings/URLs; invalid combinations fail before task or queue records exist.
+
+Raw PNG, derived mesh and published artifacts have separate integrity records.
+A real conversion interruption with 341 level-0–4 meshes resumed the same run,
+reused 32 previously completed meshes by modification time and made no repeat
+raw requests (341 total). Missing root data blocks only that publication; retry
+can reuse the raw baseline even when there was no first published artifact.
+
+One public root PNG was read as a bounded source-format smoke check: HTTP 200,
+106,274 bytes, decoded heights -7,527 to 5,657 m; the 65×65 sampled mesh ranged
+from -5,989.75 to 4,897 m. This verifies the source encoding, not geographic or
+engineering accuracy, and is not a large-area download.
+
+`node scripts/capture_docs.mjs` passed the complete browser/repair suite and
+generated the reviewed [documentation images](assets/README.md). Actual Cesium
+1.147 loaded 85 generated meshes through HTTP with real gzip headers. The root
+mesh had 31,395 finite vertex components; independent samples returned about
+316.247, 600 and 884.087 m. Global and three close camera views rendered meshes,
+29 local terrain requests completed, and external requests/browser errors were
+zero. Camera checks wait for new render frames after movement, not stale
+`tilesLoaded` state. This specifically validates Cesium 1.147 compatibility.
+
+The preview uses local Cesium assets, a metre-labelled elevation color ramp and
+an optional plain-color mode. It does not request ion or online imagery. Tests
+cover 390/768/1440 px, real parameter submission, zero creation confirmation
+dialogs, page visibility, focus/selection/menu preservation, pagination,
+password/session behavior and task actions. Synthetic screenshot terrain is
+explicitly labelled and source file hashes accompany the captured images.
+
+## End-To-End Download Fixture Comparison
+
+Command: `python apps/admin-region-tiler/scripts/benchmark_download.py --ref
+450f40d --ref 53b7af2 --output tmp/performance-final.json`. Each revision is
+extracted separately. The fixture is 256 one-pixel PNGs, four download workers,
+zero delay and loopback HTTP. The old revision used Go 1.25.3 and the new one
+Go 1.27.3, so this compares the delivered implementations/toolchains together.
+
+| Metric | Old ZIP file tree | New ZIP file tree | Old MBTiles | New MBTiles |
+| --- | ---: | ---: | ---: | ---: |
+| Total download engine time, ms | 180.463 | 429.230 | 507.320 | 71.733 |
+| First committed tile, ms | 20.214 | 30.900 | 50.465 | 70.608 |
+| Requests / TCP connections | 256 / 256 | 256 / 4 | 256 / 256 | 256 / 4 |
+| Sampled peak Go heap, bytes | 2,900,832 | 2,797,064 | 4,470,992 | 1,984,856 |
+| Sampled peak output size, bytes | 17,408 | 17,408 | 57,880 | 45,056 |
+
+The MBTiles engine took about 86% less time on this fixture, with a later first
+durable commit because writes are batched. File-tree writes were slower: unique
+temporary files and atomic replacement add filesystem operations to preserve
+restart correctness. This cost is retained deliberately; there is no claim
+that every ZIP download became faster. Tiny files emphasize filesystem cost
+and loopback requests remove real network latency. Timings are one paired run,
+not a statistical throughput guarantee; earlier exploratory runs had the same
+direction but different magnitudes.
+
+Sampling occurs every 10 ms and can miss short peaks. It measures Go heap, not
+OS RSS, and output file sizes, not total filesystem allocation. ZIP compression
+is excluded from this engine fixture; the separate 832-file packing interruption
+case validates packaging and progress-write behavior. The 256-record storage
+microbenchmark separately compares 256 transactions with one bounded batch.
+
+## Acceptance Evidence And Limits
+
+The integrated local release preflight passed with the pinned Node 24.22.2:
+18 Python fixtures, `go test ./...` (main package 107.054 s), all JavaScript
+syntax/rendering checks, complete browser smoke/repair, sensitive-value scan
+and generated-file scan. Separate `go vet ./...`, `go mod verify`, three release
+builder contract tests, documentation checks and the workspace AI audit passed.
+Screenshot hashes match the five rendered frontend source files. Native packages
+include the terrain guide, its reviewed images and Cesium license/credits.
+
+The [PR #8 checks](https://github.com/Joe5027/map-tile-fetcher/pull/8/checks)
+and [Validate workflow runs](https://github.com/Joe5027/map-tile-fetcher/actions/workflows/validate.yml)
+are the authoritative evidence for each exact Git revision: Linux release
+preflight/race/vet, Windows/Linux region tests, repeat native packages and Linux
+Docker identity. Read actual `main` and remote refs before delivery instead of
+using a cached or permanently embedded transient branch list. The dependency
+baseline `9ca929a` already passed all six jobs in run `42211344918`.
+
+The local Windows toolchain cannot run Go race with CGO disabled; Linux CI owns
+that check. OS-RSS and full operating-system power-loss behavior were not
+measured. Synthetic terrain fixtures and one public root PNG do not validate
+real-world vertical accuracy, every external provider or other terrain engines.
+No production deployment, user database migration/replacement or wide-area real
+download was performed. Existing authoritative-boundary gaps are unchanged and
+remain documented in the region investigation.

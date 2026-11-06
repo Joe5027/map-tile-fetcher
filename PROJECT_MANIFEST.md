@@ -5,7 +5,7 @@
 1. `apps/admin-region-tiler`
    - 原交接目录：`02-tiler-master`
    - 当前定位：统一 Go Web 地图瓦片下载器
-   - 内容：支持范围框选下载、行政区划 GeoJSON 下载、多地图源、多任务/子任务、计划任务、SQLite 控制数据库、失败记录、产物下载、Docker/服务部署。
+   - 内容：行政区/矩形/多边形共用地图来源，支持 ZIP/MBTiles 与 Terrarium → Cesium 地形、异常续传、暂停排队、分页历史、SQLite 控制数据库、累计产物与 Docker/原生安装包。
 
 已退休：
 
@@ -34,4 +34,6 @@
 当前状态：
 
 - 统一实现方向已落到 Go 应用中。
+- 高程、恢复与性能升级状态及实际验证见 [升级记录](docs/upgrade-2026-11.md)。
+- 正式脱敏文档图片位于 `docs/assets/`，由本地夹具生成；不引入运行截图或用户数据。
 - 后续清理和演进见 `docs/merge-plan.md`。

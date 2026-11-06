@@ -11,4 +11,7 @@ if (target !== vendor + sep + "cesium") throw new Error("Unexpected asset direct
 await mkdir(vendor, {recursive:true});
 await rm(target, {recursive:true,force:true});
 await cp(source, target, {recursive:true});
+for (const name of ["LICENSE.md", "ThirdParty.json", "ThirdParty.extra.json"]) {
+  await cp(resolve(app, "node_modules/cesium", name), resolve(target, name));
+}
 console.log("Prepared local Cesium assets for offline preview.");

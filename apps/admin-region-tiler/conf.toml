@@ -142,12 +142,43 @@
 
 [[tilemaps]]
   id = 10
-  name = "Mapbox地形图"
+  name = "Mapbox地形等高线（矢量，非高程DEM）"
   url = "https://api.mapbox.com/v4/mapbox.mapbox-terrain-v2/{z}/{x}/{y}.vector.pbf?sku=YOUR_MAPBOX_SKU&access_token=YOUR_MAPBOX_TOKEN"
   format = "pbf"
   schema = "xyz"
   min_zoom = 0
   max_zoom = 14
+  metadata = { kind = "vector", min_zoom = 0, max_zoom = 14 }
+
+[[tilemaps]]
+  id = 11
+  name = "天地图地形底图 (ter_w)"
+  url = "https://t0.tianditu.gov.cn/DataServer?T=ter_w&x={x}&y={y}&l={z}&tk=YOUR_TIANDITU_TOKEN"
+  format = "png"
+  schema = "xyz"
+  min_zoom = 0
+  max_zoom = 14
+  metadata = { kind = "raster", min_zoom = 0, max_zoom = 14 }
+
+[[tilemaps]]
+  id = 12
+  name = "天地图地形注记 (cta_w)"
+  url = "https://t0.tianditu.gov.cn/DataServer?T=cta_w&x={x}&y={y}&l={z}&tk=YOUR_TIANDITU_TOKEN"
+  format = "png"
+  schema = "xyz"
+  min_zoom = 0
+  max_zoom = 14
+  metadata = { kind = "raster", min_zoom = 0, max_zoom = 14 }
+
+[[tilemaps]]
+  id = 13
+  name = "公开高程 Terrarium（Cesium）"
+  url = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"
+  format = "png"
+  schema = "xyz"
+  min_zoom = 0
+  max_zoom = 15
+  metadata = { kind = "elevation", encoding = "terrarium", projection = "EPSG:3857", min_zoom = 0, max_zoom = 15, default_zoom = 14, attribution = "Mapzen / Tilezen Terrain Tiles; https://github.com/tilezen/joerd/blob/master/docs/attribution.md", vertical_datum = "Source-dependent; no vertical-datum transformation. Visualization only." }
 
 # 多级下载区域配置（全球-中国-省-市-区）
 [[download_regions]]
