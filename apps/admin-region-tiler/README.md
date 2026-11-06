@@ -117,6 +117,11 @@ token 不要写入 Git，可保存在本地配置、环境变量或部署平台�
 
 ## 配置地图源
 
+下载默认复用 HTTP 连接。只有确需断开连接的来源才在 `source_policies.headers`
+中配置 `Connection = "close"`。`max_retries = 0` 禁用单次请求的额外尝试；
+`retry_passes` 独立控制额外补抓次数。来源的 `retry_statuses` 同时用于这两条重试路径。
+PNG/JPEG/WebP 图片会校验格式；WebP 产物保留原始字节。
+
 地图源示例在 `conf.toml`。URL 中的瓦片坐标使用 `{x}`、`{y}`、`{z}` 占位：
 
 ```toml

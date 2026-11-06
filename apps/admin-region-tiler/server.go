@@ -205,13 +205,20 @@ type TiandituPreviewTokenRequest struct {
 }
 
 type TileMapConfig struct {
-	ID      int    `json:"id"`
-	Name    string `json:"name"`
-	URL     string `json:"url"`
-	Format  string `json:"format"`
-	Schema  string `json:"schema"`
-	MinZoom int    `json:"min_zoom"`
-	MaxZoom int    `json:"max_zoom"`
+	ID          int               `json:"id"`
+	Name        string            `json:"name"`
+	URL         string            `json:"url"`
+	Format      string            `json:"format"`
+	Schema      string            `json:"schema"`
+	MinZoom     int               `json:"min_zoom"`
+	MaxZoom     int               `json:"max_zoom"`
+	FetchPolicy SourceFetchLimits `json:"fetch_policy"`
+}
+
+// Expose effective limits without exposing source headers or proxy credentials.
+type SourceFetchLimits struct {
+	WorkerCount int `json:"worker_count"`
+	BaseDelayMS int `json:"base_delay_ms"`
 }
 
 type DownloadRegionConfig struct {
@@ -1826,14 +1833,16 @@ func getConfiguredMaps(c *gin.Context) {
 	}
 
 	for _, tm := range configTileMaps {
+		policy := defaultFetchPolicy(tm.URL, tm.Name)
 		tileMaps = append(tileMaps, TileMapConfig{
-			ID:      tm.ID,
-			Name:    tm.Name,
-			URL:     tm.URL,
-			Format:  tm.Format,
-			Schema:  tm.Schema,
-			MinZoom: tm.MinZoom,
-			MaxZoom: tm.MaxZoom,
+			ID:          tm.ID,
+			Name:        tm.Name,
+			URL:         tm.URL,
+			Format:      tm.Format,
+			Schema:      tm.Schema,
+			MinZoom:     tm.MinZoom,
+			MaxZoom:     tm.MaxZoom,
+			FetchPolicy: SourceFetchLimits{WorkerCount: policy.WorkerCount, BaseDelayMS: policy.BaseDelayMS},
 		})
 	}
 	c.JSON(http.StatusOK, tileMaps)

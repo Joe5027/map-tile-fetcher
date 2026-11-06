@@ -346,7 +346,7 @@ func buildTaskFromRequest(req CreateTaskRequest) (*Task, error) {
 		RetryPasses:    maxInt(viper.GetInt("task.retry_passes"), 0),
 		BufferSize:     firstPositive(viper.GetInt("task.mergebuf"), 32),
 		OutputFormat:   outputFormatFromRequest(req),
-		MaxRetries:     firstPositive(viper.GetInt("task.max_retries"), 2),
+		MaxRetries:     configuredNonNegative("task.max_retries", 2),
 		RequestTTL:     time.Duration(firstPositive(viper.GetInt("task.request_timeout_seconds"), 20)) * time.Second,
 		RetryBackoff:   time.Duration(firstPositive(viper.GetInt("task.retry_backoff_ms"), 300)) * time.Millisecond,
 		SlowBackoff:    time.Duration(firstPositive(viper.GetInt("task.slow_backoff_ms"), 1000)) * time.Millisecond,
@@ -724,7 +724,7 @@ func (task *Task) runFetchers() {
 					if errors.Is(err, context.Canceled) {
 						return
 					}
-					retryable := isRetryable(err)
+					retryable := task.isRetryable(err)
 					if retryable && job.Pass < task.retryPasses {
 						job.Pass++
 						continue
@@ -981,7 +981,6 @@ func (task *Task) nextProxy() string {
 }
 
 func (task *Task) applyRequestHeaders(req *http.Request) {
-	req.Close = true
 	if strings.TrimSpace(task.policy.UserAgent) != "" {
 		req.Header.Set("User-Agent", task.policy.UserAgent)
 	}
@@ -996,9 +995,7 @@ func (task *Task) applyRequestHeaders(req *http.Request) {
 			req.Header.Set(key, value)
 		}
 	}
-	if req.Header.Get("Connection") == "" {
-		req.Header.Set("Connection", "close")
-	}
+	req.Close = strings.EqualFold(req.Header.Get("Connection"), "close")
 }
 
 func (task *Task) fetchTile(mt maptile.Tile, url string) ([]byte, error) {
@@ -1039,7 +1036,7 @@ func (task *Task) fetchTile(mt maptile.Tile, url string) ([]byte, error) {
 			}
 		}
 
-		if !isRetryable(lastErr) || attempt == task.maxRetries {
+		if !task.isRetryable(lastErr) || attempt == task.maxRetries {
 			break
 		}
 
@@ -1273,6 +1270,21 @@ func prepareTileURL(t maptile.Tile, url string) string {
 	url = strings.ReplaceAll(url, "{-y}", strconv.Itoa(maxY-int(t.Y)))
 	url = strings.ReplaceAll(url, "{z}", strconv.Itoa(int(t.Z)))
 	return url
+}
+
+func configuredNonNegative(key string, fallback int) int {
+	if !viper.IsSet(key) {
+		return fallback
+	}
+	return maxInt(viper.GetInt(key), 0)
+}
+
+func (task *Task) isRetryable(err error) bool {
+	if status := extractHTTPStatusCode(err); status > 0 && task.policy.RetryStatuses != nil {
+		_, ok := task.policy.RetryStatuses[status]
+		return ok
+	}
+	return isRetryable(err)
 }
 
 func isRetryable(err error) bool {

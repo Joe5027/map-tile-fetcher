@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	_ "golang.org/x/image/webp"
+
 	"github.com/paulmach/orb"
 	"github.com/paulmach/orb/geojson"
 )
