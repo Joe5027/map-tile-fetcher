@@ -226,3 +226,20 @@ real-world vertical accuracy, every external provider or other terrain engines.
 No production deployment, user database migration/replacement or wide-area real
 download was performed. Existing authoritative-boundary gaps are unchanged and
 remain documented in the region investigation.
+
+## Main Integration Audit
+
+PR #8 candidate `c4a8829` passed all six jobs in both PR run `42216034887`
+and push run `42216027791`. It was merged as `f0a2865`; the resulting tree
+`db9b02728254de5edd83d17d337de746c2659749` exactly matches the checked PR
+merge candidate. The local Windows package passed manifest, CLI/API identity,
+login, asset and worker/download verification (3,629 manifest files).
+
+The merge message supplied through the API had only two bullets in each
+language, while the repository validator requires three. Local verification of
+`f0a2865` detected that metadata error. This follow-up records the audit and
+adds mandatory validation of the exact proposed merge message before the API
+call. It changes no application code or validation rule. The historical merge
+message is retained rather than rewriting protected main; a new compliant
+commit and merge receive their own checks. Final exact-revision workflow state
+remains available through the links above.

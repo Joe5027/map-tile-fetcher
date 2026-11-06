@@ -5,6 +5,7 @@
 - The only runtime is `apps/admin-region-tiler`: Go 1.27.3, SQLite and a static Leaflet/Cesium frontend, Apache License 2.0. Retired .NET code stays in [migration history](range-migration.md).
 - The November upgrade implements durable restart recovery, pause capacity release, batched MBTiles storage, exact coordinate budgets, paginated history and Terrarium-to-Cesium offline terrain. [PR #8](https://github.com/Joe5027/map-tile-fetcher/pull/8) and [upgrade evidence](upgrade-2026-11.md) track the implementation and checks.
 - Main requires a PR and the `Commit Message` and `Admin Region Tiler` checks, including administrators. Main is the only long-term branch; read actual Git refs and PR/workflow state for transient delivery status rather than relying on an old branch inventory in this document.
+- PR #8's application tree was integrated in `f0a2865` and matches the checked candidate. Its historical merge message missed the validator's three-bullet minimum; the follow-up audit preserves history and requires validating the exact remote merge message before submission. See the upgrade record for evidence.
 - No production deployment, user database replacement or broad real-provider download is included. Existing region gaps remain in [boundary investigation](region-gap-investigation-2026-09-11.md).
 
 ## Decisions

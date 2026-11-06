@@ -44,8 +44,8 @@ Keep `apps/admin-region-tiler` as the base for:
 
 ## Branch Convergence
 
-`main` is the only long-term branch. Source convergence on 2026-11-06 is in
-`450f40d`; current implementation/validation status belongs in
+`main` is the only long-term branch. The pre-upgrade baseline was `450f40d`;
+current implementation/validation status belongs in
 [the handoff](long-term-memory.md).
 
 1. Inspect status, local branches, and worktrees. Within granted remote access,
@@ -57,6 +57,11 @@ Keep `apps/admin-region-tiler` as the base for:
 3. Follow current remote protection and required checks. Use a checked PR head
    when required and a bilingual merge message; do not bypass protection or
    assume historical branch settings still apply.
+   Before calling a remote merge API, write its exact proposed title and body
+   to a temporary file and run `node scripts/validate_commit_message.mjs --file
+   <file>`. Both language sections need at least three bullet lines. Remote
+   merge APIs do not invoke the local commit hook; branch checks alone cannot
+   validate a message that is supplied only at merge time.
 4. Verify the resulting `main` checks, synchronize local `main`, and detach
    integrated branches from their worktrees before deleting them locally and
    remotely. Preserve user changes and history; never force-delete unmerged work.
