@@ -74,6 +74,9 @@ Set `REGION_PYTHON` to that isolated interpreter installed with
 See [region tooling](region-maintenance.md) and [build/install validation](build-and-install.md).
 Windows/Linux package CI builds twice, compares checksums, extracts in a fresh
 directory and verifies login, resources, version and a real loopback download.
+The application CI job allows 30 minutes for browser installation, all nine
+real workflows and race/vet. The former 20-minute budget cancelled a healthy
+run after an observed eight-minute browser installation; no cases are skipped.
 
 The Go suite includes `TestAPILifecycle`, which builds the real app binary and
 exercises HTTP, the scheduler, SQLite and ordinary worker processes against a

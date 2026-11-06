@@ -329,6 +329,14 @@ There are no outstanding implementation or local acceptance items in the plan
 matrix; exact-revision CI, native packages and branch convergence remain the
 delivery gates executed after a candidate commit exists.
 
+Candidate `603fd84` passed all six jobs in push run `42226081819`, including
+Linux race (main package 116.004 s), both repeated native packages and Docker.
+PR run `42226090169` spent roughly eight minutes installing the browser;
+its Go tests and eight real browser workflows passed before the job's old
+20-minute limit cancelled the ninth. The application job now allows 30 minutes
+for the measured installation + full preflight + race workload. Every check
+and all nine cases remain required; this changes only the CI time budget.
+
 The [PR #8 checks](https://github.com/Joe5027/map-tile-fetcher/pull/8/checks)
 and [Validate workflow runs](https://github.com/Joe5027/map-tile-fetcher/actions/workflows/validate.yml)
 are the authoritative evidence for each exact Git revision: Linux release

@@ -45,7 +45,9 @@ jobs:
     name: Admin Region Tiler
     needs: commit-message
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Nine real browser workflows plus race checks; browser installation has
+    # taken eight minutes on a hosted runner before the checks even start.
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: apps/admin-region-tiler
