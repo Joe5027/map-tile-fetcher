@@ -58,6 +58,20 @@ func normalizedSourceMetadata(rawURL string, metadata *SourceMetadata) *SourceMe
 	return &copy
 }
 
+// Source labels historically defaulted to their URL. Clean URL-shaped values
+// for display/export while preserving a caller's ordinary descriptive name.
+// The actual download URL remains unchanged in the task record.
+func publicSourceLabel(value string) string {
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return value
+	}
+	parsed.User = nil
+	parsed.RawQuery, parsed.Fragment, parsed.RawFragment = "", "", ""
+	parsed.ForceQuery = false
+	return parsed.String()
+}
+
 func cloneLevelsWithSource(levels []LevelConfig, source *SourceMetadata) []LevelConfig {
 	result := append([]LevelConfig(nil), levels...)
 	for i := range result {
@@ -471,13 +485,7 @@ func cleanTerrainPartials(directory string) error {
 
 func terrainManifestFromCatalogue(plan *TaskRecord, task *Task, db *sql.DB) (terrain.Manifest, [4]float64, error) {
 	metadata := task.TileMap.Metadata
-	publicURL := task.TileMap.URL
-	if parsed, err := url.Parse(publicURL); err == nil {
-		parsed.RawQuery = ""
-		parsed.User = nil
-		publicURL = parsed.String()
-	}
-	source := terrain.SourceMetadata{Name: plan.SourceName, URL: publicURL, Encoding: "Terrarium", RetrievedAt: time.Now().UTC().Format(time.RFC3339), Attribution: metadata.Attribution, VerticalDatum: metadata.VerticalDatum}
+	source := terrain.SourceMetadata{Name: publicSourceLabel(plan.SourceName), URL: publicSourceLabel(task.TileMap.URL), Encoding: "Terrarium", RetrievedAt: time.Now().UTC().Format(time.RFC3339), Attribution: metadata.Attribution, VerticalDatum: metadata.VerticalDatum}
 	manifest, err := terrain.BuildManifest(plan.Name, []terrain.TileID{{}}, source)
 	var bounds [4]float64
 	if err != nil {

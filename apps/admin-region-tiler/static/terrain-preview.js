@@ -19,6 +19,8 @@
     const provider = await Cesium.CesiumTerrainProvider.fromUrl(info.url);
     const viewer = new Cesium.Viewer("terrain-viewer", {
       terrainProvider: provider, baseLayer: false, baseLayerPicker: false,
+      // Terrain has no time-dependent layers; camera and tile changes request frames.
+      requestRenderMode: true, maximumRenderTimeChange: Infinity,
       geocoder: false, animation: false, timeline: false, homeButton: false,
       sceneModePicker: false, navigationHelpButton: false, fullscreenButton: false,
       infoBox: false, selectionIndicator: false
@@ -39,6 +41,7 @@
       colorButton.setAttribute("aria-pressed", String(enabled));
       colorButton.textContent = `高程设色：${enabled ? "开" : "关"}`;
       document.getElementById("elevation-legend").hidden = !enabled;
+      viewer.scene.requestRender();
     });
     viewer.scene.screenSpaceCameraController.minimumZoomDistance = 30;
     const [west, south, east, north] = info.bounds;

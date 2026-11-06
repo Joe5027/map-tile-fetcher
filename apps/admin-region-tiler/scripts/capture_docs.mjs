@@ -36,6 +36,7 @@ export async function captureMainScreenshots(page) {
     cachedTasks = [task]; taskPageTotal = 1; taskPageCounts = { all: 1, completed: 1 };
     expandedGroupTasks.clear(); setTaskMode("tasks"); await loadTasks(); renderTaskList(cachedTasks);
   }, task);
+  await settleCaptureMode(page, "tasks");
   await page.screenshot({ path: join(assetsDir, "dashboard-overview.png"), fullPage: true });
   await page.locator('[data-group-task-id="docs-terrain"] > summary').click();
   await page.waitForFunction(() => taskAreaPreviewLayer !== null);
@@ -49,7 +50,26 @@ export async function captureMainScreenshots(page) {
   await page.locator("input[name='rangeMinZoom']").fill("14");
   await page.locator("input[name='rangeMaxZoom']").fill("14");
   await page.evaluate(() => { hideMessage("taskCreateNotice"); updateRangeEstimate(); });
+  await settleCaptureMode(page, "bbox");
+  const modeState = await page.evaluate(() => ({ mode: taskMode,
+    buttons: [...document.querySelectorAll("[data-task-mode]")].map(button => ({ mode: button.dataset.taskMode,
+      pressed: button.getAttribute("aria-pressed"), active: button.classList.contains("is-active"), color: getComputedStyle(button).color })),
+    formHidden: document.getElementById("rangeModePanel").classList.contains("is-hidden") }));
+  console.log(`Capture bbox mode state: ${JSON.stringify(modeState)}`);
+  assert.equal(modeState.mode, "bbox", "capture must use the real bbox mode");
+  assert.deepEqual(modeState.buttons.filter(button => button.active).map(button => button.mode), ["bbox"], "only the bbox tab can be active in the creation screenshot");
+  assert.equal(modeState.buttons.find(button => button.mode === "bbox").color, "rgb(37, 99, 235)", "active bbox color must finish its actual CSS transition");
+  assert.equal(modeState.buttons.find(button => button.mode === "tasks").color, "rgb(100, 116, 139)", "inactive tasks color must finish its actual CSS transition");
+  assert(!modeState.formHidden, "bbox creation form must be visible");
   await page.screenshot({ path: join(assetsDir, "bbox-task-creation.png"), fullPage: true });
+}
+
+async function settleCaptureMode(page, mode) {
+  // Mode classes update immediately, but the production buttons animate color
+  // for 180ms. Wait for the real transition instead of capturing the old color.
+  await page.evaluate(() => new Promise(resolveFrame => requestAnimationFrame(() => requestAnimationFrame(resolveFrame))));
+  await page.waitForFunction(expected => taskMode === expected && [...document.querySelectorAll("[data-task-mode]")]
+    .every(button => button.getAnimations().every(animation => animation.playState === "finished" || animation.playState === "idle")), mode);
 }
 
 export async function runTerrainPreviewChecks(context, baseURL, { capture = false } = {}) {
@@ -95,6 +115,16 @@ export async function runTerrainPreviewChecks(context, baseURL, { capture = fals
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.goto(`${baseURL}/static/terrain-preview.html?task=fixture-terrain`, { waitUntil: "networkidle" });
     await page.waitForFunction(() => window.terrainPreview?.ready, null, { timeout: 60000 });
+    await page.evaluate(() => {
+      window.terrainRenderedFrames=0;
+      window.terrainLastRenderedAt=performance.now();
+      const scene=terrainPreview.viewer.scene;
+      scene.postRender.addEventListener(()=>{
+        terrainRenderedFrames++;
+        window.terrainLastRenderedAt=performance.now();
+        window.terrainRenderedPixel=Array.from(scene.context.readPixels({x:scene.drawingBufferWidth>>1,y:scene.drawingBufferHeight>>1,width:1,height:1}));
+      });
+    });
     const geometry = await page.evaluate(async () => {
       const { provider } = window.terrainPreview;
       const root = await provider.requestTileGeometry(0, 0, 0);
@@ -108,11 +138,18 @@ export async function runTerrainPreviewChecks(context, baseURL, { capture = fals
     assert(new Set(geometry.heights.map(Math.round)).size === 3, "separated longitude samples must retain different source elevations");
     const views = [];
     for (const longitude of [null, -120, 0, 120]) {
-      if (longitude === null) await page.locator("#terrain-world").click();
-      else await page.evaluate(lon => terrainPreview.viewer.camera.setView({ destination: Cesium.Cartesian3.fromDegrees(lon, 35, 1800000) }), longitude);
+      if (longitude === null) {
+        await page.locator("#terrain-world").evaluate(button=>button.addEventListener("click",()=>{window.terrainActionStartFrames=terrainRenderedFrames;},{capture:true,once:true}));
+        await page.locator("#terrain-world").click();
+      } else await page.evaluate(lon => {
+        window.terrainActionStartFrames=terrainRenderedFrames;
+        terrainPreview.viewer.camera.setView({ destination: Cesium.Cartesian3.fromDegrees(lon, 35, 1800000) });
+      }, longitude);
       await settleTerrain(page);
+      await page.waitForFunction(()=>terrainRenderedFrames>terrainActionStartFrames);
       const visible = await page.evaluate(() => {
         const scene = terrainPreview.viewer.scene;
+        scene.requestRender();
         scene.render();
         const tiles = scene.globe._surface._tilesToRender;
         const pixels = scene.context.readPixels({ x: scene.drawingBufferWidth >> 1, y: scene.drawingBufferHeight >> 1, width: 1, height: 1 });
@@ -121,6 +158,14 @@ export async function runTerrainPreviewChecks(context, baseURL, { capture = fals
       assert(visible.meshTiles > 0 && visible.centerPixel.slice(0, 3).some(value => value > 30), `camera ${longitude} must render actual visible terrain meshes`);
       views.push({ longitude, ...visible });
     }
+    await page.waitForFunction(()=>terrainPreview.viewer.scene.globe.tilesLoaded && !terrainPreview.viewer.scene._renderRequested
+      && performance.now()-terrainLastRenderedAt>=200);
+    const idleFrames=await page.evaluate(async()=>{
+      const before=terrainRenderedFrames;
+      await new Promise(resolve=>setTimeout(resolve,500));
+      return {count:terrainRenderedFrames-before,requestRenderMode:terrainPreview.viewer.scene.requestRenderMode};
+    });
+    assert(idleFrames.requestRenderMode && idleFrames.count<=1, `idle terrain must not render continuously: ${JSON.stringify(idleFrames)}`);
     for (const width of [390, 768, 1440]) {
       await page.setViewportSize({ width, height: 1000 });
       const bounds = await page.locator(".toolbar").boundingBox();
@@ -131,10 +176,21 @@ export async function runTerrainPreviewChecks(context, baseURL, { capture = fals
     assert.deepEqual(errors, [], "Cesium must have no console or page errors");
     assert.deepEqual(external, [], "offline terrain preview must not contact an external service");
     assert(await page.locator("#terrain-color").getAttribute("aria-pressed") === "true", "elevation coloring should be enabled by default");
+    await settleTerrain(page);
+    const coloredPixel=await page.evaluate(()=>terrainRenderedPixel);
+    await page.locator("#terrain-color").evaluate(button=>button.addEventListener("click",()=>{window.terrainActionStartFrames=terrainRenderedFrames;},{capture:true,once:true}));
     await page.locator("#terrain-color").click();
+    await page.waitForFunction(()=>terrainRenderedFrames>terrainActionStartFrames);
     assert(await page.locator("#elevation-legend").isHidden(), "plain-color mode should hide the elevation legend");
+    assert(await page.evaluate(()=>terrainPreview.viewer.scene.globe.material===undefined),"plain-color mode must remove the height material");
+    const plainPixel=await page.evaluate(()=>terrainRenderedPixel);
+    assert(coloredPixel.slice(0,3).some((value,i)=>Math.abs(value-plainPixel[i])>=5),`height color toggle must redraw visibly different pixels: ${JSON.stringify({coloredPixel,plainPixel})}`);
+    await page.locator("#terrain-color").evaluate(button=>button.addEventListener("click",()=>{window.terrainActionStartFrames=terrainRenderedFrames;},{capture:true,once:true}));
     await page.locator("#terrain-color").click();
+    await page.waitForFunction(()=>terrainRenderedFrames>terrainActionStartFrames);
     assert(await page.evaluate(()=>terrainPreview.viewer.scene.globe.material.type === "ElevationRamp"), "coloring toggle should restore the height material");
+    const restoredPixel=await page.evaluate(()=>terrainRenderedPixel);
+    assert(coloredPixel.slice(0,3).every((value,i)=>Math.abs(value-restoredPixel[i])<=2),"restored height material must restore rendered pixels");
     if (capture) {
       await mkdir(assetsDir, { recursive: true });
       await page.evaluate(() => {
@@ -144,7 +200,7 @@ export async function runTerrainPreviewChecks(context, baseURL, { capture = fals
       await settleTerrain(page);
       await page.screenshot({ path: join(assetsDir, "terrain-preview.png") });
     }
-    return { ...geometry, tileRequests: requestedTiles.size, views, externalRequests: external.length, responsiveWidths: [390, 768, 1440] };
+    return { ...geometry, tileRequests: requestedTiles.size, views, idleFrames:idleFrames.count, colorPixels:{colored:coloredPixel,plain:plainPixel,restored:restoredPixel}, externalRequests: external.length, responsiveWidths: [390, 768, 1440] };
   } finally {
     await page.close();
     if (fixtureServer) await new Promise(resolveClose => { fixtureServer.close(resolveClose); fixtureServer.closeAllConnections(); });
@@ -173,7 +229,7 @@ export async function writeScreenshotManifest(terrain) {
   await writeFile(join(assetsDir, "screenshots.json"), JSON.stringify({
     generatedAt: new Date().toISOString(), sourceCommit: head.stdout.trim(), workingTreeDirty: Boolean(status.stdout.trim()),
     sourceHashes,
-    reproduce: "cd apps/admin-region-tiler && npm ci && npx playwright install chromium && node scripts/capture_docs.mjs",
+    reproduce: "cd apps/admin-region-tiler && npm ci && npx playwright install --only-shell chromium && node scripts/capture_docs.mjs",
     versions: { playwright: packages.devDependencies.playwright, cesium: packages.dependencies.cesium }, viewport: { width: 1440, height: 1000 },
     fixture: "本地合成高程夹具，非真实地区 DEM。85 generated quantized-mesh tiles (z0–3); base=600+400*sin(lonRadians)*cos(latRadians), local peaks=2000*exp(-((lonDegrees-115)^2+(latDegrees-35)^2)/3)*sin((lonDegrees-112)*PI/2)^2. No external terrain or imagery requests.",
     images: ["dashboard-overview.png", "bbox-task-creation.png", "artifact-download.png", "terrain-preview.png"], verification: terrain

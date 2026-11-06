@@ -2,6 +2,7 @@ name: Validate
 
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -45,7 +46,9 @@ jobs:
     name: Admin Region Tiler
     needs: commit-message
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Nine real browser workflows plus race checks; browser installation has
+    # taken eight minutes on a hosted runner before the checks even start.
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: apps/admin-region-tiler
@@ -64,15 +67,17 @@ jobs:
         uses: actions/setup-node@v7.1.0
         with:
           node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: apps/admin-region-tiler/package-lock.json
 
       - name: Install browser automation dependency
         run: |
           npm ci --no-audit --no-fund
-          npx playwright install --with-deps chromium
+          npx playwright install --with-deps --only-shell chromium
 
       - uses: actions/setup-python@v7.1.0
         with:
-          python-version: "3.13"
+          python-version-file: .python-version
 
       - name: Install isolated region tooling
         run: |
@@ -105,7 +110,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-python@v7.1.0
         with:
-          python-version: "3.13"
+          python-version-file: .python-version
       - name: Test locked environment
         run: |
           python -m venv .venv-region
@@ -142,9 +147,11 @@ jobs:
       - uses: actions/setup-node@v7.1.0
         with:
           node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: apps/admin-region-tiler/package-lock.json
       - uses: actions/setup-python@v7.1.0
         with:
-          python-version: "3.13"
+          python-version-file: .python-version
       - name: Build twice and verify native package
         run: |
           python -B scripts/build_release.py --ref HEAD --target '${{ matrix.target }}' --output-dir ../../dist/package-a

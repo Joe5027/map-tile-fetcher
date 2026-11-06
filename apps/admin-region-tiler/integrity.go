@@ -143,6 +143,14 @@ func (r *tileOutputReader) Close() {
 }
 
 func (r *tileOutputReader) read(tile maptile.Tile) ([]byte, error) {
+	return r.readTile(tile, false)
+}
+
+func (r *tileOutputReader) readValidated(tile maptile.Tile) ([]byte, error) {
+	return r.readTile(tile, true)
+}
+
+func (r *tileOutputReader) readTile(tile maptile.Tile, validate bool) ([]byte, error) {
 	y := tile.Y
 	if r.db != nil || strings.EqualFold(r.schema, "tms") {
 		y = uint32(1<<tile.Z) - 1 - y
@@ -159,7 +167,10 @@ func (r *tileOutputReader) read(tile maptile.Tile) ([]byte, error) {
 				file.Close()
 			}
 		}
-		if err == nil && (r.archive == nil || validateTileResponse(data, r.format) == nil) {
+		if err == nil && (validate || r.archive != nil) {
+			err = validateTileResponse(data, r.format)
+		}
+		if err == nil {
 			return data, nil
 		}
 		if r.archive == nil && r.db == nil {
@@ -169,6 +180,9 @@ func (r *tileOutputReader) read(tile maptile.Tile) ([]byte, error) {
 	if r.db != nil {
 		var data []byte
 		err := r.db.QueryRow(`SELECT tile_data FROM tiles WHERE zoom_level=? AND tile_column=? AND tile_row=?`, tile.Z, tile.X, y).Scan(&data)
+		if err == nil && validate {
+			err = validateTileResponse(data, r.format)
+		}
 		return data, err
 	}
 	var source io.ReadCloser
@@ -190,7 +204,11 @@ func (r *tileOutputReader) read(tile maptile.Tile) ([]byte, error) {
 		return nil, err
 	}
 	defer source.Close()
-	return readLimitedResponseBody(source, maxTileResponseBytes)
+	data, err := readLimitedResponseBody(source, maxTileResponseBytes)
+	if err == nil && validate {
+		err = validateTileResponse(data, r.format)
+	}
+	return data, err
 }
 
 // Coverage is recorded on disk, and only publication makes matching failures
@@ -234,10 +252,7 @@ func (s *SQLiteStore) inspectOutput(plan *TaskRecord, task *Task, run *TaskRunRe
 	}
 	err = task.forEachExpected(func(job TileJob) error {
 		state.Expected++
-		data, err := reader.read(job.Tile)
-		if err == nil {
-			err = validateTileResponse(data, plan.Format)
-		}
+		_, err := reader.readValidated(job.Tile)
 		if err != nil {
 			state.Missing++
 			return nil
@@ -274,6 +289,22 @@ func (s *SQLiteStore) validateRetryBaseline(plan *TaskRecord) (*TaskRunRecord, e
 }
 
 func (s *SQLiteStore) validateRetryBaselineWithTask(plan *TaskRecord, task *Task) (*TaskRunRecord, error) {
+	run, reader, err := s.openRetryBaseline(plan, task)
+	if err != nil {
+		return nil, err
+	}
+	var read func(maptile.Tile) ([]byte, error)
+	if reader != nil {
+		defer reader.Close()
+		read = reader.readValidated
+	}
+	if err := s.walkRetryBaseline(plan, task, read, nil); err != nil {
+		return nil, err
+	}
+	return run, nil
+}
+
+func (s *SQLiteStore) openRetryBaseline(plan *TaskRecord, task *Task) (*TaskRunRecord, *tileOutputReader, error) {
 	run, err := s.publishedRun(plan.ID)
 	if errors.Is(err, sql.ErrNoRows) && task.outformat == "cesium" {
 		// A missing terrain root can prevent publication while other raw DEM
@@ -295,19 +326,26 @@ func (s *SQLiteStore) validateRetryBaselineWithTask(plan *TaskRecord, task *Task
 		// every expected coordinate before allowing a retry without a baseline.
 		var successes int64
 		if queryErr := s.db.QueryRow(`SELECT COALESCE(SUM(success_count),0) FROM task_runs WHERE plan_id=?`, plan.ID).Scan(&successes); queryErr != nil {
-			return nil, queryErr
+			return nil, nil, queryErr
 		}
 		if successes > 0 {
-			return nil, errMissingBaseline
+			return nil, nil, errMissingBaseline
 		}
 		run = nil
-	} else {
-		defer reader.Close()
 	}
-	err = task.forEachExpected(func(job TileJob) error {
-		if reader != nil {
-			data, readErr := reader.read(job.Tile)
-			if readErr == nil && validateTileResponse(data, plan.Format) == nil {
+	return run, reader, nil
+}
+
+// The production retry path validates each tile as it is copied. The read-only
+// validator uses the same pass without a sink; neither path rereads tile data.
+func (s *SQLiteStore) walkRetryBaseline(plan *TaskRecord, task *Task, read func(maptile.Tile) ([]byte, error), save func(Tile) error) error {
+	return task.forEachExpected(func(job TileJob) error {
+		if read != nil {
+			data, readErr := read(job.Tile)
+			if readErr == nil {
+				if save != nil {
+					return save(Tile{T: job.Tile, C: data, URL: job.URL})
+				}
 				return nil
 			}
 		}
@@ -321,92 +359,39 @@ func (s *SQLiteStore) validateRetryBaselineWithTask(plan *TaskRecord, task *Task
 		}
 		return nil
 	})
-	if err != nil {
-		return nil, err
-	}
-	return run, nil
 }
 
-func copyRetryBaseline(plan *TaskRecord, task *Task, previous *TaskRunRecord) error {
-	if previous == nil {
-		return task.ctx.Err()
-	}
-	reader, err := openTileOutput(plan, previous)
+func (s *SQLiteStore) prepareRetryBaseline(plan *TaskRecord, task *Task) error {
+	_, reader, err := s.openRetryBaseline(plan, task)
 	if err != nil {
 		return err
 	}
-	defer reader.Close()
-	var size uint64
-	if reader.directory != "" {
-		err = filepath.Walk(reader.directory, func(path string, info os.FileInfo, err error) error {
-			if err := task.ctx.Err(); err != nil {
-				return err
-			}
-			if err != nil {
-				return err
-			}
-			if info.Mode()&os.ModeSymlink != 0 {
-				return errors.New("baseline contains a symlink")
-			}
-			if info.Mode().IsRegular() {
-				size += uint64(info.Size())
-			}
-			return nil
-		})
-		if err != nil {
-			return err
-		}
-	} else if reader.archive != nil {
-		for _, entry := range reader.archive.File {
-			size += entry.UncompressedSize64
-		}
-	} else {
-		var bytes int64
-		if err := reader.db.QueryRow(`SELECT COALESCE(SUM(length(tile_data)),0) FROM tiles`).Scan(&bytes); err != nil {
-			return err
-		}
-		size = uint64(bytes)
+	if reader == nil {
+		return s.walkRetryBaseline(plan, task, nil, nil)
 	}
-	if err := requireOutputSpace(filepath.Dir(task.File), "baseline copy", size); err != nil {
+	defer reader.Close()
+	space, err := baselineCopySpace(task.ctx, reader, task)
+	if err != nil {
+		return err
+	}
+	if err := requireOutputSpace(filepath.Dir(task.File), "baseline copy", space.DataBytes+space.JournalBytes); err != nil {
 		return err
 	}
 	if err := task.setupOutput(); err != nil {
 		return err
 	}
-	batch := make([]Tile, 0, mbtilesBatchSize)
-	flush := func() error {
-		if len(batch) == 0 {
-			return nil
-		}
-		if err := writeMBTileBatch(task.db, batch); err != nil {
-			return err
-		}
-		batch = batch[:0]
-		return nil
-	}
-	err = task.forEachExpected(func(job TileJob) error {
-		if err := task.ctx.Err(); err != nil {
-			return err
-		}
-		data, err := reader.read(job.Tile)
-		if err != nil {
-			return nil
-		}
-		if err := validateTileResponse(data, plan.Format); err != nil {
-			return nil
-		}
-		tile := Tile{T: job.Tile, C: data, URL: job.URL}
+	batch := mbtilesBatch{tiles: make([]Tile, 0, mbtilesBatchSize)}
+	defer batch.reset()
+	write := func(tiles []Tile) error { return writeMBTileBatch(task.db, tiles) }
+	err = s.walkRetryBaseline(plan, task, reader.readValidated, func(tile Tile) error {
 		if task.outformat == "mbtiles" {
-			batch = append(batch, tile)
-			if len(batch) == cap(batch) {
-				return flush()
-			}
-			return nil
+			_, err := batch.add(tile, write)
+			return err
 		}
 		return task.saveTile(tile)
 	})
 	if err == nil {
-		err = flush()
+		err = batch.flush(write)
 	}
 	closeErr := task.closeOutput()
 	if err != nil {

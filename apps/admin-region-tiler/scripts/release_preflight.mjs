@@ -3,6 +3,7 @@
 import { spawn } from "node:child_process";
 import process from "node:process";
 
+const preflightStarted = performance.now();
 const checks = [
   {
     label: "Region maintenance contracts (offline fixtures)",
@@ -40,6 +41,11 @@ const checks = [
     args: ["./scripts/security_ui_test.mjs"],
   },
   {
+    label: "Terrain estimates and fallback catalogue contracts",
+    command: "node",
+    args: ["./scripts/terrain_estimate_checks.mjs"],
+  },
+  {
     label: "Repair UI script syntax",
     command: "node",
     args: ["--check", "./scripts/repair_ui_checks.mjs"],
@@ -48,6 +54,11 @@ const checks = [
     label: "Browser UI smoke",
     command: "node",
     args: ["./scripts/smoke_ui.mjs"],
+  },
+  {
+    label: "Real browser workflows at 390/768/1440 pixels",
+    command: "node",
+    args: ["./scripts/workflow_acceptance.mjs"],
   },
 ];
 let gitRootCache = "";
@@ -58,9 +69,10 @@ for (const check of checks) {
 await runSensitiveValueScan();
 await runGeneratedFileScan();
 
-console.log("Release preflight passed");
+console.log(`Release preflight passed in ${((performance.now() - preflightStarted) / 1000).toFixed(1)}s`);
 
 function run(check) {
+  const started = performance.now();
   console.log(`\n==> ${check.label}`);
   console.log(`$ ${[check.command, ...check.args].join(" ")}`);
 
@@ -77,6 +89,7 @@ function run(check) {
     });
 
     child.on("exit", (code, signal) => {
+      console.log(`${check.label}: ${((performance.now() - started) / 1000).toFixed(1)}s`);
       if (code === 0) {
         resolveRun();
         return;

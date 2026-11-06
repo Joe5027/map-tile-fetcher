@@ -6,7 +6,46 @@ import (
 )
 
 const mbtilesBatchSize = 256
+const mbtilesBatchBytes = 8 << 20
 const mbtilesCommitInterval = 250 * time.Millisecond
+
+// Bound retained payload independently of tile count. A tile larger than the
+// byte budget is still valid and is written in its own transaction.
+type mbtilesBatch struct {
+	tiles []Tile
+	bytes int
+}
+
+// accepted is false only when flushing the previous batch fails before this
+// tile enters it, so the saver can record that consumed tile's failure too.
+func (batch *mbtilesBatch) add(tile Tile, write func([]Tile) error) (accepted bool, err error) {
+	if len(batch.tiles) > 0 && batch.bytes+len(tile.C) > mbtilesBatchBytes {
+		if err := batch.flush(write); err != nil {
+			return false, err
+		}
+	}
+	batch.tiles = append(batch.tiles, tile)
+	batch.bytes += len(tile.C)
+	if len(batch.tiles) >= mbtilesBatchSize || batch.bytes >= mbtilesBatchBytes {
+		return true, batch.flush(write)
+	}
+	return true, nil
+}
+
+func (batch *mbtilesBatch) flush(write func([]Tile) error) error {
+	if len(batch.tiles) == 0 {
+		return nil
+	}
+	err := write(batch.tiles)
+	batch.reset()
+	return err
+}
+
+func (batch *mbtilesBatch) reset() {
+	clear(batch.tiles)
+	batch.tiles = batch.tiles[:0]
+	batch.bytes = 0
+}
 
 // A batch is one durability boundary: callers must only count success after Commit.
 func writeMBTileBatch(db *sql.DB, tiles []Tile) error {
@@ -32,30 +71,29 @@ func writeMBTileBatch(db *sql.DB, tiles []Tile) error {
 }
 
 func (task *Task) runMBTilesSaver() {
-	defer task.saveWG.Done()
 	ticker := time.NewTicker(mbtilesCommitInterval)
 	defer ticker.Stop()
-	batch := make([]Tile, 0, mbtilesBatchSize)
-	flush := func() bool {
-		if len(batch) == 0 {
-			return true
-		}
-		err := writeMBTileBatch(task.db, batch)
-		for _, tile := range batch {
+	task.runMBTilesSaverTicks(ticker.C)
+}
+
+func (task *Task) runMBTilesSaverTicks(ticks <-chan time.Time) {
+	defer task.saveWG.Done()
+	batch := mbtilesBatch{tiles: make([]Tile, 0, mbtilesBatchSize)}
+	write := func(tiles []Tile) error {
+		err := writeMBTileBatch(task.db, tiles)
+		for _, tile := range tiles {
 			if err != nil {
 				task.recordTileFailure(TileJob{Tile: tile.T, URL: tile.URL}, err, true)
 			}
 			task.markProcessed(err == nil, err)
 		}
-		batch = batch[:0]
 		if err != nil {
 			task.setError(err)
 			task.cancel()
-			return false
 		}
-		return true
+		return err
 	}
-	defer flush()
+	defer batch.flush(write)
 	for {
 		select {
 		case tile, ok := <-task.savingpipe:
@@ -65,12 +103,15 @@ func (task *Task) runMBTilesSaver() {
 			if err := task.waitIfPaused(); err != nil {
 				return
 			}
-			batch = append(batch, tile)
-			if len(batch) >= mbtilesBatchSize && !flush() {
+			if accepted, err := batch.add(tile, write); err != nil {
+				if !accepted {
+					task.recordTileFailure(TileJob{Tile: tile.T, URL: tile.URL}, err, true)
+					task.markProcessed(false, err)
+				}
 				return
 			}
-		case <-ticker.C:
-			if !flush() {
+		case <-ticks:
+			if err := batch.flush(write); err != nil {
 				return
 			}
 		case <-task.ctx.Done():

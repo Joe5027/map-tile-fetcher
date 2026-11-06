@@ -1390,7 +1390,7 @@ func normalizeSources(req CreateTaskRequest) ([]SourceRequest, error) {
 			return nil, errors.New("source schema must be xyz or tms")
 		}
 		if source.Name == "" {
-			source.Name = source.URL
+			source.Name = publicSourceLabel(source.URL)
 		}
 		sources = append(sources, source)
 	}
