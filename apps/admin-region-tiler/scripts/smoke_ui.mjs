@@ -283,6 +283,7 @@ async function runSmoke(baseURL) {
   const browser = await chromium.launch({ headless: !options.headed });
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   const createdPayloads = [];
+  const pendingCreates = [];
   const confirmMessages = [];
   const consoleErrors = [];
 
@@ -311,6 +312,7 @@ async function runSmoke(baseURL) {
     if (request.method() === "POST") {
       const body = JSON.parse(request.postData() || "{}");
       createdPayloads.push(body);
+      await new Promise((resolve) => pendingCreates.push(resolve));
       await route.fulfill({
         status: 201,
         contentType: "application/json",
@@ -343,8 +345,9 @@ async function runSmoke(baseURL) {
     await page.goto(`${baseURL}/`, { waitUntil: "networkidle", timeout: options.timeoutMs });
     await expectTitle(page);
     await login(page);
-    await smokeRegionFlow(page, createdPayloads);
-    await smokeRangeFlow(page, createdPayloads);
+    await smokeRegionFlow(page, createdPayloads, pendingCreates);
+    await smokeRangeFlow(page, createdPayloads, pendingCreates);
+    assert(confirmMessages.length === 0, "task creation should use the inline summary without confirmation dialogs");
     await runRepairUIChecks(page);
 
     if (consoleErrors.length > 0) {
@@ -357,6 +360,7 @@ async function runSmoke(baseURL) {
       confirms: confirmMessages.length,
     };
   } finally {
+    pendingCreates.splice(0).forEach((release) => release());
     await browser.close();
   }
 }
@@ -390,7 +394,7 @@ async function login(page) {
   await page.locator("[data-task-mode='tasks']").waitFor({ state: "visible", timeout: options.timeoutMs });
 }
 
-async function smokeRegionFlow(page, createdPayloads) {
+async function smokeRegionFlow(page, createdPayloads, pendingCreates) {
   await showCreateTab(page);
   await page.locator("[data-task-mode='region']").click();
   await page.locator("#regionModePanel").waitFor({ state: "visible", timeout: options.timeoutMs });
@@ -417,10 +421,17 @@ async function smokeRegionFlow(page, createdPayloads) {
   const beforeCount = createdPayloads.length;
   await page.locator("input[name='name']").fill(`smoke region ${Date.now()}`);
   await page.locator("input[name='tiandituToken']").fill("smoke-test-token");
-  await page.locator("#taskForm button[type='submit']").click();
-  await waitForPayloadCount(createdPayloads, beforeCount + 1);
+  await page.locator("input[name='workers']").fill("7");
+  await page.locator("select[name='savePipe']").selectOption("3");
+  await page.locator("input[name='timeDelay']").fill("0");
+  const summary = await page.locator("#taskCreateSummary").innerText();
+  assert(summary.includes("下载 7 线程") && summary.includes("保存 3 线程") && summary.includes("间隔 0ms"),
+    "region inline summary should update the requested parameters before submission");
+  await submitOnceWhilePending(page, createdPayloads, pendingCreates, beforeCount);
 
   const payload = createdPayloads.at(-1);
+  assert(payload.workers === 7 && payload.savePipe === 3 && payload.timeDelay === 0,
+    "region payload should preserve the user-selected download parameters");
   assert(Array.isArray(payload.levels) && payload.levels.length > 0, "region payload should include levels");
   assert(payload.levels.length === 3, "focused region map selection should retain the default global and China levels");
   assert(payload.levels[2]?.minZoom === 9 && payload.levels[2]?.maxZoom === 10, "focused region map selection should submit the selected province zoom level");
@@ -432,7 +443,7 @@ async function smokeRegionFlow(page, createdPayloads) {
   assert(payload.sources.some((source) => String(source.url || "").includes("smoke-test-token")), "region payload should include the supplied Tianditu token");
 }
 
-async function smokeRangeFlow(page, createdPayloads) {
+async function smokeRangeFlow(page, createdPayloads, pendingCreates) {
   await showCreateTab(page);
   await page.locator("[data-task-mode='bbox']").click();
   await page.locator("#rangeModePanel").waitFor({ state: "visible", timeout: options.timeoutMs });
@@ -458,16 +469,23 @@ async function smokeRangeFlow(page, createdPayloads) {
   await page.locator("#runAtField").waitFor({ state: "visible", timeout: options.timeoutMs });
   await page.locator("input[name='runAt']").fill(formatDateTimeLocal(new Date(Date.now() + 60 * 60 * 1000)));
   await page.locator("select[name='outputFormat']").selectOption("mbtiles");
+  await page.locator("input[name='workers']").fill("8");
+  await page.locator("select[name='savePipe']").selectOption("4");
+  await page.locator("input[name='timeDelay']").fill("175");
 
   await waitForTextNotEqual(page.locator("#rangeTileCount"), "-");
   await waitForTextNotEqual(page.locator("#rangeTotalTileCount"), "-");
 
   const beforeCount = createdPayloads.length;
-  await page.locator("#taskForm button[type='submit']").click();
-  await waitForPayloadCount(createdPayloads, beforeCount + 1);
+  const summary = await page.locator("#taskCreateSummary").innerText();
+  assert(summary.includes("下载 8 线程") && summary.includes("保存 4 线程") && summary.includes("间隔 175ms") && summary.includes("MBTiles"),
+    "range inline summary should show requested parameters and output before submission");
+  await submitOnceWhilePending(page, createdPayloads, pendingCreates, beforeCount);
 
   const payload = createdPayloads.at(-1);
   assert(payload.mode === "bbox", "range payload should use bbox mode");
+  assert(payload.workers === 8 && payload.savePipe === 4 && payload.timeDelay === 175,
+    "range payload should preserve the user-selected download parameters");
   assert(payload.area?.bbox, "range payload should include area.bbox");
   assert(payload.zoom?.min === 10 && payload.zoom?.max === 10, "range payload should include the requested zoom");
   assert(payload.scheduleMode === "once", "range payload should support scheduled once mode");
@@ -476,6 +494,22 @@ async function smokeRangeFlow(page, createdPayloads) {
   assert(Array.isArray(payload.sources) && payload.sources.length === 1, "range payload should include the selected layer source");
   assert(String(payload.sources[0].name || "").includes("img"), "range payload should include the img layer source");
   assert(String(payload.sources[0].url || "").includes("smoke-test-token"), "range source URL should include the supplied token");
+}
+
+async function submitOnceWhilePending(page, createdPayloads, pendingCreates, beforeCount) {
+  const button = page.locator("#createTaskBtn");
+  await button.click();
+  await waitForPayloadCount(createdPayloads, beforeCount + 1);
+  assert(await button.isDisabled(), "create button should be disabled while its request is pending");
+  await page.locator("#taskForm").evaluate((form) => {
+    form.requestSubmit();
+    form.requestSubmit();
+  });
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert(createdPayloads.length === beforeCount + 1, "repeated submit events should not create duplicate tasks");
+  pendingCreates.shift()();
+  await waitForPageFunction(page, () => !document.getElementById("createTaskBtn").disabled,
+    "create button to become available after response");
 }
 
 async function showCreateTab(page) {

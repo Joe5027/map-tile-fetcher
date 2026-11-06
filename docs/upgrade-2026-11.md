@@ -9,7 +9,7 @@ fixtures; no user database or existing downloads are used.
 | Batch | State |
 | --- | --- |
 | Portable rules, dependency review, main completion and handoff | Committed: `da33be6` |
-| Download configuration and format correctness | In validation |
+| Download configuration and format correctness | Backend committed: `32ab1ca`; form regressions passed |
 | Automatic recovery, queue slots and storage performance | Pending |
 | Dependency/toolchain upgrade | Pending |
 | Cesium terrain generation and offline preview | Pending |
@@ -32,6 +32,12 @@ preserved without image recompression.
 
 The source catalogue exposes only concurrency and minimum-delay values under
 `fetch_policy`; source headers and proxy credentials are not included.
+
+Both creation modes now use the visible download, saver and interval settings.
+The browser regression failed against the old bbox implementation, then passed
+with non-default values and zero delay. The inline task summary replaces the
+creation confirmation dialog; duplicate submit events during an active request
+produce one POST. Responsive, password, preview and session regressions passed.
 
 Validation is recorded in each bilingual commit. Full upgrade acceptance,
 benchmarks and platform checks remain pending until their batches finish.

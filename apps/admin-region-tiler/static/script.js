@@ -6,6 +6,7 @@ let activeLevelCount = 2;
 let selectedProvider = "";
 let selectedSourceIds = new Set();
 let taskMode = "region";
+let taskCreatePending = false;
 let activeMapMode = "region";
 let rangeMap = null;
 let rangeBaseLayer = null;
@@ -97,12 +98,6 @@ const RANGE_LAYER_NAMES = {
     vec: "天地图 vec 电子图"
 };
 
-const RANGE_TASK_DEFAULTS = {
-    workers: 3,
-    savePipe: 2,
-    timeDelay: 50
-};
-
 const ADMIN_REGION_LEVEL_CONFIG_IDS = {
     province: 3,
     city: 4,
@@ -174,6 +169,8 @@ function bindEvents() {
         }
     });
     document.getElementById("taskForm").addEventListener("submit", createTask);
+    document.getElementById("taskForm").addEventListener("input", updateTaskCreateSummary);
+    document.getElementById("taskForm").addEventListener("change", updateTaskCreateSummary);
     document.getElementById("refreshBtn").addEventListener("click", loadTasks);
     document.getElementById("addLevelBtn").addEventListener("click", addLevelConfig);
     document.getElementById("fitAdminRegionMapBtn").addEventListener("click", fitAdminRegionMapToSelection);
@@ -410,7 +407,9 @@ async function loadTaskLimits() {
     const input = document.querySelector('[name="workers"]');
     input.min = response.data.minWorkers;
     input.max = response.data.maxWorkers;
-    RANGE_TASK_DEFAULTS.workers = response.data.defaultWorkers;
+    input.defaultValue = response.data.defaultWorkers;
+    input.value = response.data.defaultWorkers;
+    updateTaskCreateSummary();
 }
 
 function showLogin() {
@@ -531,6 +530,7 @@ function setTaskMode(mode) {
             }
         }, 40);
     }
+    updateTaskCreateSummary();
 }
 
 function syncScheduleControls() {
@@ -545,6 +545,69 @@ function syncScheduleControls() {
     if (input) {
         input.required = scheduled;
     }
+    updateTaskCreateSummary();
+}
+
+function readDownloadSettings(formData) {
+    const workers = Number(formData.get("workers"));
+    const savePipe = Number(formData.get("savePipe"));
+    const rawDelay = String(formData.get("timeDelay") ?? "").trim();
+    const timeDelay = Number(rawDelay);
+    const workerInput = document.querySelector('[name="workers"]');
+    if (!Number.isInteger(workers) || workers < Number(workerInput.min) || workers > Number(workerInput.max)) {
+        return { error: `下载线程须为 ${workerInput.min}～${workerInput.max} 的整数。` };
+    }
+    if (!Number.isInteger(savePipe) || savePipe < 1 || savePipe > 4) {
+        return { error: "请选择 1～4 个保存线程。" };
+    }
+    if (rawDelay === "" || !Number.isSafeInteger(timeDelay) || timeDelay < 0) {
+        return { error: "请求间隔须为大于或等于 0 的整数毫秒。" };
+    }
+    return { workers, savePipe, timeDelay };
+}
+
+function updateTaskCreateSummary() {
+    const summary = document.getElementById("taskCreateSummary");
+    if (!summary) return;
+    const formData = new FormData(document.getElementById("taskForm"));
+    const settings = readDownloadSettings(formData);
+    const schedule = readScheduleRequest(formData);
+    const output = readOutputRequest(formData);
+    const isRange = activeMapMode === "bbox";
+    const sources = isRange
+        ? getSelectedRangeLayers().map((layer) => {
+            const configured = tilemaps.find((item) => String(item.url || "").includes(`T=${layer}_w`));
+            return { ...configured, name: RANGE_LAYER_NAMES[layer] || layer };
+        })
+        : getSelectedTilemaps();
+    const lines = [
+        `${String(formData.get("name") || "未命名任务")} · ${isRange ? "范围框选" : "行政区划"}`,
+        `图层：${sources.map((source) => source.name).join("、") || "尚未选择"}`
+    ];
+    if (isRange) {
+        const request = readRangeRequest(formData);
+        lines.push(`层级：${request.zoom.min}～${request.zoom.max}；范围：${request.bbox.minLon}, ${request.bbox.minLat} 至 ${request.bbox.maxLon}, ${request.bbox.maxLat}`);
+    } else {
+        lines.push(`区域：${levelConfigs.slice(0, activeLevelCount).map((config) => `${getRegionByID(config.selectedRegionId)?.name || config.label} ${config.minZoom}～${config.maxZoom}级`).join("；") || "尚未选择"}`);
+    }
+    lines.push(settings.error || `请求参数：下载 ${settings.workers} 线程，保存 ${settings.savePipe} 线程，间隔 ${settings.timeDelay}ms`);
+    if (!settings.error) {
+        const known = sources.filter((source) => Number.isFinite(source.fetch_policy?.worker_count) && Number.isFinite(source.fetch_policy?.base_delay_ms));
+        for (const source of known) {
+            const policy = source.fetch_policy;
+            const workers = policy.worker_count > 0 ? Math.min(settings.workers, policy.worker_count) : settings.workers;
+            lines.push(`${source.name} 生效：下载 ${workers} 线程，间隔 ${Math.max(settings.timeDelay, policy.base_delay_ms)}ms`);
+        }
+        if (known.length !== sources.length || sources.length === 0) {
+            lines.push("来源的实际并发和最小间隔由服务端策略确定，创建后可在任务详情查看。");
+        }
+    }
+    lines.push(`${schedule.error || schedule.label} · ${output.label}`);
+    summary.replaceChildren(...lines.map((line) => {
+        const paragraph = document.createElement("p");
+        paragraph.textContent = line;
+        return paragraph;
+    }));
 }
 
 function readScheduleRequest(formData) {
@@ -2142,6 +2205,7 @@ function renderLevelConfigs() {
             removeLevelConfig(Number.parseInt(event.currentTarget.dataset.id, 10));
         });
     });
+    updateTaskCreateSummary();
 }
 
 function findLevelConfig(id) {
@@ -2234,6 +2298,7 @@ function renderTilemapSelector() {
     const container = document.getElementById("tilemapSelector");
     const groups = getProviderGroups();
     container.innerHTML = groups.map((group) => renderProviderCard(group)).join("");
+    updateTaskCreateSummary();
 }
 
 function renderProviderCard(group) {
@@ -2418,7 +2483,7 @@ function compareTilemapGroups(left, right) {
     return left.localeCompare(right, "zh-CN");
 }
 
-async function createRangeTask(event, formData) {
+async function createRangeTask(event, formData, settings) {
     const request = readRangeRequest(formData);
     const validation = validateRangeRequest(request);
     if (validation) {
@@ -2426,9 +2491,7 @@ async function createRangeTask(event, formData) {
         return;
     }
 
-    const workerCount = RANGE_TASK_DEFAULTS.workers;
-    const savePipe = RANGE_TASK_DEFAULTS.savePipe;
-    const timeDelay = RANGE_TASK_DEFAULTS.timeDelay;
+    const { workers: workerCount, savePipe, timeDelay } = settings;
     const schedule = readScheduleRequest(formData);
     if (schedule.error) {
         showMessage("taskError", schedule.error);
@@ -2436,30 +2499,7 @@ async function createRangeTask(event, formData) {
     }
     const output = readOutputRequest(formData);
 
-    const tileCount = calculateRangeTileCount(request.bbox, request.zoom);
     const sources = request.layers.map((layer, index) => buildTianDiTuSource(layer, request.credentials.tiandituToken, index));
-    const areaSummary = request.selectionMode === "polygon"
-        ? `多边形：${request.polygon.length} 个顶点`
-        : `矩形：${request.bbox.minLon},${request.bbox.minLat} - ${request.bbox.maxLon},${request.bbox.maxLat}`;
-    const summary = [
-        `任务名称：${request.name}`,
-        `下载模式：范围框选`,
-        `范围：${areaSummary}`,
-        `包围盒：${request.bbox.minLon},${request.bbox.minLat} - ${request.bbox.maxLon},${request.bbox.maxLat}`,
-        `层级：${request.zoom.min}-${request.zoom.max}`,
-        `图层：${request.layers.join("、")}`,
-        `单图层瓦片估算：${tileCount}`,
-        `总瓦片估算：${tileCount * request.layers.length}`,
-        `执行时间：${schedule.label}`,
-        `产物格式：${output.label}`,
-        `下载线程：${workerCount}`,
-        `保存线程：${savePipe}`,
-        `请求间隔：${timeDelay}ms`
-    ].join("\n");
-
-    if (!window.confirm(`请确认本次任务信息：\n\n${summary}`)) {
-        return;
-    }
 
     const response = await fetchJSON("/api/tasks", {
         method: "POST",
@@ -2608,6 +2648,7 @@ function isValidBBox(bbox, requireArea) {
 }
 
 function updateRangeEstimate() {
+    updateTaskCreateSummary();
     const request = readRangeRequest(new FormData(document.getElementById("taskForm")));
     const tileElement = document.getElementById("rangeTileCount");
     const totalElement = document.getElementById("rangeTotalTileCount");
@@ -2665,15 +2706,33 @@ function buildTianDiTuSource(layer, token, index) {
 
 async function createTask(event) {
     event.preventDefault();
+    if (taskMode === "tasks" || taskCreatePending) return;
     hideMessage("taskError");
-
-    if (taskMode === "tasks") {
+    const formData = new FormData(event.target);
+    const settings = readDownloadSettings(formData);
+    if (settings.error) {
+        showMessage("taskError", settings.error);
         return;
     }
+    const button = document.getElementById("createTaskBtn");
+    taskCreatePending = true;
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    button.querySelector("span").textContent = "正在创建…";
+    try {
+        await createTaskFromForm(event, formData, settings);
+    } finally {
+        taskCreatePending = false;
+        button.disabled = false;
+        button.removeAttribute("aria-busy");
+        button.querySelector("span").textContent = "创建任务";
+        updateTaskCreateSummary();
+    }
+}
 
-    const formData = new FormData(event.target);
+async function createTaskFromForm(event, formData, settings) {
     if (taskMode === "bbox") {
-        await createRangeTask(event, formData);
+        await createRangeTask(event, formData, settings);
         return;
     }
 
@@ -2723,14 +2782,7 @@ async function createTask(event) {
         return;
     }
 
-    const workerCount = Number.parseInt(formData.get("workers"), 10) || 0;
-    const savePipe = Number.parseInt(formData.get("savePipe"), 10) || 0;
-    const timeDelay = Number.parseInt(formData.get("timeDelay"), 10) || 0;
-
-    if (timeDelay < 50) {
-        showMessage("taskError", "请求间隔不能小于 50ms。");
-        return;
-    }
+    const { workers: workerCount, savePipe, timeDelay } = settings;
     const schedule = readScheduleRequest(formData);
     if (schedule.error) {
         showMessage("taskError", schedule.error);
@@ -2752,26 +2804,6 @@ async function createTask(event) {
         schema: tilemap.schema
     }));
 
-    const effectiveWorkerLabel = provider.id === "天地图" ? "1（天地图稳定模式）" : String(workerCount);
-    const selectedFormats = Array.from(new Set(
-        selectedTilemaps.map((item) => getTaskTilemapFormat(item).toUpperCase())
-    )).join("、");
-    const summary = [
-        `任务名称：${formData.get("name")}`,
-        `地图源：${provider.name}`,
-        `图层数量：${selectedTilemaps.length}`,
-        `图层明细：${selectedTilemaps.map((item) => item.name).join("、")}`,
-        `瓦片格式：${selectedFormats}`,
-        `执行时间：${schedule.label}`,
-        `产物格式：${output.label}`,
-        `下载线程：${effectiveWorkerLabel}`,
-        `保存线程：${savePipe}`,
-        `请求间隔：${timeDelay}ms`
-    ].join("\n");
-
-    if (!window.confirm(`请确认本次任务信息：\n\n${summary}`)) {
-        return;
-    }
 
     const response = await fetchJSON("/api/tasks", {
         method: "POST",

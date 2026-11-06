@@ -148,7 +148,7 @@
                                         </label>
                                         <label class="field">
                                             <span class="field-label">请求间隔(ms)</span>
-                                            <input type="number" name="timeDelay" min="50" max="5000" value="80">
+                                            <input type="number" name="timeDelay" min="0" value="80">
                                         </label>
                                         <label class="field">
                                             <span class="field-label">产物格式</span>
@@ -306,15 +306,14 @@
                                 </section>
 
                                 <div class="task-submit-panel task-config-control">
-                                    <p class="risk-tip">
-                                        <img src="/static/assets/icons/warning.svg" alt="">
-                                        <span>请求间隔过小可能导致地图服务限制访问，建议设置为 100-500ms。</span>
-                                    </p>
-
+                                    <section class="section-card" aria-labelledby="taskCreateSummaryTitle">
+                                        <h3 id="taskCreateSummaryTitle">本次任务</h3>
+                                        <div id="taskCreateSummary" aria-live="polite"></div>
+                                    </section>
                                     <p id="taskError" class="message error is-hidden"></p>
-                                    <button type="submit" class="primary-button wide">
+                                    <button id="createTaskBtn" type="submit" class="primary-button wide">
                                         <img src="/static/assets/icons/task.svg" alt="">
-                                        <span>创建并启动计划任务</span>
+                                        <span>创建任务</span>
                                     </button>
                                 </div>
                             </div>
