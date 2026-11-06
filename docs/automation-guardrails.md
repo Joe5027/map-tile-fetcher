@@ -63,7 +63,7 @@ git status --short
 ```
 
 ```powershell
-python C:\Users\32674\.codex\skills\deep-execution-upgrade\scripts\audit_environment.py --mode workspace --workspace . --format text
+node scripts/check_docs.mjs
 ```
 
 ```powershell
@@ -74,9 +74,23 @@ rg -n "Apache|MIT|License|许可证|许可" README.md PROJECT_MANIFEST.md docs L
 rg -n "TIANDITU|MAPBOX|TOKEN|PASSWORD|SECRET|adminmap|YOUR_" -g "!**/bin/**" -g "!**/obj/**" -g "!**/.git/**" -g "!**/data/**" -g "!**/output/**" -g "!**/tiles/**" -g "!**/geojson/**" .
 ```
 
-```powershell
-python C:\Users\32674\.codex\skills\deep-execution-upgrade\scripts\validate_handoff_contract.py --path docs\long-term-memory.md --format text
-```
+The portable check includes the handoff section contract. Environment-specific
+audits are optional unless an active environment skill requires one; never
+assume a personal Windows profile is present on another developer's machine.
+
+## Dependency And Completion Review
+
+Use a read-only review to check the rules in `AGENTS.md`:
+
+- Compare locked dependency/tool versions with current stable releases and
+  official changelogs. Report date, project benefit, compatibility, and decision.
+- Check README, manuals, configuration, project map, handoff, and affected
+  documentation images against changed behavior.
+- Inspect local branches/worktrees and, within granted access, actual remote
+  heads. Report unique work and missing merge/check evidence; cached tracking
+  refs do not prove remote cleanup.
+- Recommend the next implementation action. A review prompt does not authorize
+  upgrades, merges, branch deletion, new schedules, or deployment.
 
 ## AI Control-Surface Review Prompt
 

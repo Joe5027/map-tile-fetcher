@@ -22,7 +22,8 @@ Use this handbook for repository-local AI control-surface work, including:
 - release or handoff readiness checks
 
 Do not use it to justify adding retired .NET runtime code, generated runtime
-data, release archives, screenshots, UI design packages, or local secrets.
+data, release archives, temporary screenshots, UI design packages, or local
+secrets. Reviewed documentation images follow the exception in `AGENTS.md`.
 
 ## Operating Route
 
@@ -55,6 +56,8 @@ about region resources.
   commit message.
 - Keep recurring automation read-only unless the user explicitly requests write
   behavior.
+- Apply the functionality/performance, dependency-review, branch-completion,
+  and documentation rules in `AGENTS.md`; keep their authoritative text there.
 
 ## Control Surfaces
 
@@ -72,14 +75,10 @@ about region resources.
 
 ## Validation Route
 
-For documentation or local skill changes, prefer this sequence:
+For documentation or local skill changes, run from the repository root:
 
 ```powershell
-python C:\Users\32674\.codex\skills\deep-execution-upgrade\scripts\audit_environment.py --mode workspace --workspace . --format text
-```
-
-```powershell
-python C:\Users\32674\.codex\skills\deep-execution-upgrade\scripts\validate_handoff_contract.py --path docs\long-term-memory.md --format text
+node scripts/check_docs.mjs
 ```
 
 ```powershell
@@ -92,7 +91,10 @@ git status --short
 
 For Go code changes, run `go test ./...` from `apps/admin-region-tiler`. For
 frontend JavaScript changes, run `node --check .\static\script.js` from the app
-directory.
+directory. The local documentation check validates file/image links and the
+handoff section contract; compare behavioral claims against their owning source
+as well. An available environment skill may add its own audit, but another
+developer's home directory or global skill installation is not a prerequisite.
 
 ## Memory Rules
 
@@ -109,7 +111,9 @@ Keep the handoff sections exactly:
 5. `Next Action`
 
 Use `docs/knowledge-graph.md` for relationship recovery and
-`docs/long-term-memory.md` for the latest restart-ready state.
+`docs/long-term-memory.md` for the latest restart-ready state. Keep current
+status separate from historical evidence; link existing acceptance records
+instead of accumulating completed tasks and machine capability inventories.
 
 ## Automation Rules
 
@@ -127,20 +131,16 @@ Recurring automation for this repository should:
 
 ## Capability Routing
 
-When runtime tool truth matters, start from:
-
-```powershell
-python C:\Users\32674\.codex\skills\deep-execution-upgrade\scripts\runtime_preflight.py --format text
-```
-
-Current-session tool evidence wins over configured inventory. Use PowerShell,
-`rg` after confirming it runs, and `apply_patch` for local edits. Treat
-unexposed or replaced plugins as fallback routes, not hard dependencies.
+Current-session tool evidence wins over configured inventory. Check the actual
+tool needed by the task. On Windows use PowerShell 7 explicitly; use `rg` and
+the available patch tool for focused work. Environment preflight tools are
+optional, environment-owned diagnostics, not repository dependencies. Treat
+unexposed plugins as fallback routes, not hard dependencies.
 
 ## Maintenance Priorities
 
 Browser automation and cumulative failure retries are implemented and covered
-by the validation chain. Use [the maintenance audit](maintenance-audit-2026-09-11.md)
-for remaining work instead of recreating completed tasks. Keep legacy `plans`
+by the validation chain. Start from [current handoff state](long-term-memory.md)
+and its acceptance links instead of recreating completed tasks. Keep legacy `plans`
 tables while compatibility still depends on them. Global environment work is
 outside repository maintenance.
