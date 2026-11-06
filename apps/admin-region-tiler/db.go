@@ -157,6 +157,7 @@ type FailureSummary struct {
 type SQLiteStore struct {
 	db              *sql.DB
 	maintenanceLock *os.File
+	serverLock      *os.File
 }
 
 type sqlExecer interface {
@@ -180,6 +181,14 @@ func initDB() {
 	if err != nil {
 		log.Fatalf("database is under offline maintenance: %v", err)
 	}
+	workerMode := shouldRunWorkerMode()
+	var serverLock *os.File
+	if !workerMode {
+		serverLock, err = acquireServerOwnership(maintenanceLock)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
 	// Apply connection-local settings to every pooled connection, including
 	// connections opened after initialization while workers publish artifacts.
 	db, err := sql.Open("sqlite", dbPath+"?_pragma=busy_timeout(10000)&_txlock=immediate")
@@ -187,7 +196,6 @@ func initDB() {
 		log.Fatalf("failed to open database: %v", err)
 	}
 
-	workerMode := shouldRunWorkerMode()
 	if workerMode {
 		db.SetMaxOpenConns(1)
 		db.SetMaxIdleConns(1)
@@ -196,7 +204,7 @@ func initDB() {
 		db.SetMaxIdleConns(4)
 	}
 
-	store = &SQLiteStore{db: db, maintenanceLock: maintenanceLock}
+	store = &SQLiteStore{db: db, maintenanceLock: maintenanceLock, serverLock: serverLock}
 	if workerMode {
 		if _, err := db.Exec(`PRAGMA busy_timeout = 10000;`); err != nil {
 			log.Fatalf("failed to configure worker database connection: %v", err)
@@ -416,6 +424,8 @@ func (s *SQLiteStore) tableColumnSet(table string) (map[string]bool, error) {
 		statement = `PRAGMA table_info(task_runs)`
 	case "failures":
 		statement = `PRAGMA table_info(failures)`
+	case "execution_queue":
+		statement = `PRAGMA table_info(execution_queue)`
 	default:
 		return nil, fmt.Errorf("unsupported table for column introspection: %s", table)
 	}
@@ -971,41 +981,76 @@ func (s *SQLiteStore) seedDefaultUser() error {
 }
 
 func (s *SQLiteStore) recoverInterruptedTaskRecords() error {
-	if _, err := s.db.Exec(`UPDATE plans SET status='failed' WHERE id IN (SELECT plan_id FROM execution_queue WHERE state='running')`); err != nil {
+	release, err := s.lockInterruptedRuns()
+	if err != nil {
 		return err
 	}
-	if _, err := s.db.Exec(`DELETE FROM execution_queue WHERE state='running'`); err != nil {
-		return err
-	}
+	defer release()
 	if err := s.recoverPublications(); err != nil {
 		return err
 	}
-	now := time.Now().Unix()
-	if _, err := s.db.Exec(
-		`UPDATE task_runs
-		 SET status = ?, error_message = ?, finished_at = ?, updated_at = ?
-		 , artifact_status = CASE WHEN artifact_status = 'packing' THEN 'failed' ELSE artifact_status END
-		 WHERE status IN (?, 'paused') OR artifact_status = 'packing'`,
-		string(TaskFailed),
-		"service restarted before task completed",
-		now,
-		now,
-		string(TaskRunning),
-	); err != nil {
+	tx, err := s.db.Begin()
+	if err != nil {
 		return err
 	}
-
-	_, err := s.db.Exec(
-		`UPDATE plans
-		 SET status = ?, updated_at = ?
-		 WHERE status IN (?, 'paused')`,
-		string(TaskRecordFailed),
-		now,
-		string(TaskRecordRunning),
-	)
-	return err
+	defer tx.Rollback()
+	now := time.Now()
+	statements := []struct {
+		sql  string
+		args []any
+	}{
+		{`UPDATE task_runs SET status='cancelled',finished_at=?,updated_at=? WHERE status IN ('running','paused','pending') AND plan_id IN (SELECT id FROM plans WHERE status='cancelled')`, []any{now.Unix(), now.Unix()}},
+		{`UPDATE task_runs SET status=CASE WHEN (SELECT status FROM plans WHERE id=plan_id)='paused' THEN 'paused' ELSE 'pending' END,finished_at=0,error_message='',artifact_status=CASE WHEN artifact_status='packing' THEN 'none' ELSE artifact_status END,updated_at=? WHERE id IN (SELECT last_run_id FROM plans WHERE status<>'cancelled') AND (status IN ('running','paused','pending') OR artifact_status='packing')`, []any{now.Unix()}},
+		{`INSERT INTO execution_queue(plan_id,trigger_mode,due_at,enqueued_at,state,owner_token) SELECT p.id,'resume',?,?,CASE WHEN p.status='paused' AND COALESCE(q.state,'')<>'queued' THEN 'paused' ELSE 'queued' END,'' FROM plans p JOIN task_runs r ON r.id=p.last_run_id LEFT JOIN execution_queue q ON q.plan_id=p.id WHERE p.kind<>'group' AND p.status<>'cancelled' AND r.status IN ('pending','paused') ON CONFLICT(plan_id) DO UPDATE SET trigger_mode='resume',due_at=excluded.due_at,state=excluded.state,owner_token=''`, []any{now.UnixMilli(), now.UnixMilli()}},
+		{`UPDATE plans SET status=CASE WHEN status='paused' THEN 'paused' ELSE 'queued' END,updated_at=? WHERE kind<>'group' AND last_run_id IN (SELECT id FROM task_runs WHERE status IN ('pending','paused')) AND status<>'cancelled'`, []any{now.Unix()}},
+		{`DELETE FROM execution_queue WHERE plan_id IN (SELECT id FROM plans WHERE status IN ('completed','partial_failed','failed','cancelled'))`, nil},
+		{`UPDATE execution_queue SET owner_token=''`, nil},
+	}
+	for _, statement := range statements {
+		if _, err := tx.Exec(statement.sql, statement.args...); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	rows, err := s.db.Query(`SELECT id FROM plans WHERE parent_id=''`)
+	if err != nil {
+		return err
+	}
+	ids := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		ids = append(ids, id)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		plan, err := s.getTaskRecordByID(id)
+		if err != nil {
+			return err
+		}
+		if plan.Kind == TaskRecordKindGroup {
+			children, err := s.listTaskChildrenByParent(id)
+			if err != nil {
+				return err
+			}
+			plan.Children = children
+			plan.Status = aggregateGroupStatus(plan)
+		}
+		if err := s.updateTaskRecordStatus(id, plan.Status); err != nil {
+			return err
+		}
+	}
+	return nil
 }
-
 func (s *SQLiteStore) authenticateUser(username, password string) (*UserRecord, error) {
 	row := s.db.QueryRow(`SELECT id, username, password_hash, created_at FROM users WHERE username = ?`, username)
 	user, err := scanUser(row)
@@ -1434,6 +1479,9 @@ func (s *SQLiteStore) purgeTaskRecord(planID string) error {
 		if _, err := tx.Exec(`DELETE FROM `+table+` WHERE run_id IN (SELECT id FROM task_runs WHERE plan_id IN (SELECT id FROM plans WHERE id = ? OR parent_id = ?))`, planID, planID); err != nil {
 			return err
 		}
+	}
+	if _, err := tx.Exec(`DELETE FROM task_budgets WHERE plan_id IN (SELECT id FROM plans WHERE id = ? OR parent_id = ?)`, planID, planID); err != nil {
+		return err
 	}
 	if _, err := tx.Exec(`DELETE FROM task_integrity WHERE plan_id IN (SELECT id FROM plans WHERE id = ? OR parent_id = ?)`, planID, planID); err != nil {
 		return err

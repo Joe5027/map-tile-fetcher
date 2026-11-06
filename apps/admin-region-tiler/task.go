@@ -65,18 +65,25 @@ type TaskOptions struct {
 }
 
 type Task struct {
-	workerManaged  bool
-	retrySource    func(func(TileJob) error) error
-	failureSink    func(TileFailureRecord) error
-	preserveOutput bool
-	ID             string
-	Name           string
-	Description    string
-	File           string
-	Min            int
-	Max            int
-	Layers         []Layer
-	TileMap        TileMap
+	fileCommitLocks   [64]sync.Mutex
+	expectedPath      string
+	expectedLimit     int64
+	expandExpected    func(TileJob, func(TileJob) error) error
+	deriveArtifacts   func(*TaskRecord, *Task, *TaskRunRecord) error
+	artifactDirectory string
+	derivedIntegrity  *IntegrityState
+	workerManaged     bool
+	retrySource       func(func(TileJob) error) error
+	failureSink       func(TileFailureRecord) error
+	preserveOutput    bool
+	ID                string
+	Name              string
+	Description       string
+	File              string
+	Min               int
+	Max               int
+	Layers            []Layer
+	TileMap           TileMap
 
 	Total        int64
 	Current      int64
@@ -217,6 +224,8 @@ func NewTask(layers []Layer, m TileMap, opts TaskOptions) *Task {
 	}
 
 	task.pauseCond = sync.NewCond(&task.mu)
+	// One cancellation wakeup per task also covers saver/persistence failures.
+	context.AfterFunc(task.ctx, func() { task.mu.Lock(); task.pauseCond.Broadcast(); task.mu.Unlock() })
 	task.jobs = make(chan TileJob, task.bufSize)
 	task.savingpipe = make(chan Tile, task.savePipeSize)
 
@@ -544,7 +553,7 @@ func (task *Task) waitIfPaused() error {
 	task.mu.Lock()
 	defer task.mu.Unlock()
 
-	for task.Status == TaskPaused {
+	for task.Status == TaskPaused && task.ctx.Err() == nil {
 		task.pauseCond.Wait()
 	}
 
@@ -700,10 +709,6 @@ func (task *Task) closeOutput() error {
 		return nil
 	}
 
-	if err := optimizeDatabase(db); err != nil {
-		log.Warnf("optimize mbtiles failed for task %s: %v", task.ID, err)
-	}
-
 	return db.Close()
 }
 
@@ -739,6 +744,11 @@ func (task *Task) runFetchers() {
 }
 
 func (task *Task) runSavers() {
+	if task.outformat == "mbtiles" {
+		task.saveWG.Add(1)
+		go task.runMBTilesSaver()
+		return
+	}
 	for i := 0; i < task.savePipeSize; i++ {
 		task.saveWG.Add(1)
 		go func() {
@@ -1196,18 +1206,24 @@ func (task *Task) Run() {
 	}
 
 	closeErr := task.closeOutput()
+	task.mu.RLock()
+	stopMessage := task.ErrorMessage
+	task.mu.RUnlock()
+	if stopMessage == "" {
+		stopMessage = "download stopped after output or persistence failure"
+	}
 
 	switch {
-	case errors.Is(enqueueErr, context.Canceled):
-		task.finish(TaskCancelled, nil)
 	case task.currentStatus() == TaskCancelled:
 		task.finish(TaskCancelled, nil)
+	case errors.Is(enqueueErr, context.Canceled):
+		task.fail(errors.New(stopMessage))
 	case enqueueErr != nil:
 		task.fail(enqueueErr)
 	case closeErr != nil:
 		task.fail(closeErr)
 	case task.ctx.Err() != nil:
-		task.fail(errors.New("download stopped after output or persistence failure"))
+		task.fail(errors.New(stopMessage))
 	case task.currentCounts().Failure > 0 && task.currentCounts().Success == 0 && !task.preserveOutput:
 		task.fail(errors.New("task finished with no successful tiles"))
 	case task.currentCounts().Failure > 0:

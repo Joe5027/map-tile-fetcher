@@ -161,7 +161,12 @@ func TestSameNameArchivesNeverOverwrite(t *testing.T) {
 		if err := store.createRun(run); err != nil {
 			t.Fatal(err)
 		}
-		task := &Task{File: dir, outformat: "zip", Status: TaskCompleted}
+		task, err := buildTaskFromRecord(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer task.cancel()
+		task.File, task.outformat, task.Status = dir, "zip", TaskCompleted
 		if err := prepareArtifactForRun(p, task, run); err != nil {
 			t.Fatal(err)
 		}

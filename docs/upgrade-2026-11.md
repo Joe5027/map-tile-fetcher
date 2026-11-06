@@ -10,7 +10,7 @@ fixtures; no user database or existing downloads are used.
 | --- | --- |
 | Portable rules, dependency review, main completion and handoff | Committed: `da33be6` |
 | Download configuration and format correctness | Committed: `32ab1ca`, `79d0184` |
-| Automatic recovery, queue slots and storage performance | Pending |
+| Automatic recovery, queue slots and storage performance | Implemented; full Go suite and actual process interruption checks passed |
 | Dependency/toolchain upgrade | Locked and tested on an isolated source snapshot; native package/CI checks pending |
 | Cesium terrain generation and offline preview | Terrain codec and sampling tested; application integration in progress |
 | Source selection, paginated history and responsive interactions | Pagination and visible-page refresh tested; terrain source UI pending |
@@ -86,3 +86,48 @@ Go toolchain downloads and a checksum-verified Node 24.22.2 executable use local
 caches only; the user's global runtimes were not replaced. See
 [dependency decisions](dependencies-2026-11.md) for official release links,
 upgrade benefits and deliberately retained versions.
+
+## Recovery And Storage
+
+Persisted execution ownership, phases and coordinate manifests recover the same
+run after service interruption. Manual pause remains paused across restart and
+releases its scheduler slot. OS file locking and ownership checks prevent a stale
+worker from publishing over a replacement. Recovery reuses valid raw tiles;
+the previous published artifact remains available until replacement succeeds.
+
+Real process tests terminate service/worker execution during ZIP and MBTiles
+downloads, paused execution and ZIP packing. An 832-file packing interruption
+recovered in 14.56 seconds without another source download; the two workers
+persisted eight packing progress updates and no `.partial` file entered the ZIP.
+The reported duration is one local fixture observation, not a service guarantee.
+I/O fault tests reproduced a paused condition-variable hang and incorrect
+`cancelled` status; both now pass, retaining the original storage error.
+
+BBox enumeration uses arithmetic counts and streamed coordinates. Polygon
+coordinates are deduplicated into one reusable manifest; exact counts enforce
+the existing configured budget. Retry baseline validation runs in the worker,
+outside the scheduler lock. MBTiles uses one writer, a prepared statement and
+bounded transactions (256 records or 250 ms), counting success after commit.
+Ordinary output no longer runs `VACUUM`. Disk checks estimate actual copy,
+conversion and ZIP work; no implicit extra 1 GiB reserve blocks small jobs.
+
+Atomic file writes use unique temporary names and serialize only the final
+replacement of the same coordinate. A 32-writer regression reproduced Windows
+sharing/rename failures with the old temporary-file approach and passes after
+the fix. Uncommitted partial bytes cannot be mistaken for a valid saved tile.
+
+The isolated 256-record storage microbenchmark measured about 986 ms with
+autocommit and 9 ms in one bounded transaction. This measures SQLite storage,
+not whole-task acceleration. `scripts/benchmark_download.py` compares committed
+revisions using the same loopback fixture and records first committed tile,
+elapsed time, connections, sampled heap and output size. ZIP packaging and OS
+RSS are outside that fixture; whole-task measurements are reported separately.
+
+A second server using the same database is rejected before migration or
+scheduler recovery; worker processes retain the shared maintenance lock. The
+duplicate-server test reproduced the old concurrent startup and now passes.
+Missing/corrupt pending ZIPs return to the original run for rebuilding, keeping
+raw data, the previous artifact and unrelated valid publications. Both failure
+cases were reproduced before repair. The packing injection now waits up to 90
+seconds for an actual unfinished ZIP; the earlier 25-second deadline proved
+sensitive to slow disks and was not a product performance requirement.

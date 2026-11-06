@@ -231,9 +231,7 @@ func TestAPILifecycle(t *testing.T) {
 		})
 		db.Close()
 		request("DELETE", "/api/tasks/"+paused+"/purge", nil, 409, nil)
-		if get(queued).Queue.State != "queued" {
-			t.Fatal("pause released a slot")
-		}
+		apiEventually(t, func() bool { return get(queued).Queue.State == "running" })
 		hold.Store(false)
 		waitStatus(queued, "completed")
 		if get(paused).Status != "paused" {
@@ -308,7 +306,8 @@ func TestAPILifecycle(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		request("POST", "/api/tasks/"+missing.ID+"/retry-failures", nil, 409, nil)
+		request("POST", "/api/tasks/"+missing.ID+"/retry-failures", nil, 202, nil)
+		waitStatus(missing.ID, "failed")
 		failing.Store(false)
 		var recreated TaskResponse
 		request("POST", "/api/tasks/"+missing.ID+"/recreate", nil, 201, &recreated)

@@ -116,6 +116,9 @@ func main() {
 
 	// 初始化数据库
 	initDB()
+	if store.serverLock != nil {
+		defer store.serverLock.Close()
+	}
 	defer store.maintenanceLock.Close()
 	defer store.db.Close()
 

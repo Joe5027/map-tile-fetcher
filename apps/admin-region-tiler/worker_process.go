@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -48,56 +49,99 @@ func runWorkerProcess(taskRecordID, runID string) error {
 
 	task, err := buildTaskFromRecord(taskRecord)
 	if err != nil {
-		_ = failRunBeforeStart(taskRecord, run, err)
+		// The manager handles this exit. A delayed worker must not write before
+		// obtaining its run lock and passing its ownership check below.
 		return err
 	}
 	task.workerManaged = true
 	defer task.cancel()
+	parentWatch := watchWorkerParent(task)
+	runLock, err := lockRun(task.ctx, taskRecord, run.ID)
+	if err != nil {
+		if parentWatch.gone.Load() {
+			return nil
+		}
+		return err
+	}
+	defer runLock.Close()
+	owned, err := store.workerOwnsRun(taskRecord.ID)
+	if err != nil {
+		return err
+	}
+	if !owned || parentWatch.gone.Load() {
+		return nil
+	}
+	failBeforeStart := func(cause error) error {
+		if parentWatch.gone.Load() {
+			return nil
+		}
+		return failRunBeforeStart(taskRecord, run, cause)
+	}
+	runDir, err := managedRunDirectory(taskRecord, run.ID)
+	if err != nil {
+		return failBeforeStart(err)
+	}
+	task.expectedPath = filepath.Join(runDir, "expected.sqlite")
+	task.expectedLimit = maxTaskTiles()
+	_ = store.setRunPhase(run.ID, "preparing", 0, 0)
 	controller := &workerController{taskRecordID: taskRecordID, task: task, stop: make(chan struct{})}
 	if err := controller.sync(); err != nil {
-		return failRunBeforeStart(taskRecord, run, err)
+		return failBeforeStart(err)
 	}
 	controller.start()
 	defer controller.stopLoop()
 	task.File = run.OutputPath
 	if task.File != "" {
 		if err := os.MkdirAll(filepath.Dir(task.File), directoryPermissions); err != nil {
-			return failRunBeforeStart(taskRecord, run, err)
+			return failBeforeStart(err)
 		}
 	}
+	expected, err := task.expectedCount()
+	if err != nil {
+		return failBeforeStart(err)
+	}
+	if err := retryOnBusy(func() error { return store.reserveTaskBudget(taskRecord, expected) }); err != nil {
+		return failBeforeStart(err)
+	}
+	resuming := os.Getenv(workerResumeEnv) == "1"
+	task.preserveOutput = resuming
 	if run.TriggerMode == triggerRetryFailures {
 		previous, err := store.validateRetryBaselineWithTask(taskRecord, task)
 		if err != nil {
-			_ = failRunBeforeStart(taskRecord, run, err)
+			_ = failBeforeStart(err)
 			return err
 		}
 		if err := copyRetryBaseline(taskRecord, task, previous); err != nil {
-			_ = failRunBeforeStart(taskRecord, run, err)
+			_ = failBeforeStart(err)
 			return err
 		}
 		summary, err := store.failureSummary(taskRecord.ID)
 		if err != nil {
-			_ = failRunBeforeStart(taskRecord, run, err)
+			_ = failBeforeStart(err)
 			return err
 		}
 		if summary.Retryable == 0 {
-			_ = failRunBeforeStart(taskRecord, run, errNoRetryableFailures)
+			_ = failBeforeStart(errNoRetryableFailures)
 			return errNoRetryableFailures
 		}
 		task.Total = summary.Retryable
 		task.retrySource = func(visit func(TileJob) error) error { return store.walkRetryFailures(taskRecord.ID, visit) }
 	} else {
-		var count int64
-		if err := task.forEachExpected(func(TileJob) error { count++; return nil }); err != nil {
-			return failRunBeforeStart(taskRecord, run, err)
+		task.Total = expected
+	}
+	if resuming {
+		cleanup, err := prepareResumeJobs(taskRecord, task, run)
+		if err != nil {
+			return failBeforeStart(err)
 		}
-		task.Total = count
+		defer cleanup()
 	}
 	task.failureSink = store.failureSink(taskRecord, run.ID)
 
 	run.Total = task.Total
 	run.Status = TaskRunning
 	run.StartedAt = timePtrOrNow(run.StartedAt)
+	_ = store.setRunPhase(run.ID, "downloading", task.Current, task.Total)
 	if err := retryOnBusy(func() error { return store.updateRunProgress(run) }); err != nil {
 		return err
 	}
@@ -112,6 +156,9 @@ func runWorkerProcess(taskRecordID, runID string) error {
 		for {
 			select {
 			case <-progressTicker.C:
+				if parentWatch.gone.Load() {
+					return
+				}
 				persistRunProgress(run, task)
 			case <-done:
 				return
@@ -122,12 +169,16 @@ func runWorkerProcess(taskRecordID, runID string) error {
 	task.Run()
 	close(done)
 	<-progressDone
+	if parentWatch.gone.Load() {
+		return nil
+	}
 
 	persistRunProgress(run, task)
 	applyTaskSnapshot(run, task)
 
 	state := IntegrityState{Status: "unchecked"}
 	if run.Status == TaskCompleted || run.Status == TaskPartialFailed {
+		_ = store.setRunPhase(run.ID, "verifying", 0, expected)
 		state, err = store.inspectOutput(taskRecord, task, run, true)
 		if err != nil {
 			run.Status = TaskFailed
@@ -141,6 +192,25 @@ func runWorkerProcess(taskRecordID, runID string) error {
 			task.setStatus(TaskPartialFailed)
 		}
 	}
+	if parentWatch.gone.Load() {
+		return nil
+	}
+	if run.Status == TaskCompleted || run.Status == TaskPartialFailed {
+		if err := prepareDerivedArtifacts(taskRecord, task, run); err != nil {
+			run.Status, run.ErrorMessage = TaskFailed, err.Error()
+			if errors.Is(err, context.Canceled) {
+				run.Status = TaskCancelled
+			}
+		}
+		if task.derivedIntegrity != nil {
+			state = *task.derivedIntegrity
+			state.RunID = run.ID
+			if state.Status != "complete" && run.Status != TaskFailed && run.Status != TaskCancelled {
+				run.Status = TaskPartialFailed
+			}
+		}
+	}
+	_ = store.setRunPhase(run.ID, "packing", 0, 0)
 	if err := prepareArtifactForRun(taskRecord, task, run); err != nil {
 		run.ArtifactStatus = ArtifactFailed
 		run.Status = TaskFailed
@@ -153,9 +223,13 @@ func runWorkerProcess(taskRecordID, runID string) error {
 	} else if run.ArtifactPath != "" {
 		run.ArtifactStatus = ArtifactReady
 	}
+	if parentWatch.gone.Load() {
+		return nil
+	}
 
 	finalize := func() error { return store.finalizeRun(run) }
 	if run.ArtifactStatus == ArtifactReady {
+		_ = store.setRunPhase(run.ID, "publishing", run.Current, run.Total)
 		finalize = func() error { return store.publishRun(run, state) }
 	}
 	if err := retryOnBusy(finalize); err != nil {
@@ -170,6 +244,7 @@ func runWorkerProcess(taskRecordID, runID string) error {
 			log.Errorf("failed to refresh parent task record %s from worker: %v", taskRecord.ParentID, err)
 		}
 	}
+	_ = store.setRunPhase(run.ID, string(run.Status), run.Current, run.Total)
 	return nil
 }
 
@@ -193,10 +268,10 @@ func tileJobsFromFailureRecords(records []FailureRecord) []TileJob {
 	return jobs
 }
 
-func launchWorkerProcess(taskRecordID, runID string) (*exec.Cmd, error) {
+func launchWorkerProcess(taskRecordID, runID string, resuming bool) (*exec.Cmd, io.WriteCloser, error) {
 	exePath, err := os.Executable()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	args := []string{
@@ -210,10 +285,26 @@ func launchWorkerProcess(taskRecordID, runID string) (*exec.Cmd, error) {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Env = os.Environ()
-	if err := cmd.Start(); err != nil {
-		return nil, err
+	owner := fmt.Sprintf("%s:%d:%d", runID, os.Getpid(), time.Now().UnixNano())
+	if _, err := store.db.Exec(`UPDATE execution_queue SET owner_token=? WHERE plan_id=?`, owner, taskRecordID); err != nil {
+		return nil, nil, err
 	}
-	return cmd, nil
+	cmd.Env = append(cmd.Env, workerParentGuardEnv+"=1", workerOwnerEnv+"="+owner, workerResumeEnv+"=0")
+	if resuming {
+		cmd.Env = append(cmd.Env, workerResumeEnv+"=1")
+	}
+	readPipe, writePipe, err := os.Pipe()
+	if err != nil {
+		return nil, nil, err
+	}
+	cmd.Stdin = readPipe
+	if err := cmd.Start(); err != nil {
+		readPipe.Close()
+		writePipe.Close()
+		return nil, nil, err
+	}
+	readPipe.Close()
+	return cmd, writePipe, nil
 }
 
 func workerProcessWorkingDir(exePath string) string {
@@ -291,6 +382,10 @@ func (c *workerController) sync() error {
 		if status != TaskCancelled && status != TaskFailed {
 			return c.task.Cancel()
 		}
+	case TaskRecordQueued:
+		if status == TaskRunning {
+			return c.task.Pause()
+		}
 	}
 
 	return nil
@@ -301,6 +396,7 @@ func persistRunProgress(run *TaskRunRecord, task *Task) {
 	if err := retryOnBusy(func() error { return store.updateRunProgress(run) }); err != nil {
 		log.Errorf("failed to update run progress %s: %v", run.ID, err)
 	}
+	_, _ = store.db.Exec(`UPDATE run_phases SET current=?,total=? WHERE run_id=? AND phase='downloading'`, run.Current, run.Total, run.ID)
 }
 
 func applyTaskSnapshot(run *TaskRunRecord, task *Task) {
@@ -350,10 +446,25 @@ func prepareArtifactForRun(taskRecord *TaskRecord, task *Task, run *TaskRunRecor
 	}
 
 	run.ArtifactStatus = ArtifactPacking
+	sourceDir := taskSnapshot.File
+	if task.artifactDirectory != "" {
+		sourceDir = task.artifactDirectory
+	}
 	zipPath := filepath.Join(artifactDir, "artifact.zip")
 	stagingPath := zipPath + ".partial"
 	defer os.Remove(stagingPath)
-	if err := zipDirectory(taskSnapshot.File, stagingPath, func(current, total int) error {
+	var lastProgress time.Time
+	if err := zipDirectory(sourceDir, stagingPath, func(current, total int) error {
+		if task.workerManaged {
+			if err := task.waitIfPaused(); err != nil {
+				return err
+			}
+		}
+		now := time.Now()
+		if current != 0 && current != total && now.Sub(lastProgress) < 200*time.Millisecond {
+			return nil
+		}
+		lastProgress = now
 		latest, err := store.getTaskRecordByID(taskRecord.ID)
 		if err != nil {
 			return err
@@ -362,6 +473,7 @@ func prepareArtifactForRun(taskRecord *TaskRecord, task *Task, run *TaskRunRecor
 			return context.Canceled
 		}
 		run.ArtifactName = fmt.Sprintf("压缩中：%d/%d", current, total)
+		_ = store.setRunPhase(run.ID, "packing", int64(current), int64(total))
 		if err := retryOnBusy(func() error { return store.updateRunProgress(run) }); err != nil {
 			log.Warnf("failed to persist archive progress for run %s: %v", run.ID, err)
 		}
@@ -373,7 +485,9 @@ func prepareArtifactForRun(taskRecord *TaskRecord, task *Task, run *TaskRunRecor
 		return err
 	}
 	if _, err := os.Stat(zipPath); err == nil {
-		return fmt.Errorf("run artifact already exists")
+		if err := os.Remove(zipPath); err != nil {
+			return err
+		}
 	} else if !os.IsNotExist(err) {
 		return err
 	}
@@ -462,6 +576,7 @@ func failRunBeforeStart(taskRecord *TaskRecord, run *TaskRunRecord, cause error)
 	if err := retryOnBusy(func() error { return store.finalizeRun(run) }); err != nil {
 		return err
 	}
+	_ = store.setRunPhase(run.ID, string(run.Status), run.Current, run.Total)
 	return retryOnBusy(func() error { return store.updateTaskRecordStatus(taskRecord.ID, statusToTaskRecordStatus(run.Status)) })
 }
 

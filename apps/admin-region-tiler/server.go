@@ -17,7 +17,6 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
-	"github.com/paulmach/orb"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 	"github.com/teris-io/shortid"
@@ -1103,24 +1102,6 @@ func buildTaskRecordsFromRequest(userID int64, req CreateTaskRequest) (*TaskReco
 	sources, err := normalizeSources(req)
 	if err != nil {
 		return nil, nil, err
-	}
-	if len(req.Area.Polygon) > 0 && req.Zoom != nil {
-		points, err := normalizePolygonCoordinates(req.Area.Polygon)
-		if err != nil {
-			return nil, nil, err
-		}
-		bound := orb.Bound{Min: orb.Point{points[0].Lon, points[0].Lat}, Max: orb.Point{points[0].Lon, points[0].Lat}}
-		for _, p := range points {
-			bound = bound.Extend(orb.Point{p.Lon, p.Lat})
-		}
-		n, err := boundBudget(bound, req.Zoom.Min, req.Zoom.Max)
-		if err != nil {
-			return nil, nil, err
-		}
-		n *= int64(len(sources))
-		if n > maxTaskTiles() {
-			return nil, nil, &TileBudgetError{Estimated: n, Limit: maxTaskTiles(), Conservative: true}
-		}
 	}
 	outputFormat, err := normalizeOutputFormat(req.Output.Format)
 	if err != nil {

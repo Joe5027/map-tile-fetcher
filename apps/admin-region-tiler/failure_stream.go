@@ -3,7 +3,12 @@ package main
 import (
 	"fmt"
 	"github.com/paulmach/orb/maptile"
+	"os"
+	"sync/atomic"
+	"time"
 )
+
+var failureExecutionSequence atomic.Uint64
 
 func (s *SQLiteStore) walkRetryFailures(planID string, visit func(TileJob) error) error {
 	for offset := 0; ; offset += 256 {
@@ -39,13 +44,15 @@ func (s *SQLiteStore) walkRetryFailures(planID string, visit func(TileJob) error
 
 func (s *SQLiteStore) failureSink(plan *TaskRecord, runID string) func(TileFailureRecord) error {
 	index := 0
+	// A resumed run keeps its ID; each worker execution needs a new event prefix.
+	prefix := fmt.Sprintf("%s:event:%d:%d:%d", runID, os.Getpid(), time.Now().UnixNano(), failureExecutionSequence.Add(1))
 	taskID := plan.ParentID
 	if taskID == "" {
 		taskID = plan.ID
 	}
 	return func(record TileFailureRecord) error {
 		index++
-		_, err := s.db.Exec(`INSERT INTO failures(id,task_id,run_id,source_id,z,x,y,url,error_message,retryable,attempt,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, fmt.Sprintf("%s:event:%d", runID, index), taskID, runID, plan.ID, record.Z, record.X, record.Y, record.URL, record.ErrorMessage, record.Retryable, record.Attempt, record.CreatedAt.Unix())
+		_, err := s.db.Exec(`INSERT INTO failures(id,task_id,run_id,source_id,z,x,y,url,error_message,retryable,attempt,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, fmt.Sprintf("%s:%d", prefix, index), taskID, runID, plan.ID, record.Z, record.X, record.Y, record.URL, record.ErrorMessage, record.Retryable, record.Attempt, record.CreatedAt.Unix())
 		return err
 	}
 }

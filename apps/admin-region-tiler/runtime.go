@@ -17,9 +17,11 @@ import (
 )
 
 type ActiveRun struct {
-	Plan *TaskRecord
-	Run  *TaskRunRecord
-	Cmd  *exec.Cmd
+	Plan        *TaskRecord
+	Run         *TaskRunRecord
+	Cmd         *exec.Cmd
+	ParentInput io.Closer
+	Suspended   bool
 }
 
 type RuntimeManager struct {
@@ -126,9 +128,6 @@ func (m *RuntimeManager) startTaskRecordWithTrigger(plan *TaskRecord, triggerMod
 					return err
 				}
 				if summary.Retryable > 0 {
-					if _, err := store.validateRetryBaseline(child); err != nil {
-						return err
-					}
 					eligible = append(eligible, child)
 				}
 			}
@@ -169,13 +168,20 @@ func (m *RuntimeManager) startTaskRecordWithTrigger(plan *TaskRecord, triggerMod
 		if summary.Retryable == 0 {
 			return errNoRetryableFailures
 		}
-		if _, err := store.validateRetryBaseline(plan); err != nil {
-			return err
-		}
 	}
 
 	m.mu.Lock()
-	if _, exists := m.active[plan.ID]; exists {
+	if active, exists := m.active[plan.ID]; exists {
+		if active.Suspended && triggerMode == triggerResumeRun {
+			m.mu.Unlock()
+			if err := store.updateTaskRecordStatus(plan.ID, TaskRecordRunning); err != nil {
+				return err
+			}
+			m.mu.Lock()
+			active.Suspended = false
+			m.mu.Unlock()
+			return nil
+		}
 		m.mu.Unlock()
 		return errTaskAlreadyActive
 	}
@@ -198,6 +204,7 @@ func (m *RuntimeManager) startTaskRecordWithTrigger(plan *TaskRecord, triggerMod
 		_ = store.updateTaskRecordStatus(plan.ID, TaskRecordFailed)
 		return err
 	}
+	defer task.cancel()
 
 	runID, err := shortid.Generate()
 	if err != nil {
@@ -214,30 +221,47 @@ func (m *RuntimeManager) startTaskRecordWithTrigger(plan *TaskRecord, triggerMod
 		StartedAt:      &now,
 		Total:          task.Total,
 	}
+	resuming := triggerMode == triggerResumeRun && plan.LastRunID != ""
+	if resuming {
+		run, err = store.getRun(plan.LastRunID)
+		if err != nil {
+			return err
+		}
+		run.Status, run.ErrorMessage, run.FinishedAt = TaskRunning, "", nil
+		run.ArtifactStatus = ArtifactNone
+	}
 	runDir, err := managedRunDirectory(plan, run.ID)
 	if err != nil {
 		return err
 	}
-	run.OutputPath = filepath.Join(runDir, "tiles")
-	if task.outformat == "mbtiles" {
-		run.OutputPath = filepath.Join(runDir, "tiles.mbtiles")
+	if !resuming {
+		run.OutputPath = filepath.Join(runDir, "tiles")
+		if task.outformat == "mbtiles" {
+			run.OutputPath = filepath.Join(runDir, "tiles.mbtiles")
+		}
 	}
 
-	if err := store.createRun(run); err != nil {
-		return err
+	if resuming {
+		if err := store.updateRunProgress(run); err != nil {
+			return err
+		}
+	} else {
+		if err := store.createRun(run); err != nil {
+			return err
+		}
 	}
-	if err := store.markTaskRecordRunning(plan.ID, runID); err != nil {
+	if err := store.markTaskRecordRunning(plan.ID, run.ID); err != nil {
 		_ = failRunBeforeStart(plan, run, err)
 		return err
 	}
 
-	cmd, err := launchWorkerProcess(plan.ID, run.ID)
+	cmd, parentInput, err := launchWorkerProcess(plan.ID, run.ID, resuming)
 	if err != nil {
 		_ = failRunBeforeStart(plan, run, err)
 		return err
 	}
 
-	active := &ActiveRun{Plan: plan, Run: run, Cmd: cmd}
+	active := &ActiveRun{Plan: plan, Run: run, Cmd: cmd, ParentInput: parentInput}
 	m.mu.Lock()
 	m.active[plan.ID] = active
 	m.mu.Unlock()
@@ -249,6 +273,9 @@ func (m *RuntimeManager) startTaskRecordWithTrigger(plan *TaskRecord, triggerMod
 
 func (m *RuntimeManager) monitorWorker(active *ActiveRun) {
 	waitErr := active.Cmd.Wait()
+	if active.ParentInput != nil {
+		_ = active.ParentInput.Close()
+	}
 	if waitErr != nil {
 		log.Errorf("worker process for plan %s exited with error: %v", active.Plan.ID, waitErr)
 	}
@@ -271,7 +298,19 @@ func (m *RuntimeManager) monitorWorker(active *ActiveRun) {
 }
 
 func (m *RuntimeManager) Pause(planID string) error {
+	m.operations.Lock()
+	defer m.operations.Unlock()
+	if err := m.pauseTaskRecord(planID); err != nil {
+		return err
+	}
+	return m.dispatchQueued()
+}
+
+func (m *RuntimeManager) pauseTaskRecord(planID string) error {
 	plan, err := store.getTaskRecordByID(planID)
+	if err != nil {
+		return err
+	}
 	if err == nil && plan.Kind == TaskRecordKindGroup {
 		children, listErr := store.listTaskChildrenByParent(planID)
 		if listErr != nil {
@@ -279,7 +318,7 @@ func (m *RuntimeManager) Pause(planID string) error {
 		}
 		var paused bool
 		for _, child := range children {
-			if childErr := m.Pause(child.ID); childErr == nil {
+			if childErr := m.pauseTaskRecord(child.ID); childErr == nil {
 				paused = true
 			}
 		}
@@ -289,18 +328,37 @@ func (m *RuntimeManager) Pause(planID string) error {
 		return errTaskNotFound
 	}
 
-	active, err := m.getActive(planID)
-	if err != nil {
-		return err
-	}
-	if active.Cmd == nil || active.Cmd.Process == nil {
+	if plan.Status != TaskRecordRunning && plan.Status != TaskRecordQueued && plan.Status != TaskRecordScheduled && plan.Status != TaskRecordPaused {
 		return errTaskNotFound
 	}
-	return store.updateTaskRecordStatus(planID, TaskRecordPaused)
+	if err := store.updateTaskRecordStatus(planID, TaskRecordPaused); err != nil {
+		return err
+	}
+	if _, err := store.db.Exec(`UPDATE execution_queue SET state='paused' WHERE plan_id=?`, planID); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	if active := m.active[planID]; active != nil {
+		active.Suspended = true
+	}
+	m.mu.Unlock()
+	return nil
 }
 
 func (m *RuntimeManager) Resume(planID string) error {
+	m.operations.Lock()
+	defer m.operations.Unlock()
+	if err := m.resumeTaskRecord(planID); err != nil {
+		return err
+	}
+	return m.dispatchQueued()
+}
+
+func (m *RuntimeManager) resumeTaskRecord(planID string) error {
 	plan, err := store.getTaskRecordByID(planID)
+	if err != nil {
+		return err
+	}
 	if err == nil && plan.Kind == TaskRecordKindGroup {
 		children, listErr := store.listTaskChildrenByParent(planID)
 		if listErr != nil {
@@ -308,7 +366,7 @@ func (m *RuntimeManager) Resume(planID string) error {
 		}
 		var resumed bool
 		for _, child := range children {
-			if childErr := m.Resume(child.ID); childErr == nil {
+			if childErr := m.resumeTaskRecord(child.ID); childErr == nil {
 				resumed = true
 			}
 		}
@@ -318,14 +376,11 @@ func (m *RuntimeManager) Resume(planID string) error {
 		return errTaskNotFound
 	}
 
-	active, err := m.getActive(planID)
-	if err != nil {
-		return err
-	}
-	if active.Cmd == nil || active.Cmd.Process == nil {
+	if plan.Status != TaskRecordPaused {
 		return errTaskNotFound
 	}
-	return store.updateTaskRecordStatus(planID, TaskRecordRunning)
+	_, err = store.db.Exec(`INSERT INTO execution_queue(plan_id,trigger_mode,due_at,enqueued_at,state) VALUES(?,?,?,?, 'queued') ON CONFLICT(plan_id) DO UPDATE SET trigger_mode='resume',due_at=excluded.due_at,state='queued'`, planID, triggerResumeRun, time.Now().UnixMilli(), time.Now().UnixMilli())
+	return err
 }
 
 func (m *RuntimeManager) Cancel(plan *TaskRecord) error {
@@ -354,11 +409,24 @@ func (m *RuntimeManager) Cancel(plan *TaskRecord) error {
 		return store.updateTaskRecordStatus(plan.ID, TaskRecordCancelled)
 	}
 
-	if plan.Status == TaskRecordScheduled || plan.Status == TaskRecordQueued {
+	if plan.Status == TaskRecordScheduled || plan.Status == TaskRecordQueued || plan.Status == TaskRecordPaused {
 		m.operations.Lock()
 		defer m.operations.Unlock()
 		if _, err := store.db.Exec(`DELETE FROM execution_queue WHERE plan_id=?`, plan.ID); err != nil {
 			return err
+		}
+		if plan.LastRunID != "" {
+			run, err := store.getRun(plan.LastRunID)
+			if err != nil {
+				return err
+			}
+			if run.Status == TaskRunning || run.Status == TaskPending || run.Status == TaskPaused {
+				now := time.Now()
+				run.Status, run.FinishedAt = TaskCancelled, &now
+				if err := store.finalizeRun(run); err != nil {
+					return err
+				}
+			}
 		}
 		return store.updateTaskRecordStatus(plan.ID, TaskRecordCancelled)
 	}
@@ -533,15 +601,29 @@ func buildTaskFromRecord(plan *TaskRecord) (*Task, error) {
 
 func zipDirectory(sourceDir, zipPath string, onProgress func(current, total int) error) (err error) {
 	files := make([]string, 0)
+	var archiveBytes uint64
 	if err := filepath.Walk(sourceDir, func(path string, info os.FileInfo, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
+		if info.Mode().IsRegular() && strings.HasSuffix(info.Name(), ".partial") {
+			return nil
+		}
 		if info.Mode().IsRegular() {
+			relative, err := filepath.Rel(sourceDir, path)
+			if err != nil {
+				return err
+			}
 			files = append(files, path)
+			// DEFLATE can slightly expand incompressible PNG/terrain. Include
+			// block and ZIP headers, including both copies of the filename.
+			archiveBytes += uint64(info.Size()) + uint64(info.Size()/1000) + 32 + 128 + uint64(len(filepath.ToSlash(relative)))*2
 		}
 		return nil
 	}); err != nil {
+		return err
+	}
+	if err := requireOutputSpace(filepath.Dir(zipPath), "archive", archiveBytes+256); err != nil {
 		return err
 	}
 	if onProgress != nil {
