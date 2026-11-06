@@ -358,6 +358,20 @@ All five manifest source hashes match the rendered frontend; the refreshed
 images were reviewed. The unchanged backend/Python suites were reused from
 their passing candidate checks instead of rerun for these frontend/CI edits.
 
+Candidate `537795c` passed five remote jobs, both native packages and the
+offline Cesium smoke. Its first three real workflows each took about 16 seconds
+on Linux, versus the previously observed 65–75 seconds; hosted timings vary.
+The fourth exposed a test synchronization issue: immediately reading a popup's
+width after resizing could still return its previous 1440px viewport. The
+fixture now waits for navigation and the actual requested viewport before
+asserting it. The expected widths and all business assertions remain unchanged;
+this failure is retained as evidence rather than treated as a successful run.
+The targeted 768px rectangle workflow then passed in 21.094 seconds, retaining
+fallback/retry/mesh/frame/pixel/deletion checks. A separate delayed-navigation
+popup regression started from the 1440px context and verified actual widths
+390/768/1440 after the shared helper. Product code and image hashes did not
+change, so unrelated suites and image generation were not repeated locally.
+
 ## Acceptance Evidence And Limits
 
 The initial integrated local release preflight passed with the pinned Node 24.22.2:

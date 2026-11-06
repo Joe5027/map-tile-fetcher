@@ -93,6 +93,14 @@ geojson = "./geojson/china.geojson"
   };
 }
 
+export async function setTerrainPreviewViewport(page, width) {
+  await page.waitForLoadState("domcontentloaded");
+  await page.setViewportSize({ width, height: 1000 });
+  // The protocol resize acknowledgement can precede the popup document's layout.
+  await page.waitForFunction(expected => innerWidth === expected, width);
+  assert.equal(await page.evaluate(() => innerWidth), width, "preview must use the scenario's viewport");
+}
+
 export async function runWorkflowAcceptance(page, baseURL, fixture) {
   const client = page.context().request;
   const owned = [];
@@ -202,8 +210,7 @@ export async function runWorkflowAcceptance(page, baseURL, fixture) {
       const pendingPartialPreview = page.waitForEvent("popup");
       await partialChild.locator(".terrain-preview-link").click();
       const partialPreview = await pendingPartialPreview;
-      await partialPreview.setViewportSize({width,height:1000});
-      assert.equal(await partialPreview.evaluate(()=>innerWidth),width,"partial preview must use the scenario's viewport");
+      await setTerrainPreviewViewport(partialPreview, width);
       partialPreview.on("pageerror", error => errors.push(error.message));
       const fallback = await assertMissingChildFallback(partialPreview);
       await partialPreview.close();
@@ -218,8 +225,7 @@ export async function runWorkflowAcceptance(page, baseURL, fixture) {
       const pendingPreview = page.waitForEvent("popup");
       await child.locator(".terrain-preview-link").click();
       const preview = await pendingPreview;
-      await preview.setViewportSize({width,height:1000});
-      assert.equal(await preview.evaluate(()=>innerWidth),width,"complete preview must use the scenario's viewport");
+      await setTerrainPreviewViewport(preview, width);
       preview.on("pageerror", error => errors.push(error.message));
       await preview.waitForFunction(() => window.terrainPreview?.ready, null, {timeout:60000});
       await preview.evaluate(() => {
