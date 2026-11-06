@@ -25,11 +25,11 @@
                 <form id="loginForm" class="login-form">
                     <label class="field">
                         <span class="field-label">用户名</span>
-                        <input type="text" name="username" required placeholder="默认 admin">
+                        <input type="text" name="username" required autocomplete="username">
                     </label>
                     <label class="field">
                         <span class="field-label">密码</span>
-                        <input type="password" name="password" required placeholder="默认 adminmap">
+                        <input type="password" name="password" required autocomplete="current-password">
                     </label>
                     <p id="loginError" class="message error is-hidden"></p>
                     <button type="submit" class="primary-button wide">登录进入系统</button>
@@ -339,8 +339,7 @@
                                                 <label class="range-preview-source">
                                                     <span>底图</span>
                                                     <select id="rangePreviewSource" name="rangePreviewSource">
-                                                        <option value="osm" selected>OSM</option>
-                                                        <option value="tdt-img">天地图影像</option>
+                                                        <option value="tdt-img" selected>天地图影像</option>
                                                         <option value="tdt-vec">天地图矢量</option>
                                                     </select>
                                                 </label>
@@ -366,8 +365,7 @@
                                         <label class="range-preview-source">
                                             <span>底图</span>
                                             <select id="adminRegionPreviewSource" name="adminRegionPreviewSource">
-                                                <option value="osm" selected>OSM</option>
-                                                <option value="tdt-img">天地图影像</option>
+                                                <option value="tdt-img" selected>天地图影像</option>
                                                 <option value="tdt-vec">天地图矢量</option>
                                             </select>
                                         </label>
@@ -452,6 +450,6 @@
     </dialog>
 
     <script src="/static/vendor/leaflet/leaflet.js?v=1"></script>
-    <script src="/static/script.js?v=76"></script>
+    <script src="/static/script.js?v=79"></script>
 </body>
 </html>

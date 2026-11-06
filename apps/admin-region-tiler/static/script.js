@@ -48,19 +48,28 @@ let taskPollingTimer = null;
 let taskLoadPromise = null;
 let taskLoadGeneration = 0;
 let authenticated = false;
+let allRegions = [];
+let regionsByID = new Map();
+let regionsByLevel = new Map();
+let regionsByParentAndLevel = new Map();
 const expandedProviders = new Set();
 const expandedGroupTasks = new Set();
 const expandedChildTasks = new Set();
 const selectedTaskIds = new Set();
 const adminRegionGeoJSONCache = new Map();
+const adminRegionGeoJSONRequests = new Map();
+const adminRegionLayerCache = new Map();
 const WEB_MERCATOR_MAX_LAT = 85.05112878;
 const HORIZONTAL_DRAG_LIMIT_LNG = 180;
-const MAP_LATITUDE_BOUNDS = [
+const MAP_WORLD_BOUNDS = [
     [-WEB_MERCATOR_MAX_LAT, -HORIZONTAL_DRAG_LIMIT_LNG],
     [WEB_MERCATOR_MAX_LAT, HORIZONTAL_DRAG_LIMIT_LNG]
 ];
 const MAP_MIN_ZOOM = 2;
+const WEB_MERCATOR_TILE_SIZE = 256;
 const MAP_INIT_RETRY_LIMIT = 30;
+const ADMIN_REGION_GEOJSON_BATCH_SIZE = 64;
+const ADMIN_REGION_LAYER_CACHE_LIMIT = 6;
 const TOKEN_STORAGE_KEY = "mapTileFetcher.serviceCredentials.v1";
 
 const REGION_LEVEL_RULES = [
@@ -742,6 +751,25 @@ function validateSourceCredentials(sources, credentials) {
     return "";
 }
 
+function getWorldCoveringMinZoom(mapElementID) {
+    const mapElement = document.getElementById(mapElementID);
+    const viewportSize = Math.max(mapElement?.clientWidth || 0, mapElement?.clientHeight || 0);
+    if (viewportSize <= WEB_MERCATOR_TILE_SIZE) {
+        return MAP_MIN_ZOOM;
+    }
+    return Math.max(MAP_MIN_ZOOM, Math.ceil(Math.log2(viewportSize / WEB_MERCATOR_TILE_SIZE)));
+}
+
+function keepMapWorldCoveringViewport(map, mapElementID) {
+    const minZoom = getWorldCoveringMinZoom(mapElementID);
+    if (map.getMinZoom() !== minZoom) {
+        map.setMinZoom(minZoom);
+    }
+    if (map.getZoom() < minZoom) {
+        map.setZoom(minZoom, { animate: false });
+    }
+}
+
 function initAdminRegionMap() {
     if (adminRegionMap) {
         // The map may have been created before the asynchronous region catalog finished loading.
@@ -762,12 +790,14 @@ function initAdminRegionMap() {
     adminRegionMap = L.map("adminRegionMap", {
         zoomControl: true,
         attributionControl: false,
-        minZoom: MAP_MIN_ZOOM,
-        maxBounds: MAP_LATITUDE_BOUNDS,
+        minZoom: getWorldCoveringMinZoom("adminRegionMap"),
+        maxBounds: MAP_WORLD_BOUNDS,
         maxBoundsViscosity: 1,
         worldCopyJump: false
     }).setView([35.8617, 104.1954], 5);
 
+    keepMapWorldCoveringViewport(adminRegionMap, "adminRegionMap");
+    adminRegionMap.on("resize", () => keepMapWorldCoveringViewport(adminRegionMap, "adminRegionMap"));
     updateAdminRegionBaseLayer();
     adminRegionLayerGroup = L.layerGroup().addTo(adminRegionMap);
     adminRegionMap.on("click", handleAdminRegionMapClick);
@@ -780,14 +810,14 @@ async function updateAdminRegionBaseLayer() {
         return;
     }
     const renderToken = ++adminRegionBaseLayerRenderToken;
-    const source = document.getElementById("adminRegionPreviewSource")?.value || "osm";
+    const source = document.getElementById("adminRegionPreviewSource")?.value || "tdt-img";
     const credentials = readCredentialRequest(new FormData(document.getElementById("taskForm")));
     const hasToken = hasUsableCredential(credentials.tiandituToken, "YOUR_TIANDITU_TOKEN");
     const hint = document.getElementById("adminRegionMapHint");
 
-    let url = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+    let url = "";
     let labelUrl = "";
-    let maxZoom = 19;
+    let maxZoom = 18;
     if ((source === "tdt-img" || source === "tdt-vec") && hasToken) {
         const previewTokenId = await ensureTiandituPreviewToken(credentials.tiandituToken);
         if (renderToken !== adminRegionBaseLayerRenderToken) {
@@ -815,21 +845,26 @@ async function updateAdminRegionBaseLayer() {
         adminRegionMap.removeLayer(adminRegionLabelLayer);
         adminRegionLabelLayer = null;
     }
-    adminRegionBaseLayer = L.tileLayer(url, {
-        minZoom: MAP_MIN_ZOOM,
-        maxZoom
-    });
-    adminRegionBaseLayer.on("tileerror", () => {
-        if(source.startsWith("tdt-")) void recoverPreviewCredentials(credentials.tiandituToken);
-        if (hint && source.startsWith("tdt-")) {
-            hint.textContent = "天地图预览瓦片加载失败，请检查 Token 权限";
-        }
-    });
-    adminRegionBaseLayer.addTo(adminRegionMap);
+    adminRegionBaseLayer = null;
+    if (url) {
+        adminRegionBaseLayer = L.tileLayer(url, {
+            minZoom: MAP_MIN_ZOOM,
+            maxZoom,
+            noWrap: true
+        });
+        adminRegionBaseLayer.on("tileerror", () => {
+            if (source.startsWith("tdt-")) void recoverPreviewCredentials(credentials.tiandituToken);
+            if (hint) {
+                hint.textContent = "天地图预览瓦片加载失败，请检查 Token 权限";
+            }
+        });
+        adminRegionBaseLayer.addTo(adminRegionMap);
+    }
     if (labelUrl) {
         adminRegionLabelLayer = L.tileLayer(labelUrl, {
             minZoom: MAP_MIN_ZOOM,
             maxZoom,
+            noWrap: true,
             opacity: 1
         });
         adminRegionLabelLayer.on("tileerror", () => {
@@ -870,8 +905,6 @@ async function renderAdminRegionMap() {
     const token = ++adminRegionRenderToken;
     updateAdminRegionLevelTabs();
     updateAdminRegionMapStatus("loading");
-    adminRegionLayerGroup.clearLayers();
-    adminRegionSelectedLayer = null;
 
     const config = getAdminRegionLevelConfig(adminRegionLevel);
     if (!config) {
@@ -886,50 +919,37 @@ async function renderAdminRegionMap() {
     }
 
     const selectedID = config.selectedRegionId;
-    let layerCount = 0;
-    await Promise.all(regions.map(async (region) => {
+    const cacheKey = getAdminRegionLayerCacheKey(regions);
+    let layerEntry = getCachedAdminRegionLayers(cacheKey);
+    if (!layerEntry) {
+        let geoJSONByRegionID;
         try {
-            const geojson = await fetchRegionGeoJSON(region.id);
-            if (token !== adminRegionRenderToken) {
-                return;
-            }
-            const selected = region.id === selectedID;
-            const layer = L.geoJSON(geojson, {
-                style: () => adminRegionFeatureStyle(selected),
-                onEachFeature: (_feature, featureLayer) => {
-                    featureLayer.bindTooltip(region.name, {
-                        direction: "center",
-                        className: "admin-region-tooltip",
-                        sticky: true
-                    });
-                    featureLayer.on("mouseover", () => {
-                        if (featureLayer !== adminRegionSelectedLayer) {
-                            featureLayer.setStyle(adminRegionHoverStyle());
-                        }
-                    });
-                    featureLayer.on("mouseout", () => {
-                        featureLayer.setStyle(adminRegionFeatureStyle(featureLayer === adminRegionSelectedLayer));
-                    });
-                }
-            });
-            layer.addTo(adminRegionLayerGroup);
-            bindAdminRegionLayerElements(layer, region);
-            layerCount += 1;
-            if (selected) {
-                adminRegionSelectedLayer = layer;
-                layer.setStyle(adminRegionFeatureStyle(true));
-            }
+            geoJSONByRegionID = await fetchRegionGeoJSONs(regions);
         } catch (error) {
-            console.warn("failed to load region geojson", region.id, error);
+            if (token === adminRegionRenderToken) {
+                console.warn("failed to load region geojson batch", error);
+                updateAdminRegionMapStatus("empty");
+            }
+            return;
         }
-    }));
+        if (token !== adminRegionRenderToken) {
+            return;
+        }
+        layerEntry = createAdminRegionLayerEntry(regions, geoJSONByRegionID);
+        cacheAdminRegionLayers(cacheKey, layerEntry);
+    }
 
     if (token !== adminRegionRenderToken) {
         return;
     }
-    if (layerCount === 0) {
+    if (layerEntry.layers.length === 0) {
         updateAdminRegionMapStatus("empty");
         return;
+    }
+    showAdminRegionLayerEntry(layerEntry, selectedID);
+    const selectedRegion = getRegionByID(selectedID);
+    if (selectedRegion) {
+        preloadAdminRegionChildren(selectedRegion);
     }
     const focused = await focusAdminRegionPendingSelection(token);
     if (!focused) {
@@ -939,15 +959,149 @@ async function renderAdminRegionMap() {
 }
 
 async function fetchRegionGeoJSON(regionID) {
-    if (adminRegionGeoJSONCache.has(regionID)) {
-        return adminRegionGeoJSONCache.get(regionID);
+    const geoJSONByRegionID = await fetchRegionGeoJSONs([{ id: regionID }]);
+    return geoJSONByRegionID.get(regionID);
+}
+
+async function fetchRegionGeoJSONs(regions) {
+    const regionIDs = [...new Set(regions.map((region) => String(region.id || "").trim()).filter(Boolean))];
+    const missingIDs = regionIDs.filter((regionID) => !adminRegionGeoJSONCache.has(regionID) && !adminRegionGeoJSONRequests.has(regionID));
+    for (let index = 0; index < missingIDs.length; index += ADMIN_REGION_GEOJSON_BATCH_SIZE) {
+        requestAdminRegionGeoJSONBatch(missingIDs.slice(index, index + ADMIN_REGION_GEOJSON_BATCH_SIZE));
     }
-    const response = await fetchJSON(`/api/config/region-catalog/${encodeURIComponent(regionID)}/geojson`);
-    if (!response.ok) {
-        throw new Error(response.data.error || "failed to load region geojson");
+
+    await Promise.all(regionIDs.map((regionID) => {
+        if (adminRegionGeoJSONCache.has(regionID)) {
+            return adminRegionGeoJSONCache.get(regionID);
+        }
+        const request = adminRegionGeoJSONRequests.get(regionID);
+        if (!request) {
+            throw new Error(`missing region geojson request for ${regionID}`);
+        }
+        return request;
+    }));
+
+    return new Map(regionIDs.map((regionID) => [regionID, adminRegionGeoJSONCache.get(regionID)]));
+}
+
+function requestAdminRegionGeoJSONBatch(regionIDs) {
+    if (regionIDs.length === 0) {
+        return;
     }
-    adminRegionGeoJSONCache.set(regionID, response.data);
-    return response.data;
+    const query = new URLSearchParams();
+    regionIDs.forEach((regionID) => query.append("id", regionID));
+    const batchRequest = fetchJSON(`/api/config/region-catalog/geojson-batch?${query.toString()}`)
+        .then((response) => {
+            if (!response.ok) {
+                throw new Error(response.data.error || "failed to load region geojson batch");
+            }
+            if (!response.data || typeof response.data.regions !== "object" || Array.isArray(response.data.regions)) {
+                throw new Error("invalid region geojson batch response");
+            }
+            return response.data.regions;
+        });
+
+    regionIDs.forEach((regionID) => {
+        const request = batchRequest.then((geoJSONByRegionID) => {
+            const geojson = geoJSONByRegionID[regionID];
+            if (!geojson) {
+                throw new Error(`region geojson is missing from batch response: ${regionID}`);
+            }
+            adminRegionGeoJSONCache.set(regionID, geojson);
+            return geojson;
+        });
+        adminRegionGeoJSONRequests.set(regionID, request);
+        request.then(
+            () => {
+                if (adminRegionGeoJSONRequests.get(regionID) === request) {
+                    adminRegionGeoJSONRequests.delete(regionID);
+                }
+            },
+            () => {
+                if (adminRegionGeoJSONRequests.get(regionID) === request) {
+                    adminRegionGeoJSONRequests.delete(regionID);
+                }
+            }
+        );
+    });
+}
+
+function getAdminRegionLayerCacheKey(regions) {
+    return regions.map((region) => region.id).join(",");
+}
+
+function getCachedAdminRegionLayers(cacheKey) {
+    const entry = adminRegionLayerCache.get(cacheKey);
+    if (!entry) {
+        return null;
+    }
+    adminRegionLayerCache.delete(cacheKey);
+    adminRegionLayerCache.set(cacheKey, entry);
+    return entry;
+}
+
+function cacheAdminRegionLayers(cacheKey, entry) {
+    adminRegionLayerCache.delete(cacheKey);
+    adminRegionLayerCache.set(cacheKey, entry);
+    while (adminRegionLayerCache.size > ADMIN_REGION_LAYER_CACHE_LIMIT) {
+        const oldestKey = adminRegionLayerCache.keys().next().value;
+        adminRegionLayerCache.delete(oldestKey);
+    }
+}
+
+function createAdminRegionLayerEntry(regions, geoJSONByRegionID) {
+    const layers = regions.map((region) => {
+        const layer = L.geoJSON(geoJSONByRegionID.get(region.id), {
+            style: () => adminRegionFeatureStyle(false),
+            onEachFeature: (_feature, featureLayer) => {
+                featureLayer.bindTooltip(region.name, {
+                    direction: "center",
+                    className: "admin-region-tooltip",
+                    sticky: true
+                });
+                featureLayer.on("mouseover", () => {
+                    preloadAdminRegionChildren(region);
+                    if (featureLayer !== adminRegionSelectedLayer) {
+                        featureLayer.setStyle(adminRegionHoverStyle());
+                    }
+                });
+                featureLayer.on("mouseout", () => {
+                    featureLayer.setStyle(adminRegionFeatureStyle(featureLayer === adminRegionSelectedLayer));
+                });
+            }
+        });
+        return { region, layer };
+    });
+    return { layers };
+}
+
+function showAdminRegionLayerEntry(entry, selectedID) {
+    adminRegionLayerGroup.clearLayers();
+    adminRegionSelectedLayer = null;
+    entry.layers.forEach(({ region, layer }) => {
+        const selected = region.id === selectedID;
+        layer.setStyle(adminRegionFeatureStyle(selected));
+        layer.addTo(adminRegionLayerGroup);
+        bindAdminRegionLayerElements(layer, region);
+        if (selected) {
+            adminRegionSelectedLayer = layer;
+        }
+    });
+}
+
+function preloadAdminRegionChildren(region) {
+    const nextLevel = nextAdminRegionLevel(region.level);
+    if (!nextLevel) {
+        return;
+    }
+    const childRegions = getRegionOptionsForParent(nextLevel, region.id)
+        .filter((item) => item.maintained !== false && item.geojson);
+    if (childRegions.length === 0) {
+        return;
+    }
+    void fetchRegionGeoJSONs(childRegions).catch((error) => {
+        console.warn("failed to preload child region geojson", region.id, error);
+    });
 }
 
 function selectAdminRegionFromMap(region) {
@@ -1118,7 +1272,11 @@ function fitAdminRegionMapToSelection() {
     if (!bounds || !bounds.isValid()) {
         return;
     }
-    adminRegionMap.fitBounds(bounds, { padding: [18, 18], maxZoom: adminRegionLevel === "district" ? 11 : 8 });
+    adminRegionMap.fitBounds(bounds, {
+        animate: false,
+        padding: [18, 18],
+        maxZoom: adminRegionLevel === "district" ? 11 : 8
+    });
 }
 
 async function focusAdminRegionPendingSelection(token) {
@@ -1140,8 +1298,7 @@ async function focusAdminRegionPendingSelection(token) {
             return false;
         }
         adminRegionMap.fitBounds(bounds.pad(0.12), {
-            animate: true,
-            duration: 0.35,
+            animate: false,
             padding: [26, 26],
             maxZoom: adminRegionFocusMaxZoom(getRegionByID(regionID))
         });
@@ -1246,12 +1403,14 @@ function initRangeMap() {
     rangeMap = L.map("rangeMap", {
         zoomControl: true,
         attributionControl: false,
-        minZoom: MAP_MIN_ZOOM,
-        maxBounds: MAP_LATITUDE_BOUNDS,
+        minZoom: getWorldCoveringMinZoom("rangeMap"),
+        maxBounds: MAP_WORLD_BOUNDS,
         maxBoundsViscosity: 1,
         worldCopyJump: false
     }).setView([35.8617, 104.1954], 5);
 
+    keepMapWorldCoveringViewport(rangeMap, "rangeMap");
+    rangeMap.on("resize", () => keepMapWorldCoveringViewport(rangeMap, "rangeMap"));
     updateRangeBaseLayer();
 
     rangeMap.on("mousemove", (event) => {
@@ -1269,15 +1428,15 @@ async function updateRangeBaseLayer() {
         return;
     }
     const renderToken = ++rangeBaseLayerRenderToken;
-    const source = document.getElementById("rangePreviewSource")?.value || "osm";
+    const source = document.getElementById("rangePreviewSource")?.value || "tdt-img";
     const credentials = readCredentialRequest(new FormData(document.getElementById("taskForm")));
     const hasToken = hasUsableCredential(credentials.tiandituToken, "YOUR_TIANDITU_TOKEN");
     const hint = document.getElementById("rangePreviewHint");
 
-    let url = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+    let url = "";
     let labelUrl = "";
-    let maxZoom = 19;
-    let hintText = "OSM 预览底图";
+    let maxZoom = 18;
+    let hintText = "输入天地图 Token 后显示天地图预览";
     if ((source === "tdt-img" || source === "tdt-vec") && hasToken) {
         const previewTokenId = await ensureTiandituPreviewToken(credentials.tiandituToken);
         if (renderToken !== rangeBaseLayerRenderToken) {
@@ -1310,21 +1469,26 @@ async function updateRangeBaseLayer() {
         rangeMap.removeLayer(rangeLabelLayer);
         rangeLabelLayer = null;
     }
-    rangeBaseLayer = L.tileLayer(url, {
-        minZoom: MAP_MIN_ZOOM,
-        maxZoom
-    });
-    rangeBaseLayer.on("tileerror", () => {
-        if(source.startsWith("tdt-")) void recoverPreviewCredentials(credentials.tiandituToken);
-        if (hint && source.startsWith("tdt-")) {
-            hint.textContent = "天地图预览瓦片加载失败，请检查 Token 权限";
-        }
-    });
-    rangeBaseLayer.addTo(rangeMap);
+    rangeBaseLayer = null;
+    if (url) {
+        rangeBaseLayer = L.tileLayer(url, {
+            minZoom: MAP_MIN_ZOOM,
+            maxZoom,
+            noWrap: true
+        });
+        rangeBaseLayer.on("tileerror", () => {
+            if (source.startsWith("tdt-")) void recoverPreviewCredentials(credentials.tiandituToken);
+            if (hint) {
+                hint.textContent = "天地图预览瓦片加载失败，请检查 Token 权限";
+            }
+        });
+        rangeBaseLayer.addTo(rangeMap);
+    }
     if (labelUrl) {
         rangeLabelLayer = L.tileLayer(labelUrl, {
             minZoom: MAP_MIN_ZOOM,
             maxZoom,
+            noWrap: true,
             pane: "tilePane",
             opacity: 1
         });
@@ -1807,6 +1971,39 @@ async function loadRegionCatalog() {
 
     regionCatalog = response.data.available || [];
     missingRegionCatalog = response.data.missing || [];
+    indexRegionCatalog();
+    const initialRegions = getRegionOptionsForParent("province", "china")
+        .filter((item) => item.maintained !== false && item.geojson);
+    void fetchRegionGeoJSONs(initialRegions).catch((error) => {
+        console.warn("failed to preload province geojson", error);
+    });
+}
+
+function indexRegionCatalog() {
+    allRegions = [
+        ...regionCatalog.map((item) => ({ ...item, maintained: true })),
+        ...missingRegionCatalog.map((item) => ({ ...item, maintained: false }))
+    ];
+    regionsByID = new Map();
+    regionsByLevel = new Map();
+    regionsByParentAndLevel = new Map();
+    allRegions.forEach((region) => {
+        regionsByID.set(region.id, region);
+        if (!regionsByLevel.has(region.level)) {
+            regionsByLevel.set(region.level, []);
+        }
+        regionsByLevel.get(region.level).push(region);
+
+        const key = getRegionParentLevelKey(region.level, region.parentId);
+        if (!regionsByParentAndLevel.has(key)) {
+            regionsByParentAndLevel.set(key, []);
+        }
+        regionsByParentAndLevel.get(key).push(region);
+    });
+}
+
+function getRegionParentLevelKey(level, parentID) {
+    return `${level}\u0000${parentID || ""}`;
 }
 
 function initDefaultLevelConfigs() {
@@ -1983,7 +2180,7 @@ function getRegionOptionsForConfig(config) {
     }
 
     if (!config.parentConfigId) {
-        return getAllRegions().filter((item) => item.level === config.regionLevel);
+        return regionsByLevel.get(config.regionLevel) || [];
     }
 
     const parentConfig = findLevelConfig(config.parentConfigId);
@@ -1991,18 +2188,19 @@ function getRegionOptionsForConfig(config) {
         return [];
     }
 
-    return getAllRegions().filter((item) => item.level === config.regionLevel && item.parentId === parentConfig.selectedRegionId);
+    return getRegionOptionsForParent(config.regionLevel, parentConfig.selectedRegionId);
+}
+
+function getRegionOptionsForParent(level, parentID) {
+    return regionsByParentAndLevel.get(getRegionParentLevelKey(level, parentID)) || [];
 }
 
 function getRegionByID(id) {
-    return getAllRegions().find((item) => item.id === id);
+    return regionsByID.get(id) || null;
 }
 
 function getAllRegions() {
-    return [
-        ...regionCatalog.map((item) => ({ ...item, maintained: true })),
-        ...missingRegionCatalog.map((item) => ({ ...item, maintained: false }))
-    ];
+    return allRegions;
 }
 
 function renderRegionOptions(config) {
@@ -3011,7 +3209,11 @@ function escapeAttribute(value) {
 
 function managedDownloadURL(task) {
     const expected = `/api/tasks/${encodeURIComponent(String(task.id || ""))}/download`;
-    return task.downloadUrl === expected ? expected : "";
+    const url = task.downloadUrl;
+    if (url === expected) {
+        return expected;
+    }
+    return typeof url === "string" && /^\/api\/downloads\/[a-f0-9]{64}$/.test(url) ? url : "";
 }
 
 function renderIntegrity(task) {

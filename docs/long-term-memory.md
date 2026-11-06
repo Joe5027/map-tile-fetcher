@@ -2,6 +2,15 @@
 
 ## Facts
 
+- 2026-11-06 branch convergence combines main `27a1e7b` with
+  `agent/audit-hardening` `005c2c7` (seven unique commits). The merge preserves
+  the maintenance repairs alongside batched region loading, Tianditu-only
+  previews, artifact download grants and removal of login credential hints.
+  Integration fixes keep grants tied to the last published run after a failed
+  retry and allow their exact local route through the existing UI URL check.
+  Production state and deployment records below were not reverified by this
+  source merge.
+
 - The seven-item maintenance implementation is accepted on clean code commit
   `6d4d088`: push CI passed all jobs, including Linux race/vet, Windows/Linux
   locked region environments and native package reproducibility/startup checks.
@@ -86,6 +95,18 @@
 - On 2026-06-27, `apps/admin-region-tiler/scripts/release_preflight.mjs` and
   `.github/workflows/validate.yml` were added so local release checks and
   GitHub Actions use the same validation route.
+- On 2026-10-10, production release `V0.3.12` was deployed from runtime commit
+  `b11408f`; it includes batched/cached administrative-region GeoJSON loading
+  and removes the OSM basemap from both administrative-region and bounding-box
+  previews.
+- On 2026-10-10, production release `V0.3.13` was deployed from runtime commit
+  `bfa4af3`; artifact responses now provide random, artifact-scoped download
+  grant URLs that work with `wget` without exposing the browser session cookie.
+- On 2026-10-22, the production login password was rotated without committing
+  it to Git or baking it into an image. Existing sessions were revoked, the
+  persistent environment and SQLite bcrypt hash were synchronized, and release
+  `V0.3.14` was deployed from commit `1f187a0` without default credential
+  hints in the login form.
 
 ## Decisions
 
@@ -120,6 +141,15 @@
 - Keep the old .NET range downloader as documentation only in
   `docs/range-migration.md`; do not reintroduce runtime code unless explicitly
   requested.
+- Keep production releases immutable. `V0.3.12` was built as a compatibility
+  overlay on the prior production image so the existing non-root UID, workdir,
+  entrypoint, persistent mounts, and rollback path remained unchanged.
+- Keep authenticated legacy artifact routes for compatibility, while using
+  seven-day in-memory grants for copied direct-download links. A service restart
+  invalidates old grants, and refreshing the task page issues a replacement.
+- Keep production credentials only in the server environment and hashed user
+  records. Password rotations must back up both surfaces, revoke old sessions,
+  and verify both successful new-password login and rejected old-password login.
 
 ## Assumptions
 
@@ -145,6 +175,19 @@
 - Real service tokens must stay out of Git.
 
 ## Validation
+
+- 2026-11-06 merged-tree validation passed: `node scripts/release_preflight.mjs`
+  with `REGION_PYTHON` set to the existing `.venv-region/Scripts/python.exe`,
+  including 18 Python contracts, `go test ./...`, JavaScript syntax/rendering
+  checks, browser flows at 390/768/1440px, password changes, preview renewal,
+  re-login, sensitive-value and generated-file scans. `go vet ./...`, workspace
+  audit, handoff validation and `git diff --check` also passed.
+- The new published-run grant and frontend link regressions failed before the
+  integration fixes and passed afterward. The initial browser preflight failed
+  because the new Tianditu default sent fixture credentials to a real provider;
+  smoke tests now intercept preview tiles locally, and the full preflight passed.
+- Native Windows/Linux package checks and Linux race instrumentation remain
+  GitHub CI checks for this merge; no production or release validation was run.
 
 - 2026-09-11: eight portable backend contracts failed on archived `e2cfcdb` and
   passed on the repaired code. The old renderer accepted a script download URL;
@@ -189,11 +232,41 @@
 - Local workflow validation on 2026-06-27 was limited to manual source
   inspection because `actionlint` was not installed and Ruby/YAML parsing was
   unavailable in the session.
+- 2026-10-10 `V0.3.12` release validation passed: `go test ./...` on Go 1.25.4,
+  `node --check` for `static/script.js`, `scripts/smoke_ui.mjs`, and
+  `scripts/release_preflight.mjs`, region-resource hash comparison, image user /
+  workdir / entrypoint compatibility inspection, image and binary hash checks,
+  container health, external HTTP `200`, unauthenticated auth API `401`, and
+  deployed frontend inspection confirming no OSM or OpenStreetMap references.
+- The production database was backed up before recreation of the application
+  container. Counts remained 60 plans and 44 runs after deployment, with zero
+  active runs before and after the release.
+- The documented handoff validator and workspace audit were unavailable on
+  2026-10-10 because their absolute paths reference a different Windows user
+  profile. Section-order inspection, source comparison, the repository
+  sensitive-value scan, and `git diff --check` were used instead.
+- 2026-10-10 `V0.3.13` release validation passed: `go test ./...` with server Go
+  1.25.4, `node --check static/script.js`, focused direct-download and expiry
+  tests, image compatibility and health checks, and a production `wget` range
+  request without session cookies. The request returned `206`, one byte, range
+  headers, and the expected ZIP attachment name; database counts remained 60
+  plans, 44 runs, and zero active runs.
+- 2026-10-22 password-rotation and `V0.3.14` validation passed: the new password
+  returned `200` for login and authenticated identity, the retired default
+  password returned `401`, the stored hash was bcrypt, the container was
+  `running/healthy`, and the externally served login HTML contained neither
+  default credential hint. Production retained 72 plans and 53 runs with zero
+  active runs before deployment.
 
 ## Next Action
 
-- For future maintenance, begin with the acceptance record and current GitHub
-  status for PR #6; do not repeat completed implementation or approximate the
-  five documented boundaries. Keep protected main checks and branch cleanup.
+- Complete the 2026-11-06 branch convergence through the checked PR head and
+  verify the resulting main CI before temporary-branch cleanup. Preserve the
+  seven maintenance repairs and the later production-branch improvements.
+- For future maintenance, begin with the acceptance records; do not repeat
+  completed implementation or approximate the five documented boundaries.
 - Before any future release, rerun preflight and verify `main` CI. Plan a
   separate, explicitly authorized deployment and database backup/copy validation.
+- The production branch records `V0.3.14` and timestamped environment, Compose,
+  and SQLite backups. Recheck production state before any separately authorized
+  deployment or rollback; branch convergence does not verify the live service.

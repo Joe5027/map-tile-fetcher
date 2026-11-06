@@ -300,6 +300,12 @@ async function runSmoke(baseURL) {
     await dialog.accept();
   });
 
+  // Preview uses a fixture token; keep basemap requests off real tile providers.
+  await page.route("**/api/tile-preview/tianditu/**", (route) => route.fulfill({
+    contentType: "image/png",
+    body: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aWQAAAABJRU5ErkJggg==", "base64"),
+  }));
+
   await page.route("**/api/tasks", async (route) => {
     const request = route.request();
     if (request.method() === "POST") {
