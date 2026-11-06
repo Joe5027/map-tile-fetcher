@@ -9,10 +9,10 @@ fixtures; no user database or existing downloads are used.
 | Batch | State |
 | --- | --- |
 | Portable rules, dependency review, main completion and handoff | Committed: `da33be6` |
-| Download configuration and format correctness | Backend committed: `32ab1ca`; form regressions passed |
+| Download configuration and format correctness | Committed: `32ab1ca`, `79d0184` |
 | Automatic recovery, queue slots and storage performance | Pending |
 | Dependency/toolchain upgrade | Pending |
-| Cesium terrain generation and offline preview | Pending |
+| Cesium terrain generation and offline preview | Terrain codec and sampling tested; application integration in progress |
 | Source selection, paginated history and responsive interactions | Pending |
 | Manuals, reproducible images, native packages and final main checks | Pending |
 
@@ -41,3 +41,18 @@ produce one POST. Responsive, password, preview and session regressions passed.
 
 Validation is recorded in each bilingual commit. Full upgrade acceptance,
 benchmarks and platform checks remain pending until their batches finish.
+
+## Terrain Core
+
+`internal/terrain` decodes Terrarium pixels, samples a globally aligned 65 × 65
+grid, and writes gzip quantized-mesh with TMS availability and complete ancestor
+chains. Tests independently decode the binary and check signed/zero heights,
+Mercator latitude, triangle winding, edges, dateline sharing and missing input.
+No missing height is replaced with zero. `go test ./internal/terrain` and
+`go vet ./internal/terrain` passed with Go 1.27.3.
+
+The whole-world Mercator root cannot have a finite conservative horizon point.
+The encoder disables that optional culling through NaN for such coarse tiles;
+actual Cesium 1.147 multi-view validation is still required before delivery.
+Windows race verification is unavailable with the current CGO-disabled toolchain;
+Linux race verification remains part of final acceptance.
