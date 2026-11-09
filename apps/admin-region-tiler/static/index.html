@@ -150,14 +150,38 @@
                                             <span class="field-label">请求间隔(ms)</span>
                                             <input type="number" name="timeDelay" min="0" value="80">
                                         </label>
-                                        <label class="field">
-                                            <span class="field-label">产物格式</span>
-                                            <select name="outputFormat">
-                                                <option value="zip" selected>ZIP 文件树</option>
-                                                <option value="mbtiles">MBTiles</option>
-                                                <option value="cesium">Cesium 三维地形包</option>
-                                            </select>
-                                        </label>
+                                    </section>
+                                    <section class="output-format-panel" aria-labelledby="outputFormatTitle">
+                                        <div class="section-card__header">
+                                            <h3 id="outputFormatTitle">下载产物</h3>
+                                            <p>下载普通地图瓦片，或生成可三维预览的真实高程地形包</p>
+                                        </div>
+                                        <div class="output-format-options" role="radiogroup" aria-label="下载产物格式">
+                                            <label class="output-format-card">
+                                                <input type="radio" name="outputFormat" value="zip" checked>
+                                                <span class="output-format-card__icon"><img src="/static/assets/icons/download.svg" alt=""></span>
+                                                <span class="output-format-card__body">
+                                                    <strong>ZIP 地图瓦片</strong>
+                                                    <small>按目录保存原始图片或矢量瓦片</small>
+                                                </span>
+                                            </label>
+                                            <label class="output-format-card">
+                                                <input type="radio" name="outputFormat" value="mbtiles">
+                                                <span class="output-format-card__icon"><img src="/static/assets/icons/layers.svg" alt=""></span>
+                                                <span class="output-format-card__body">
+                                                    <strong>MBTiles</strong>
+                                                    <small>保存为单个离线地图数据库</small>
+                                                </span>
+                                            </label>
+                                            <label class="output-format-card output-format-card--terrain">
+                                                <input type="radio" name="outputFormat" value="cesium">
+                                                <span class="output-format-card__icon"><img src="/static/assets/icons/map.svg" alt=""></span>
+                                                <span class="output-format-card__body">
+                                                    <strong>地形高程下载</strong>
+                                                    <small>下载真实 Terrarium 高程，生成 Cesium 三维地形包</small>
+                                                </span>
+                                            </label>
+                                        </div>
                                     </section>
                                     <p id="outputFormatHint" class="source-help" role="status"></p>
                                     <p id="savePipeHint" class="source-help is-hidden">MBTiles 使用一个保存线程，批量写入；下载线程仍按所选地图源的并发策略执行。</p>
@@ -323,10 +347,6 @@
                                 </section>
 
                                 <div class="task-submit-panel task-config-control">
-                                    <section class="section-card" aria-labelledby="taskCreateSummaryTitle">
-                                        <h3 id="taskCreateSummaryTitle">本次任务</h3>
-                                        <div id="taskCreateSummary" aria-live="polite"></div>
-                                    </section>
                                     <p id="taskCreateNotice" class="message is-hidden" role="status"></p>
                                     <p id="taskError" class="message error is-hidden"></p>
                                     <button id="createTaskBtn" type="submit" class="primary-button wide">

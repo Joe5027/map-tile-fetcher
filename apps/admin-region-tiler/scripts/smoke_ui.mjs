@@ -382,9 +382,6 @@ async function smokeRegionFlow(page, createdPayloads, pendingCreates) {
   await page.locator("input[name='workers']").fill("7");
   await page.locator("select[name='savePipe']").selectOption("3");
   await page.locator("input[name='timeDelay']").fill("0");
-  const summary = await page.locator("#taskCreateSummary").innerText();
-  assert(summary.includes("下载 7 线程") && summary.includes("保存 3 线程") && summary.includes("间隔 0ms"),
-    "region inline summary should update the requested parameters before submission");
   await submitOnceWhilePending(page, createdPayloads, pendingCreates, beforeCount);
 
   const payload = createdPayloads.at(-1);
@@ -428,20 +425,17 @@ async function smokeRangeFlow(page, createdPayloads, pendingCreates) {
   await page.locator("input[name='runAt']").fill(formatDateTimeLocal(new Date(Date.now() + 60 * 60 * 1000)));
   await page.locator("input[name='workers']").fill("8");
   await page.locator("select[name='savePipe']").selectOption("4");
-  await page.locator("select[name='outputFormat']").selectOption("mbtiles");
+  await page.locator("input[name='outputFormat'][value='mbtiles']").check({force:true});
   assert(await page.locator("select[name='savePipe']").isDisabled(), "MBTiles must display its actual single writer");
-  await page.locator("select[name='outputFormat']").selectOption("zip");
+  await page.locator("input[name='outputFormat'][value='zip']").check({force:true});
   assert(await page.locator("select[name='savePipe']").inputValue() === "4", "switching back to ZIP must restore the user's save threads");
-  await page.locator("select[name='outputFormat']").selectOption("mbtiles");
+  await page.locator("input[name='outputFormat'][value='mbtiles']").check({force:true});
   await page.locator("input[name='timeDelay']").fill("175");
 
   await waitForTextNotEqual(page.locator("#rangeTileCount"), "-");
   await waitForTextNotEqual(page.locator("#rangeTotalTileCount"), "-");
 
   const beforeCount = createdPayloads.length;
-  const summary = await page.locator("#taskCreateSummary").innerText();
-  assert(summary.includes("下载 8 线程") && summary.includes("保存 1 线程") && summary.includes("间隔 175ms") && summary.includes("MBTiles"),
-    "range inline summary should show requested parameters and output before submission");
   await submitOnceWhilePending(page, createdPayloads, pendingCreates, beforeCount);
 
   const payload = createdPayloads.at(-1);
@@ -465,28 +459,24 @@ async function smokeTerrainFlows(page, createdPayloads, pendingCreates) {
   await page.locator("input[name='rangeLayers'][value='img']").uncheck();
   await page.locator("input[name='rangeLayers'][value='ter']").check();
   await page.locator("input[name='rangeLayers'][value='cta']").check();
-  await page.locator("select[name='outputFormat']").selectOption("cesium");
-  const beforeInvalid = createdPayloads.length;
-  await page.locator("#createTaskBtn").click();
-  await page.locator("#taskError").waitFor({state:"visible"});
-  assert((await page.locator("#taskError").innerText()).includes("请选择「高程数据」"), "raster Cesium mismatch should explain the right source and output choices");
-  assert(createdPayloads.length === beforeInvalid, "raster sources cannot be mislabeled as real elevation");
-  await page.locator("select[name='outputFormat']").selectOption("zip");
+  assert((await page.locator(".output-format-card--terrain").innerText()).includes("地形高程下载"), "terrain output must be a visible first-class choice");
+  await page.locator("input[name='outputFormat'][value='zip']").check({force:true});
   assert(await page.locator("select[name='savePipe']").inputValue() === "4", "MBTiles creation must retain the previous ZIP save-thread choice");
   await submitOnceWhilePending(page, createdPayloads, pendingCreates, createdPayloads.length);
   assert(createdPayloads.at(-1).sources.length === 2 && createdPayloads.at(-1).sources.every(source=>/[?&]T=(ter|cta)_w/.test(source.url)), "terrain imagery should use directory ter/cta sources");
 
   await page.locator("[data-task-mode='bbox']").click();
-  await page.locator(".source-card__main[data-provider-select='高程数据']").click();
+  await page.locator("input[name='outputFormat'][value='cesium']").check({force:true});
+  assert(await page.locator(".tilemap-source-option[value='13']").isChecked(), "terrain output should automatically select the real elevation source");
   assert(await page.locator("input[name='rangeMinZoom']").inputValue() === "14" && await page.locator("input[name='rangeMaxZoom']").inputValue() === "14", "elevation should default to zoom 14");
   assert(await page.locator("input[name='rangeMaxZoom']").getAttribute("max") === "15", "elevation must allow zoom 15");
-  assert(await page.locator("select[name='outputFormat']").inputValue() === "cesium", "elevation should select the Cesium output");
+  assert(await page.locator("input[name='outputFormat'][value='cesium']").isChecked(), "elevation should select the Cesium output");
   await page.locator("input[name='tiandituToken']").fill("");
   await page.locator("input[name='name']").fill("真实高程范围夹具");
   await page.locator("input[name='rangeMaxZoom']").fill("15");
   await page.locator("input[name='timeDelay']").fill("0");
-  const terrainSummary = await page.locator("#taskCreateSummary").innerText();
-  assert(terrainSummary.includes("祖先") && terrainSummary.includes("接缝邻域"), "terrain preparation should explain extra downloaded levels and neighbours");
+  const terrainEstimate = await page.locator("#rangeTerrainEstimate").innerText();
+  assert(terrainEstimate.includes("祖先") && terrainEstimate.includes("接缝邻域"), "terrain preparation should explain extra downloaded levels and neighbours");
   await submitOnceWhilePending(page, createdPayloads, pendingCreates, createdPayloads.length);
   const range = createdPayloads.at(-1);
   assert(range.mode === "bbox" && range.output.format === "cesium" && range.zoom.min === 14 && range.zoom.max === 15, "bbox must submit selected Cesium zooms");
