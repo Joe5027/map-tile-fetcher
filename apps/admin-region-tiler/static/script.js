@@ -181,9 +181,13 @@ function bindEvents() {
         }
     });
     document.getElementById("taskForm").addEventListener("submit", createTask);
-    document.getElementById("taskForm").addEventListener("input", updateTaskCreateSummary);
-    document.getElementById("taskForm").addEventListener("change", updateTaskCreateSummary);
-    document.querySelector('[name="outputFormat"]').addEventListener("change", () => { updateOutputSettings(); updateRangeEstimate(); });
+    document.querySelectorAll('[name="outputFormat"]').forEach((input) => {
+        input.addEventListener("change", () => {
+            if (input.checked && input.value === "cesium") selectTerrainSourceForOutput();
+            updateOutputSettings();
+            updateRangeEstimate();
+        });
+    });
     document.getElementById("refreshBtn").addEventListener("click", loadTasks);
     document.getElementById("taskPagePrev").addEventListener("click", () => changeTaskPage(Math.max(0, taskPageOffset - TASK_PAGE_LIMIT)));
     document.getElementById("taskPageNext").addEventListener("click", () => changeTaskPage(taskPageOffset + TASK_PAGE_LIMIT));
@@ -434,7 +438,6 @@ async function loadTaskLimits() {
     input.max = response.data.maxWorkers;
     input.defaultValue = response.data.defaultWorkers;
     input.value = response.data.defaultWorkers;
-    updateTaskCreateSummary();
 }
 
 function showLogin() {
@@ -560,7 +563,6 @@ function setTaskMode(mode) {
             }
         }, 40);
     }
-    updateTaskCreateSummary();
     startTaskPolling();
     if (isTasksMode && authenticated && !document.hidden) void loadTasks();
 }
@@ -577,7 +579,6 @@ function syncScheduleControls() {
     if (input) {
         input.required = scheduled;
     }
-    updateTaskCreateSummary();
 }
 
 function readDownloadSettings(formData) {
@@ -596,56 +597,6 @@ function readDownloadSettings(formData) {
         return { error: "请求间隔须为大于或等于 0 的整数毫秒。" };
     }
     return { workers, savePipe, timeDelay };
-}
-
-function updateTaskCreateSummary() {
-    const summary = document.getElementById("taskCreateSummary");
-    if (!summary) return;
-    const formData = new FormData(document.getElementById("taskForm"));
-    const settings = readDownloadSettings(formData);
-    const schedule = readScheduleRequest(formData);
-    const output = readOutputRequest(formData);
-    const isRange = activeMapMode === "bbox";
-    const sources = getSelectedTilemaps();
-    const lines = [
-        `${String(formData.get("name") || "未命名任务")} · ${isRange ? "范围框选" : "行政区划"}`,
-        `图层：${sources.map((source) => source.name).join("、") || "尚未选择"}`
-    ];
-    if (isRange) {
-        const request = readRangeRequest(formData);
-        lines.push(`层级：${request.zoom.min}～${request.zoom.max}；范围：${request.bbox.minLon}, ${request.bbox.minLat} 至 ${request.bbox.maxLon}, ${request.bbox.maxLat}`);
-    } else {
-        lines.push(`区域：${levelConfigs.slice(0, activeLevelCount).map((config) => `${getRegionByID(config.selectedRegionId)?.name || config.label} ${config.minZoom}～${config.maxZoom}级`).join("；") || "尚未选择"}`);
-    }
-    lines.push(settings.error || `请求参数：下载 ${settings.workers} 线程，保存 ${settings.savePipe} 线程，间隔 ${settings.timeDelay}ms`);
-    if (!settings.error) {
-        const known = sources.filter((source) => Number.isFinite(source.fetch_policy?.worker_count) && Number.isFinite(source.fetch_policy?.base_delay_ms));
-        for (const source of known) {
-            const policy = source.fetch_policy;
-            const workers = policy.worker_count > 0 ? Math.min(settings.workers, policy.worker_count) : settings.workers;
-            lines.push(`${source.name} 生效：下载 ${workers} 线程，间隔 ${Math.max(settings.timeDelay, policy.base_delay_ms)}ms`);
-        }
-        if (known.length !== sources.length || sources.length === 0) {
-            lines.push("来源的实际并发和最小间隔由服务端策略确定，创建后可在任务详情查看。");
-        }
-    }
-    lines.push(`${schedule.error || schedule.label} · ${output.label}`);
-    if (output.format === "cesium") {
-        if (isRange) {
-            const request = readRangeRequest(formData);
-            const range = selectedZoomRange(sources);
-            if (isValidRangeSelection(request) && Number.isInteger(request.zoom.min) && Number.isInteger(request.zoom.max)
-                && request.zoom.min >= range.min && request.zoom.max <= range.max && request.zoom.min <= request.zoom.max) {
-                const estimate = estimateRangeDownloads(request.bbox, request.zoom, sources, output.format);
-                lines.push(`${request.selectionMode === "polygon" ? "外接矩形保守估算" : "下载估算"}：${estimate.rawTiles} 个原始请求（含祖先及接缝邻域），${estimate.meshTiles} 个地形网格。`);
-            }
-        } else lines.push("准备阶段会计入祖先层级和接缝邻域，随后下载、转换并发布可预览的地形包。");
-    }
-    summary.replaceChildren(...lines.map((line) => {
-        const paragraph = document.createElement("p");
-        paragraph.textContent = line;
-        return paragraph;
-    }));
 }
 
 function readScheduleRequest(formData) {
@@ -2258,7 +2209,6 @@ function renderLevelConfigs() {
             removeLevelConfig(Number.parseInt(event.currentTarget.dataset.id, 10));
         });
     });
-    updateTaskCreateSummary();
 }
 
 function findLevelConfig(id) {
@@ -2362,6 +2312,15 @@ function tiandituLayer(source) {
 function isTerrariumSource(source) {
     return source.metadata?.kind === "elevation" && source.metadata?.encoding === "terrarium"
         && String(source.format).toLowerCase() === "png" && String(source.schema).toLowerCase() === "xyz";
+}
+
+function selectTerrainSourceForOutput() {
+    const group = getProviderGroups().find((candidate) => candidate.items.some(isTerrariumSource));
+    if (!group) return;
+    selectedProvider = group.id;
+    expandedProviders.add(group.id);
+    selectedSourceIds = new Set(group.items.filter(isTerrariumSource).map((source) => String(source.id)));
+    renderTilemapSelector();
 }
 
 function selectedZoomRange(sources = getSelectedTilemaps()) {
@@ -2767,7 +2726,6 @@ function isValidBBox(bbox, requireArea) {
 }
 
 function updateRangeEstimate() {
-    updateTaskCreateSummary();
     const request = readRangeRequest(new FormData(document.getElementById("taskForm")));
     const tileElement = document.getElementById("rangeTileCount");
     const totalElement = document.getElementById("rangeTotalTileCount");
@@ -2913,7 +2871,6 @@ async function createTask(event) {
         button.disabled = false;
         button.removeAttribute("aria-busy");
         button.querySelector("span").textContent = "创建任务";
-        updateTaskCreateSummary();
     }
 }
 
