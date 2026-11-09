@@ -190,7 +190,7 @@ export async function runWorkflowAcceptance(page, baseURL, fixture) {
         }
         assert.equal(await page.evaluate(()=>rangeClickPoints.length), mode === "polygon" ? 3 : 2, "map selection did not retain clicked points");
       }
-      await page.locator("select[name='outputFormat']").selectOption("cesium");
+      await page.locator("input[name='outputFormat'][value='cesium']").check({force:true});
       const task = await create();
       assert.equal(task.submitted.workers,1); assert.equal(task.submitted.timeDelay,0);
       assert.equal(task.submitted.sources[0].metadata.encoding,"terrarium");
@@ -400,7 +400,7 @@ async function checkSourceFallbackAndEstimate(page) {
     for (const [name,value] of Object.entries({rangeMinLon:1,rangeMaxLon:2,rangeMinLat:1,rangeMaxLat:2,rangeMinZoom:2,rangeMaxZoom:2})) await page.locator(`input[name='${name}']`).fill(String(value));
     assert.equal(await page.locator("#rangeTotalTileCount").innerText(),"14","Cesium estimate must include ancestors and halo requests");
     assert((await page.locator("#rangeTerrainEstimate").innerText()).includes("3 个地形网格"));
-    await page.locator("select[name='outputFormat']").selectOption("zip");
+    await page.locator("input[name='outputFormat'][value='zip']").check({force:true});
     assert.equal(await page.locator("#rangeTotalTileCount").innerText(),"1","raw ZIP estimate must not include Cesium auxiliary data");
   } finally {
     await page.unroute("**/api/config/tilemaps",handler);
