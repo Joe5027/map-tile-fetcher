@@ -154,7 +154,7 @@
                                     <section class="output-format-panel" aria-labelledby="outputFormatTitle">
                                         <div class="section-card__header">
                                             <h3 id="outputFormatTitle">下载产物</h3>
-                                            <p>下载普通地图瓦片，或生成可三维预览的真实高程地形包</p>
+                                            <p>选择普通地图瓦片的保存格式；地形高程请在上方地图源中选择</p>
                                         </div>
                                         <div class="output-format-options" role="radiogroup" aria-label="下载产物格式">
                                             <label class="output-format-card">
@@ -173,15 +173,8 @@
                                                     <small>保存为单个离线地图数据库</small>
                                                 </span>
                                             </label>
-                                            <label class="output-format-card output-format-card--terrain">
-                                                <input type="radio" name="outputFormat" value="cesium">
-                                                <span class="output-format-card__icon"><img src="/static/assets/icons/map.svg" alt=""></span>
-                                                <span class="output-format-card__body">
-                                                    <strong>地形高程下载</strong>
-                                                    <small>下载真实 Terrarium 高程，生成 Cesium 三维地形包</small>
-                                                </span>
-                                            </label>
                                         </div>
+                                        <input class="is-hidden" type="radio" name="outputFormat" value="cesium" aria-hidden="true" tabindex="-1">
                                     </section>
                                     <p id="outputFormatHint" class="source-help" role="status"></p>
                                     <p id="savePipeHint" class="source-help is-hidden">MBTiles 使用一个保存线程，批量写入；下载线程仍按所选地图源的并发策略执行。</p>

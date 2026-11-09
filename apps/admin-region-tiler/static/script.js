@@ -183,7 +183,6 @@ function bindEvents() {
     document.getElementById("taskForm").addEventListener("submit", createTask);
     document.querySelectorAll('[name="outputFormat"]').forEach((input) => {
         input.addEventListener("change", () => {
-            if (input.checked && input.value === "cesium") selectTerrainSourceForOutput();
             updateOutputSettings();
             updateRangeEstimate();
         });
@@ -2020,6 +2019,9 @@ async function loadTilemaps() {
         tilemaps = Array.isArray(response.data) && response.data.length > 0
             ? response.data
             : FALLBACK_TILEMAPS.slice();
+        if (!tilemaps.some((source) => source.metadata?.kind === "elevation")) {
+            tilemaps.push(...FALLBACK_TILEMAPS.filter((source) => source.metadata?.kind === "elevation"));
+        }
     }
     const groups = getProviderGroups();
     if (!selectedProvider && groups.length > 0) {
@@ -2314,15 +2316,6 @@ function isTerrariumSource(source) {
         && String(source.format).toLowerCase() === "png" && String(source.schema).toLowerCase() === "xyz";
 }
 
-function selectTerrainSourceForOutput() {
-    const group = getProviderGroups().find((candidate) => candidate.items.some(isTerrariumSource));
-    if (!group) return;
-    selectedProvider = group.id;
-    expandedProviders.add(group.id);
-    selectedSourceIds = new Set(group.items.filter(isTerrariumSource).map((source) => String(source.id)));
-    renderTilemapSelector();
-}
-
 function selectedZoomRange(sources = getSelectedTilemaps()) {
     return {
         min: Math.max(0, ...sources.map((source) => Number(source.metadata?.minZoom ?? source.min_zoom ?? 0))),
@@ -2342,17 +2335,22 @@ function updateSourceCapabilities() {
         if (terrarium) {
             form.elements.rangeMinZoom.value = preferredZoom;
             form.elements.rangeMaxZoom.value = preferredZoom;
-            output.value = "cesium";
-        } else if (output.value === "cesium") output.value = "zip";
+        }
         sourceCapabilityKey = key;
     }
+    if (terrarium) output.value = "cesium";
+    else if (output.value === "cesium") output.value = "zip";
+    for (const input of document.querySelectorAll('.output-format-card input[name="outputFormat"]')) {
+        input.disabled = terrarium;
+    }
+    document.querySelector(".output-format-options").classList.toggle("is-disabled", terrarium);
     for (const name of ["rangeMinZoom", "rangeMaxZoom"]) {
         form.elements[name].min = range.min;
         form.elements[name].max = range.max;
     }
     document.getElementById("outputFormatHint").textContent = terrarium
-        ? `真实高程：默认 ${preferredZoom} 级，最高 ${range.max} 级。Cesium 包可直接三维预览；ZIP / MBTiles 保留原始高程编码。`
-        : "图片地形使用 ZIP / MBTiles；需要可计算高程和三维地形时，请选择「高程数据」中的 Terrarium 源。";
+        ? `地形高程源：默认 ${preferredZoom} 级，最高 ${range.max} 级；下载后自动生成可三维预览的 Cesium 地形包。`
+        : "普通地图源可选择 ZIP 或 MBTiles；下载真实地形高程请在地图源中选择「地形高程（Terrarium）」。";
     document.getElementById("rangeTiandituShortcuts").classList.toggle("is-hidden", selectedProvider !== "天地图");
     for (const checkbox of document.querySelectorAll(".range-layer-option")) {
         const source = tilemaps.find((item) => tiandituLayer(item) === checkbox.value);
@@ -2365,7 +2363,7 @@ function updateSourceCapabilities() {
 
 function validateOutputSources(sources, output) {
     if (output.format === "cesium" && !sources.every(isTerrariumSource)) {
-        return "Cesium 三维地形需要 Terrarium 高程源。请选择「高程数据」；当前地图图片或矢量图层请使用 ZIP / MBTiles。";
+        return "Cesium 三维地形需要 Terrarium 高程源。请在地图源中选择「地形高程（Terrarium）」；普通地图图片或矢量图层请使用 ZIP / MBTiles。";
     }
     return "";
 }
@@ -2487,7 +2485,7 @@ function getProviderGroups() {
 }
 
 function describeProvider(name, items) {
-    if (name === "高程数据") return "可计算高程 / Cesium 三维地形";
+    if (name === "地形高程（Terrarium）") return "真实高程数据，自动生成 Cesium 三维地形包";
     if (name === "天地图") {
         return "影像、电子地图与地形图片";
     }
@@ -2522,7 +2520,7 @@ function getTaskTilemapFormat(tilemap) {
 }
 
 function getTilemapGroupName(tilemap) {
-    if (tilemap.metadata?.kind === "elevation") return "高程数据";
+    if (tilemap.metadata?.kind === "elevation") return "地形高程（Terrarium）";
     const name = String(tilemap.name || "");
     const url = String(tilemap.url || "").toLowerCase();
 
@@ -2549,7 +2547,7 @@ function getTilemapGroupName(tilemap) {
 }
 
 function compareTilemapGroups(left, right) {
-    const priority = ["天地图", "高程数据", "Google", "Mapbox", "高德", "ArcGIS", "Bing Maps", "其他地图源"];
+    const priority = ["天地图", "地形高程（Terrarium）", "Google", "Mapbox", "高德", "ArcGIS", "Bing Maps", "其他地图源"];
     const leftIndex = priority.indexOf(left);
     const rightIndex = priority.indexOf(right);
 

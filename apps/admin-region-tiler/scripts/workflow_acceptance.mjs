@@ -190,7 +190,7 @@ export async function runWorkflowAcceptance(page, baseURL, fixture) {
         }
         assert.equal(await page.evaluate(()=>rangeClickPoints.length), mode === "polygon" ? 3 : 2, "map selection did not retain clicked points");
       }
-      await page.locator("input[name='outputFormat'][value='cesium']").check({force:true});
+      await page.locator(".source-card__main[data-provider-select='地形高程（Terrarium）']").click();
       const task = await create();
       assert.equal(task.submitted.workers,1); assert.equal(task.submitted.timeDelay,0);
       assert.equal(task.submitted.sources[0].metadata.encoding,"terrarium");
@@ -395,13 +395,14 @@ async function checkSourceFallbackAndEstimate(page) {
   try {
     await page.reload({waitUntil:"networkidle"});
     await page.locator("[data-task-mode='bbox']").click();
-    await page.locator(".source-card__main[data-provider-select='高程数据']").click();
+    await page.locator(".source-card__main[data-provider-select='地形高程（Terrarium）']").click();
     assert(await page.locator(".tilemap-source-option[value='13']").isChecked(),"failed catalogue request lost the elevation fallback source");
     for (const [name,value] of Object.entries({rangeMinLon:1,rangeMaxLon:2,rangeMinLat:1,rangeMaxLat:2,rangeMinZoom:2,rangeMaxZoom:2})) await page.locator(`input[name='${name}']`).fill(String(value));
     assert.equal(await page.locator("#rangeTotalTileCount").innerText(),"14","Cesium estimate must include ancestors and halo requests");
     assert((await page.locator("#rangeTerrainEstimate").innerText()).includes("3 个地形网格"));
+    await page.locator(".source-card__main[data-provider-select='天地图']").click();
     await page.locator("input[name='outputFormat'][value='zip']").check({force:true});
-    assert.equal(await page.locator("#rangeTotalTileCount").innerText(),"1","raw ZIP estimate must not include Cesium auxiliary data");
+    assert.equal(await page.locator("#rangeTotalTileCount").innerText(),"3","raw ZIP estimate must count only the three selected map layers without Cesium auxiliary data");
   } finally {
     await page.unroute("**/api/config/tilemaps",handler);
     await page.reload({waitUntil:"networkidle"});
