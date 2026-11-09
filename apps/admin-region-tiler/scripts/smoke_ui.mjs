@@ -459,18 +459,19 @@ async function smokeTerrainFlows(page, createdPayloads, pendingCreates) {
   await page.locator("input[name='rangeLayers'][value='img']").uncheck();
   await page.locator("input[name='rangeLayers'][value='ter']").check();
   await page.locator("input[name='rangeLayers'][value='cta']").check();
-  assert((await page.locator(".output-format-card--terrain").innerText()).includes("地形高程下载"), "terrain output must be a visible first-class choice");
+  assert(await page.locator(".output-format-card").count() === 2, "download artifacts should only expose ZIP and MBTiles");
   await page.locator("input[name='outputFormat'][value='zip']").check({force:true});
   assert(await page.locator("select[name='savePipe']").inputValue() === "4", "MBTiles creation must retain the previous ZIP save-thread choice");
   await submitOnceWhilePending(page, createdPayloads, pendingCreates, createdPayloads.length);
   assert(createdPayloads.at(-1).sources.length === 2 && createdPayloads.at(-1).sources.every(source=>/[?&]T=(ter|cta)_w/.test(source.url)), "terrain imagery should use directory ter/cta sources");
 
   await page.locator("[data-task-mode='bbox']").click();
-  await page.locator("input[name='outputFormat'][value='cesium']").check({force:true});
-  assert(await page.locator(".tilemap-source-option[value='13']").isChecked(), "terrain output should automatically select the real elevation source");
+  await page.locator(".source-card__main[data-provider-select='地形高程（Terrarium）']").click();
+  assert(await page.locator(".tilemap-source-option[value='13']").isChecked(), "terrain source should select the real elevation layer");
   assert(await page.locator("input[name='rangeMinZoom']").inputValue() === "14" && await page.locator("input[name='rangeMaxZoom']").inputValue() === "14", "elevation should default to zoom 14");
   assert(await page.locator("input[name='rangeMaxZoom']").getAttribute("max") === "15", "elevation must allow zoom 15");
   assert(await page.locator("input[name='outputFormat'][value='cesium']").isChecked(), "elevation should select the Cesium output");
+  assert((await page.locator(".output-format-options").getAttribute("class")).includes("is-disabled"), "elevation should lock the derived Cesium artifact");
   await page.locator("input[name='tiandituToken']").fill("");
   await page.locator("input[name='name']").fill("真实高程范围夹具");
   await page.locator("input[name='rangeMaxZoom']").fill("15");
