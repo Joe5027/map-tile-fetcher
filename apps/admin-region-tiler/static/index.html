@@ -154,30 +154,30 @@
                                     <section class="output-format-panel" aria-labelledby="outputFormatTitle">
                                         <div class="section-card__header">
                                             <h3 id="outputFormatTitle">下载产物</h3>
-                                            <p>选择普通地图瓦片的保存格式；地形高程请在上方地图源中选择</p>
+                                            <p>普通地图可选 TAR.GZ 或 MBTiles；地形高程会自动生成 TAR.GZ 格式的 Cesium 地形包</p>
                                         </div>
                                         <div class="output-format-options" role="radiogroup" aria-label="下载产物格式">
                                             <label class="output-format-card">
-                                                <input type="radio" name="outputFormat" value="zip" checked>
+                                                <input type="radio" name="outputFormat" value="tar.gz" checked>
                                                 <span class="output-format-card__icon"><img src="/static/assets/icons/download.svg" alt=""></span>
                                                 <span class="output-format-card__body">
-                                                    <strong>ZIP 地图瓦片</strong>
-                                                    <small>按目录保存原始图片或矢量瓦片</small>
+                                                    <strong>TAR.GZ 地图瓦片</strong>
+                                                    <small>按目录归档并使用 Gzip 压缩</small>
                                                 </span>
                                             </label>
                                             <label class="output-format-card">
                                                 <input type="radio" name="outputFormat" value="mbtiles">
                                                 <span class="output-format-card__icon"><img src="/static/assets/icons/layers.svg" alt=""></span>
                                                 <span class="output-format-card__body">
-                                                    <strong>MBTiles</strong>
-                                                    <small>保存为单个离线地图数据库</small>
+                                                    <strong>MBTiles（普通地图）</strong>
+                                                    <small>普通地图瓦片数据库，不用于地形高程</small>
                                                 </span>
                                             </label>
                                         </div>
                                         <input class="is-hidden" type="radio" name="outputFormat" value="cesium" aria-hidden="true" tabindex="-1">
                                     </section>
                                     <p id="outputFormatHint" class="source-help" role="status"></p>
-                                    <p id="savePipeHint" class="source-help is-hidden">MBTiles 使用一个保存线程，批量写入；下载线程仍按所选地图源的并发策略执行。</p>
+                                    <p id="savePipeHint" class="source-help is-hidden">MBTiles 仅适用于普通地图瓦片，并使用一个保存线程批量写入；地形高程不使用 MBTiles。</p>
 
                                     <section class="section-card schedule-panel">
                                         <div class="section-card__header">

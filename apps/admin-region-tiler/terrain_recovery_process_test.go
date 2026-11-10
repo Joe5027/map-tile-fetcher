@@ -1,8 +1,9 @@
 package main
 
 import (
-	"archive/zip"
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"image"
 	"image/color"
@@ -144,12 +145,21 @@ func TestProcessRestartDuringTerrainConversion(t *testing.T) {
 	if response.StatusCode != 200 {
 		t.Fatalf("download status %d: %s", response.StatusCode, data)
 	}
-	archive, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	gzipReader, err := gzip.NewReader(bytes.NewReader(data))
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer gzipReader.Close()
+	tarReader := tar.NewReader(gzipReader)
 	count := 0
-	for _, entry := range archive.File {
+	for {
+		entry, err := tarReader.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
 		if strings.HasSuffix(entry.Name, ".terrain") {
 			count++
 		}

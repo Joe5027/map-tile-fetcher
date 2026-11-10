@@ -7,7 +7,7 @@ import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { deflateSync, inflateRawSync, gunzipSync } from "node:zlib";
+import { deflateSync, gunzipSync } from "node:zlib";
 
 const appDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -162,7 +162,7 @@ export async function runWorkflowAcceptance(page, baseURL, fixture) {
     const file = await pending;
     assert.equal(await file.failure(), null, "browser download failed");
     const path = join(fixture.root, name); await file.saveAs(path);
-    return readZIP(await readFile(path));
+    return readTarGz(await readFile(path));
   };
   try {
     await checkSourceFallbackAndEstimate(page);
@@ -274,9 +274,9 @@ export async function runWorkflowAcceptance(page, baseURL, fixture) {
       const restoredPixel=await preview.evaluate(()=>terrainRenderedPixel);
       assert(coloredPixel.slice(0,3).every((value,i)=>Math.abs(value-restoredPixel[i])<=2),"restoring height coloring must restore rendered pixels");
       await preview.close();
-      const terrain = await download(child, `${width}-${mode}-terrain.zip`);
+      const terrain = await download(child, `${width}-${mode}-terrain.tar.gz`);
       const layer = [...terrain].find(([name]) => name.endsWith("layer.json"));
-      assert(layer && JSON.parse(layer[1]).format === "quantized-mesh-1.0", "downloaded ZIP lacks the real terrain manifest");
+      assert(layer && JSON.parse(layer[1]).format === "quantized-mesh-1.0", "downloaded TAR.GZ lacks the real terrain manifest");
       const meshes = [...terrain].filter(([name]) => name.endsWith(".terrain"));
       assert.equal(meshes.length, 5, "expected root and four level-one meshes");
       assert(meshes.some(([name]) => name.endsWith("0/0/0.terrain")), "download lacks root mesh");
@@ -287,7 +287,7 @@ export async function runWorkflowAcceptance(page, baseURL, fixture) {
         assert.equal(mesh.readFloatLE(28), 100, "mesh maximum height");
       }
       results.push({width, mode, actions:"create/pause/resume/partial-parent-fallback/retry/area-preview/3D-preview/download", terrainMeshes:meshes.length, height, fallback, idleFrames:idleFrames.count, interactionFrames, colorPixels:{colored:coloredPixel,plain:plainPixel,restored:restoredPixel}, retryRequests:retryRequests.length});
-      console.log(`Real workflow ${width}px ${mode} passed: create/pause/resume, missing-child parent fallback (${fallback.sampledHeight}m), retry, 2D/3D previews and ZIP contents`);
+      console.log(`Real workflow ${width}px ${mode} passed: create/pause/resume, missing-child parent fallback (${fallback.sampledHeight}m), retry, 2D/3D previews and TAR.GZ contents`);
     }
     for (const width of [390,768,1440]) {
       await page.setViewportSize({width,height:1000});
@@ -401,14 +401,14 @@ async function checkSourceFallbackAndEstimate(page) {
     assert.equal(await page.locator("#rangeTotalTileCount").innerText(),"14","Cesium estimate must include ancestors and halo requests");
     assert((await page.locator("#rangeTerrainEstimate").innerText()).includes("3 个地形网格"));
     await page.locator(".source-card__main[data-provider-select='天地图']").click();
-    await page.locator("input[name='outputFormat'][value='zip']").check({force:true});
-    assert.equal(await page.locator("#rangeTotalTileCount").innerText(),"3","raw ZIP estimate must count only the three selected map layers without Cesium auxiliary data");
+    await page.locator("input[name='outputFormat'][value='tar.gz']").check({force:true});
+    assert.equal(await page.locator("#rangeTotalTileCount").innerText(),"3","raw TAR.GZ estimate must count only the three selected map layers without Cesium auxiliary data");
   } finally {
     await page.unroute("**/api/config/tilemaps",handler);
     await page.reload({waitUntil:"networkidle"});
     await page.locator(".tilemap-source-option[value='1']").waitFor();
   }
-  console.log("Catalogue-failure fallback and real DOM terrain estimate (14 requests/3 meshes vs ZIP 1) passed");
+  console.log("Catalogue-failure fallback and real DOM terrain estimate (14 requests/3 meshes vs TAR.GZ 3) passed");
 }
 
 async function assertSourceSelectionScroll(page) {
@@ -451,24 +451,22 @@ function crc32(bytes) {
   return (crc ^ 0xffffffff) >>> 0;
 }
 
-function readZIP(bytes) {
-  let end = bytes.length - 22;
-  while (end >= 0 && bytes.readUInt32LE(end) !== 0x06054b50) end--;
-  assert(end >= 0, "download is not a ZIP archive");
-  const result = new Map(); let offset = bytes.readUInt32LE(end+16);
-  for (let i=0;i<bytes.readUInt16LE(end+10);i++) {
-    assert.equal(bytes.readUInt32LE(offset),0x02014b50);
-    const length=bytes.readUInt16LE(offset+28), extra=bytes.readUInt16LE(offset+30), comment=bytes.readUInt16LE(offset+32);
-    const name=bytes.subarray(offset+46,offset+46+length).toString("utf8"), method=bytes.readUInt16LE(offset+10), size=bytes.readUInt32LE(offset+20), local=bytes.readUInt32LE(offset+42);
-    const start=local+30+bytes.readUInt16LE(local+26)+bytes.readUInt16LE(local+28), compressed=bytes.subarray(start,start+size);
-    assert([0,8].includes(method),`unsupported fixture ZIP method ${method}`);
-    const data=method===8?inflateRawSync(compressed):compressed;
-    assert.equal(crc32(data),bytes.readUInt32LE(offset+16),`ZIP CRC mismatch: ${name}`);
-    result.set(name,data); offset+=46+length+extra+comment;
+function readTarGz(bytes) {
+  const tar = gunzipSync(bytes), result = new Map();
+  for (let offset = 0; offset + 512 <= tar.length;) {
+    if (tar.subarray(offset, offset + 512).every(byte => byte === 0)) break;
+    const header = tar.subarray(offset, offset + 512);
+    const name = header.subarray(0, 100).toString("utf8").replace(/\0.*$/, "");
+    const sizeText = header.subarray(124, 136).toString("ascii").replace(/\0.*$/, "").trim();
+    const size = sizeText ? Number.parseInt(sizeText, 8) : 0;
+    assert(name && Number.isFinite(size), "download is not a valid TAR archive");
+    const start = offset + 512;
+    result.set(name, tar.subarray(start, start + size));
+    offset = start + Math.ceil(size / 512) * 512;
   }
+  assert(result.size > 0, "downloaded TAR.GZ archive is empty");
   return result;
 }
-
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const child = spawn(process.execPath, [join(appDir,"scripts/smoke_ui.mjs"),"--workflow",...process.argv.slice(2)], {cwd:appDir,stdio:"inherit",windowsHide:true});
   const [code] = await once(child,"exit"); process.exitCode=code ?? 1;

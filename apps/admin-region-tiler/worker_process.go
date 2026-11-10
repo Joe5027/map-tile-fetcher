@@ -443,7 +443,7 @@ func prepareArtifactForRun(taskRecord *TaskRecord, task *Task, run *TaskRunRecor
 
 	if strings.EqualFold(task.outformat, "mbtiles") || strings.HasSuffix(strings.ToLower(taskSnapshot.File), ".mbtiles") {
 		run.ArtifactPath = taskSnapshot.File
-		run.ArtifactName = strings.TrimSuffix(archiveFileName(taskRecord.Name, taskRecord.SourceName), ".zip") + ".mbtiles"
+		run.ArtifactName = artifactBaseName(taskRecord.Name, taskRecord.SourceName) + ".mbtiles"
 		return nil
 	}
 
@@ -452,11 +452,17 @@ func prepareArtifactForRun(taskRecord *TaskRecord, task *Task, run *TaskRunRecor
 	if task.artifactDirectory != "" {
 		sourceDir = task.artifactDirectory
 	}
-	zipPath := filepath.Join(artifactDir, "artifact.zip")
-	stagingPath := zipPath + ".partial"
+	archivePath := filepath.Join(artifactDir, "artifact.tar.gz")
+	stagingPath := archivePath + ".partial"
 	defer os.Remove(stagingPath)
 	var lastProgress time.Time
-	if err := zipDirectory(sourceDir, stagingPath, func(current, total int) error {
+	archiveWriter := tarGzDirectory
+	if strings.EqualFold(task.outformat, "zip") {
+		archivePath = filepath.Join(artifactDir, "artifact.zip")
+		stagingPath = archivePath + ".partial"
+		archiveWriter = zipDirectory
+	}
+	if err := archiveWriter(sourceDir, stagingPath, func(current, total int) error {
 		if task.workerManaged {
 			if err := task.waitIfPaused(); err != nil {
 				return err
@@ -486,22 +492,22 @@ func prepareArtifactForRun(taskRecord *TaskRecord, task *Task, run *TaskRunRecor
 	if err := validateArchive(stagingPath); err != nil {
 		return err
 	}
-	if _, err := os.Stat(zipPath); err == nil {
-		if err := os.Remove(zipPath); err != nil {
+	if _, err := os.Stat(archivePath); err == nil {
+		if err := os.Remove(archivePath); err != nil {
 			return err
 		}
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	if err := os.Rename(stagingPath, zipPath); err != nil {
+	if err := os.Rename(stagingPath, archivePath); err != nil {
 		return err
 	}
-	run.ArtifactPath = zipPath
-	run.ArtifactName = archiveFileName(taskRecord.Name, taskRecord.SourceName)
+	run.ArtifactPath = archivePath
+	run.ArtifactName = archiveFileName(taskRecord.Name, taskRecord.SourceName, task.outformat)
 	return nil
 }
 
-func archiveFileName(taskName, childName string) string {
+func artifactBaseName(taskName, childName string) string {
 	taskName = strings.TrimSpace(taskName)
 	childName = strings.TrimSpace(childName)
 	if taskName == "" {
@@ -510,7 +516,14 @@ func archiveFileName(taskName, childName string) string {
 	if childName == "" {
 		childName = "subtask"
 	}
-	return safeFilePart(taskName) + "-" + safeFilePart(childName) + ".zip"
+	return safeFilePart(taskName) + "-" + safeFilePart(childName)
+}
+
+func archiveFileName(taskName, childName, format string) string {
+	if strings.EqualFold(format, "zip") {
+		return artifactBaseName(taskName, childName) + ".zip"
+	}
+	return artifactBaseName(taskName, childName) + ".tar.gz"
 }
 
 func safeFilePart(value string) string {

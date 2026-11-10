@@ -1519,7 +1519,13 @@ func normalizeOutputFormat(format string) (string, error) {
 	if normalized == "" {
 		normalized = strings.ToLower(strings.TrimSpace(viper.GetString("output.format")))
 	}
-	if normalized == "" || normalized == "file" || normalized == "zip" {
+	if normalized == "" || normalized == "file" {
+		return "tar.gz", nil
+	}
+	if normalized == "tar" || normalized == "tgz" || normalized == "tar.gz" {
+		return "tar.gz", nil
+	}
+	if normalized == "zip" {
 		return "zip", nil
 	}
 	if normalized == "mbtiles" || normalized == "cesium" {
@@ -1684,6 +1690,8 @@ func applyProgressAndArtifact(response *TaskResponse) {
 		switch {
 		case strings.HasSuffix(strings.ToLower(response.ArtifactName), ".zip"):
 			response.Artifact.PackageFormat = "zip"
+		case strings.HasSuffix(strings.ToLower(response.ArtifactName), ".tar.gz"), strings.HasSuffix(strings.ToLower(response.ArtifactName), ".tgz"):
+			response.Artifact.PackageFormat = "tar.gz"
 		case strings.HasSuffix(strings.ToLower(response.ArtifactName), ".mbtiles"):
 			response.Artifact.Format = "mbtiles"
 		}
