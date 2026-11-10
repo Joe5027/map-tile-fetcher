@@ -1,7 +1,9 @@
 package main
 
 import (
+	"archive/tar"
 	"archive/zip"
+	"compress/gzip"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -27,28 +29,39 @@ func managedRunDirectory(plan *TaskRecord, runID string) (string, error) {
 }
 
 func validateArchive(path string) error {
-	r, err := zip.OpenReader(path)
-	if err != nil {
-		return err
+	lowered := strings.ToLower(path)
+	if strings.Contains(lowered, ".tar.gz") || strings.Contains(lowered, ".tgz") {
+		return validateTarGzArchive(path)
 	}
+	r, err := zip.OpenReader(path)
+	if err != nil { return err }
 	defer r.Close()
 	for _, file := range r.File {
 		reader, err := file.Open()
-		if err != nil {
-			return err
-		}
+		if err != nil { return err }
 		_, copyErr := io.Copy(io.Discard, reader)
 		closeErr := reader.Close()
-		if copyErr != nil {
-			return copyErr
-		}
-		if closeErr != nil {
-			return closeErr
-		}
+		if copyErr != nil { return copyErr }
+		if closeErr != nil { return closeErr }
 	}
 	return nil
 }
 
+func validateTarGzArchive(path string) error {
+	file, err := os.Open(path)
+	if err != nil { return err }
+	defer file.Close()
+	gzipReader, err := gzip.NewReader(file)
+	if err != nil { return err }
+	defer gzipReader.Close()
+	tarReader := tar.NewReader(gzipReader)
+	for {
+		_, err := tarReader.Next()
+		if errors.Is(err, io.EOF) { return nil }
+		if err != nil { return err }
+		if _, err := io.Copy(io.Discard, tarReader); err != nil { return err }
+	}
+}
 func (s *SQLiteStore) publishedRun(planID string) (*TaskRunRecord, error) {
 	var id string
 	err := s.db.QueryRow(`SELECT id FROM task_runs WHERE plan_id = ? AND artifact_status = 'ready' AND artifact_path <> '' ORDER BY created_at DESC, rowid DESC LIMIT 1`, planID).Scan(&id)

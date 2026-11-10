@@ -393,7 +393,7 @@ async function smokeRegionFlow(page, createdPayloads, pendingCreates) {
   assert(Array.isArray(payload.sources) && payload.sources.length > 0, "region payload should include sources");
   assert(!payload.mode, "region payload should use the legacy-compatible region request shape");
   assert(payload.scheduleMode === "immediate", "region payload should create an immediate task");
-  assert(payload.output?.format === "zip", "region payload should default to zip output");
+  assert(payload.output?.format === "tar.gz", "region payload should default to tar.gz output");
   assert(payload.sources.every((source) => !String(source.url || "").includes("YOUR_TIANDITU_TOKEN")), "region payload should replace Tianditu token placeholders");
   assert(payload.sources.some((source) => String(source.url || "").includes("smoke-test-token")), "region payload should include the supplied Tianditu token");
 }
@@ -427,8 +427,8 @@ async function smokeRangeFlow(page, createdPayloads, pendingCreates) {
   await page.locator("select[name='savePipe']").selectOption("4");
   await page.locator("input[name='outputFormat'][value='mbtiles']").check({force:true});
   assert(await page.locator("select[name='savePipe']").isDisabled(), "MBTiles must display its actual single writer");
-  await page.locator("input[name='outputFormat'][value='zip']").check({force:true});
-  assert(await page.locator("select[name='savePipe']").inputValue() === "4", "switching back to ZIP must restore the user's save threads");
+  await page.locator("input[name='outputFormat'][value='tar.gz']").check({force:true});
+  assert(await page.locator("select[name='savePipe']").inputValue() === "4", "switching back to TAR.GZ must restore the user's save threads");
   await page.locator("input[name='outputFormat'][value='mbtiles']").check({force:true});
   await page.locator("input[name='timeDelay']").fill("175");
 
@@ -459,9 +459,9 @@ async function smokeTerrainFlows(page, createdPayloads, pendingCreates) {
   await page.locator("input[name='rangeLayers'][value='img']").uncheck();
   await page.locator("input[name='rangeLayers'][value='ter']").check();
   await page.locator("input[name='rangeLayers'][value='cta']").check();
-  assert(await page.locator(".output-format-card").count() === 2, "download artifacts should only expose ZIP and MBTiles");
-  await page.locator("input[name='outputFormat'][value='zip']").check({force:true});
-  assert(await page.locator("select[name='savePipe']").inputValue() === "4", "MBTiles creation must retain the previous ZIP save-thread choice");
+  assert(await page.locator(".output-format-card").count() === 2, "download artifacts should only expose TAR.GZ and MBTiles");
+  await page.locator("input[name='outputFormat'][value='tar.gz']").check({force:true});
+  assert(await page.locator("select[name='savePipe']").inputValue() === "4", "TAR.GZ creation must retain the previous save-thread choice");
   await submitOnceWhilePending(page, createdPayloads, pendingCreates, createdPayloads.length);
   assert(createdPayloads.at(-1).sources.length === 2 && createdPayloads.at(-1).sources.every(source=>/[?&]T=(ter|cta)_w/.test(source.url)), "terrain imagery should use directory ter/cta sources");
 

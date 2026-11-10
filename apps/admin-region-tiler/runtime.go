@@ -1,7 +1,9 @@
 package main
 
 import (
+	"archive/tar"
 	"archive/zip"
+	"compress/gzip"
 	"errors"
 	"io"
 	"os"
@@ -599,6 +601,45 @@ func buildTaskFromRecord(plan *TaskRecord) (*Task, error) {
 	return buildTaskFromRequest(request)
 }
 
+func tarGzDirectory(sourceDir, archivePath string, onProgress func(current, total int) error) (err error) {
+	files := make([]string, 0)
+	var archiveBytes uint64
+	if err := filepath.Walk(sourceDir, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil { return walkErr }
+		if info.Mode().IsRegular() && strings.HasSuffix(info.Name(), ".partial") { return nil }
+		if info.Mode().IsRegular() {
+			files = append(files, path)
+			archiveBytes += uint64(info.Size()) + uint64(info.Size()/1000) + 1024
+		}
+		return nil
+	}); err != nil { return err }
+	if err := requireOutputSpace(filepath.Dir(archivePath), "archive", archiveBytes+2048); err != nil { return err }
+	if onProgress != nil { if err := onProgress(0, len(files)); err != nil { return err } }
+	archiveFile, err := os.Create(archivePath)
+	if err != nil { return err }
+	defer func() {
+		if closeErr := archiveFile.Close(); err == nil && closeErr != nil { err = closeErr }
+		if err != nil { _ = os.Remove(archivePath) }
+	}()
+	gzipWriter := gzip.NewWriter(archiveFile)
+	tarWriter := tar.NewWriter(gzipWriter)
+	for index, path := range files {
+		info, err := os.Stat(path); if err != nil { return err }
+		relative, err := filepath.Rel(sourceDir, path); if err != nil { return err }
+		header, err := tar.FileInfoHeader(info, ""); if err != nil { return err }
+		header.Name = filepath.ToSlash(relative)
+		if err := tarWriter.WriteHeader(header); err != nil { return err }
+		sourceFile, err := os.Open(path); if err != nil { return err }
+		_, copyErr := io.Copy(tarWriter, sourceFile)
+		closeErr := sourceFile.Close()
+		if copyErr != nil { return copyErr }
+		if closeErr != nil { return closeErr }
+		if onProgress != nil { if err := onProgress(index+1, len(files)); err != nil { return err } }
+	}
+	if err := tarWriter.Close(); err != nil { return err }
+	if err := gzipWriter.Close(); err != nil { return err }
+	return nil
+}
 func zipDirectory(sourceDir, zipPath string, onProgress func(current, total int) error) (err error) {
 	files := make([]string, 0)
 	var archiveBytes uint64

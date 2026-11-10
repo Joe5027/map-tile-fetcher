@@ -624,7 +624,7 @@ function readScheduleRequest(formData) {
 }
 
 function readOutputRequest(formData) {
-    const format = String(formData.get("outputFormat") || "zip").trim().toLowerCase();
+    const format = String(formData.get("outputFormat") || "tar.gz").trim().toLowerCase();
     if (format === "cesium") return { format, label: "Cesium 三维地形包" };
     if (format === "mbtiles") {
         return {
@@ -633,8 +633,8 @@ function readOutputRequest(formData) {
         };
     }
     return {
-        format: "zip",
-        label: "ZIP 文件树"
+        format: "tar.gz",
+        label: "TAR.GZ 压缩包"
     };
 }
 
@@ -2339,7 +2339,7 @@ function updateSourceCapabilities() {
         sourceCapabilityKey = key;
     }
     if (terrarium) output.value = "cesium";
-    else if (output.value === "cesium") output.value = "zip";
+    else if (output.value === "cesium") output.value = "tar.gz";
     for (const input of document.querySelectorAll('.output-format-card input[name="outputFormat"]')) {
         input.disabled = terrarium;
     }
@@ -2350,7 +2350,7 @@ function updateSourceCapabilities() {
     }
     document.getElementById("outputFormatHint").textContent = terrarium
         ? `地形高程源：默认 ${preferredZoom} 级，最高 ${range.max} 级；下载后自动生成可三维预览的 Cesium 地形包。`
-        : "普通地图源可选择 ZIP 或 MBTiles；下载真实地形高程请在地图源中选择「地形高程（Terrarium）」。";
+        : "普通地图源可选择 TAR.GZ 或 MBTiles；下载真实地形高程请在地图源中选择「地形高程（Terrarium）」。";
     document.getElementById("rangeTiandituShortcuts").classList.toggle("is-hidden", selectedProvider !== "天地图");
     for (const checkbox of document.querySelectorAll(".range-layer-option")) {
         const source = tilemaps.find((item) => tiandituLayer(item) === checkbox.value);
@@ -2363,7 +2363,7 @@ function updateSourceCapabilities() {
 
 function validateOutputSources(sources, output) {
     if (output.format === "cesium" && !sources.every(isTerrariumSource)) {
-        return "Cesium 三维地形需要 Terrarium 高程源。请在地图源中选择「地形高程（Terrarium）」；普通地图图片或矢量图层请使用 ZIP / MBTiles。";
+        return "Cesium 三维地形需要 Terrarium 高程源。请在地图源中选择「地形高程（Terrarium）」；普通地图图片或矢量图层请使用 TAR.GZ / MBTiles。";
     }
     return "";
 }
@@ -3715,7 +3715,7 @@ async function handleBulkAction(action) {
                 return;
             }
         }
-        if (!window.confirm("确定删除已选任务及其全部子任务、历史下载文件、ZIP/MBTiles 和失败记录吗？此操作不可恢复。共享区域文件会保留至最后一个引用删除。")) {
+        if (!window.confirm("确定删除已选任务及其全部子任务、历史下载文件、TAR.GZ/MBTiles 和失败记录吗？此操作不可恢复。共享区域文件会保留至最后一个引用删除。")) {
             return;
         }
         await runBulkMutation(
@@ -3876,7 +3876,7 @@ async function purgeTask(id, status, silent = false) {
     if (!canDelete(status)) {
         return;
     }
-    if (!silent && !window.confirm("确定删除该任务及其全部子任务、历史下载文件、ZIP/MBTiles 和失败记录吗？此操作不可恢复。共享区域文件会保留至最后一个引用删除。")) {
+    if (!silent && !window.confirm("确定删除该任务及其全部子任务、历史下载文件、TAR.GZ/MBTiles 和失败记录吗？此操作不可恢复。共享区域文件会保留至最后一个引用删除。")) {
         return;
     }
     await mutateTask(`/api/tasks/${id}/purge`, "DELETE", silent);

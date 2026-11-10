@@ -1,8 +1,9 @@
 package main
 
 import (
-	"archive/zip"
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"image"
@@ -254,30 +255,45 @@ func TestTerrainWorkerPublishesMeshesAndRetriesCumulativeRawBaseline(t *testing.
 	if state.Expected != 3 || state.Available != 3 || state.Missing != 0 || state.Status != "complete" {
 		t.Fatalf("retry mesh coverage: %+v", state)
 	}
-	reader, err := zip.OpenReader(second.ArtifactPath)
+	archiveFile, err := os.Open(second.ArtifactPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer reader.Close()
-	files := make(map[string]*zip.File)
-	for _, entry := range reader.File {
-		files[entry.Name] = entry
+	defer archiveFile.Close()
+	gzipReader, err := gzip.NewReader(archiveFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer gzipReader.Close()
+	tarReader := tar.NewReader(gzipReader)
+	files := make(map[string]bool)
+	var layerData []byte
+	for {
+		entry, err := tarReader.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		files[entry.Name] = true
 		if strings.HasSuffix(entry.Name, ".png") || strings.HasSuffix(entry.Name, ".sqlite") || strings.HasSuffix(entry.Name, ".partial") {
 			t.Fatalf("source/cache leaked into terrain artifact: %s", entry.Name)
 		}
+		if entry.Name == "layer.json" {
+			layerData, err = io.ReadAll(tarReader)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
 	for _, name := range []string{"layer.json", "README.txt", "0/0/0.terrain", "1/1/1.terrain", "2/2/2.terrain"} {
-		if files[name] == nil {
+		if !files[name] {
 			t.Fatalf("missing %s", name)
 		}
 	}
-	layer, err := files["layer.json"].Open()
-	if err != nil {
-		t.Fatal(err)
-	}
 	var manifest terrain.Manifest
-	err = json.NewDecoder(layer).Decode(&manifest)
-	layer.Close()
+	err = json.Unmarshal(layerData, &manifest)
 	if err != nil {
 		t.Fatal(err)
 	}

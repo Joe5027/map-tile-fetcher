@@ -513,7 +513,7 @@ func (s *SQLiteStore) recoverPublications() error {
 		if artifactErr == nil {
 			_, artifactErr = os.Stat(path)
 		}
-		if artifactErr == nil && strings.HasSuffix(path, ".zip") {
+		if artifactErr == nil && (strings.HasSuffix(strings.ToLower(path), ".zip") || strings.HasSuffix(strings.ToLower(path), ".tar.gz") || strings.HasSuffix(strings.ToLower(path), ".tgz")) {
 			artifactErr = validateArchive(path)
 		}
 		if artifactErr != nil {

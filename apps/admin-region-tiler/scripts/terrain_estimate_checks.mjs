@@ -18,7 +18,7 @@ assert.deepEqual(count(example, { min: 2, max: 2 }), { rawTiles: 14, meshTiles: 
 assert.equal(estimate(example, { min: 2, max: 2 }, [terrain], "cesium").rawTiles, 14);
 assert.equal(estimate(example, { min: 2, max: 2 }, [terrain, raster], "cesium").rawTiles, 15);
 assert.equal(estimate(example, { min: 2, max: 2 }, [terrain, terrain], "cesium").rawTiles, 28);
-for (const format of ["zip", "mbtiles"]) {
+for (const format of ["tar.gz", "mbtiles"]) {
     const result = estimate(example, { min: 2, max: 2 }, [terrain, raster], format);
     assert.equal(result.rawTiles, 2);
     assert.equal(result.meshTiles, 0);
@@ -85,4 +85,4 @@ for (const source of sources) {
     }
 }
 assert.equal(call(`validateOutputSources([FALLBACK_TILEMAPS.find(s=>s.id===13),FALLBACK_TILEMAPS.find(s=>s.id===11)],{format:"cesium"})`).length > 0, true);
-console.log(`Terrain estimates passed: 14 raw / 3 meshes, ${comparisons} low-zoom comparisons, world z15 bounded union, mixed-source/ZIP behavior, ${sources.length} fallback sources.`);
+console.log(`Terrain estimates passed: 14 raw / 3 meshes, ${comparisons} low-zoom comparisons, world z15 bounded union, mixed-source/TAR.GZ behavior, ${sources.length} fallback sources.`);
