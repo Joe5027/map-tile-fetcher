@@ -29,12 +29,14 @@ let previewTokenExpiresAt = 0;
 let previewTokenRefreshTimer = null;
 let previewTokenGeneration = 0;
 let previewRecoveryUsed = false;
+let previewBaseLayerRefreshTimer = null;
 let adminRegionMap = null;
 let adminRegionBaseLayer = null;
 let adminRegionLabelLayer = null;
 let adminRegionLayerGroup = null;
 let adminRegionSelectedLayer = null;
 let taskAreaPreviewLayer = null;
+let taskPreviewBaseLayersHidden = false;
 let taskPreviewSequence = 0;
 let taskPreviewAbort = null;
 let taskPreviewTask = null;
@@ -67,6 +69,7 @@ const selectedTaskIds = new Set();
 const adminRegionGeoJSONCache = new Map();
 const adminRegionGeoJSONRequests = new Map();
 const adminRegionLayerCache = new Map();
+const taskAreaPreviewCache = new Map();
 const WEB_MERCATOR_MAX_LAT = 85.05112878;
 const HORIZONTAL_DRAG_LIMIT_LNG = 180;
 const MAP_WORLD_BOUNDS = [
@@ -78,6 +81,15 @@ const WEB_MERCATOR_TILE_SIZE = 256;
 const MAP_INIT_RETRY_LIMIT = 30;
 const ADMIN_REGION_GEOJSON_BATCH_SIZE = 64;
 const ADMIN_REGION_LAYER_CACHE_LIMIT = 6;
+const TASK_AREA_PREVIEW_CACHE_LIMIT = 12;
+const MAP_TILE_OPTIONS = {
+    minZoom: MAP_MIN_ZOOM,
+    noWrap: true,
+    updateWhenIdle: true,
+    updateWhenZooming: false,
+    keepBuffer: 1,
+    detectRetina: false
+};
 const TOKEN_STORAGE_KEY = "mapTileFetcher.serviceCredentials.v1";
 
 const REGION_LEVEL_RULES = [
@@ -219,8 +231,7 @@ function bindEvents() {
             updateRangeEstimate();
             updateRangeOverlay();
             if (element.name === "tiandituToken") {
-                updateRangeBaseLayer();
-                updateAdminRegionBaseLayer();
+                schedulePreviewBaseLayerRefresh();
             }
         });
     });
@@ -839,7 +850,7 @@ function keepMapWorldCoveringViewport(map, mapElementID) {
 function initAdminRegionMap() {
     if (adminRegionMap) {
         // The map may have been created before the asynchronous region catalog finished loading.
-        if (hasRenderableAdminRegionOptions(adminRegionLevel)) {
+        if (taskMode !== "tasks" && hasRenderableAdminRegionOptions(adminRegionLevel)) {
             void renderAdminRegionMap();
         }
         return;
@@ -856,6 +867,10 @@ function initAdminRegionMap() {
     adminRegionMap = L.map("adminRegionMap", {
         zoomControl: true,
         attributionControl: false,
+        preferCanvas: true,
+        zoomAnimation: false,
+        fadeAnimation: false,
+        markerZoomAnimation: false,
         minZoom: getWorldCoveringMinZoom("adminRegionMap"),
         maxBounds: MAP_WORLD_BOUNDS,
         maxBoundsViscosity: 1,
@@ -868,7 +883,7 @@ function initAdminRegionMap() {
     adminRegionLayerGroup = L.layerGroup().addTo(adminRegionMap);
     adminRegionMap.on("click", handleAdminRegionMapClick);
 
-    void renderAdminRegionMap();
+    if (taskMode !== "tasks") void renderAdminRegionMap();
 }
 
 async function updateAdminRegionBaseLayer() {
@@ -914,9 +929,9 @@ async function updateAdminRegionBaseLayer() {
     adminRegionBaseLayer = null;
     if (url) {
         adminRegionBaseLayer = L.tileLayer(url, {
-            minZoom: MAP_MIN_ZOOM,
+            ...MAP_TILE_OPTIONS,
             maxZoom,
-            noWrap: true
+            pane: "tilePane"
         });
         adminRegionBaseLayer.on("tileerror", () => {
             if (source.startsWith("tdt-")) void recoverPreviewCredentials(credentials.tiandituToken);
@@ -928,9 +943,8 @@ async function updateAdminRegionBaseLayer() {
     }
     if (labelUrl) {
         adminRegionLabelLayer = L.tileLayer(labelUrl, {
-            minZoom: MAP_MIN_ZOOM,
+            ...MAP_TILE_OPTIONS,
             maxZoom,
-            noWrap: true,
             opacity: 1
         });
         adminRegionLabelLayer.on("tileerror", () => {
@@ -1013,10 +1027,6 @@ async function renderAdminRegionMap() {
         return;
     }
     showAdminRegionLayerEntry(layerEntry, selectedID);
-    const selectedRegion = getRegionByID(selectedID);
-    if (selectedRegion) {
-        preloadAdminRegionChildren(selectedRegion);
-    }
     const focused = await focusAdminRegionPendingSelection(token);
     if (!focused) {
         fitAdminRegionMapToSelection();
@@ -1118,6 +1128,7 @@ function cacheAdminRegionLayers(cacheKey, entry) {
 function createAdminRegionLayerEntry(regions, geoJSONByRegionID) {
     const layers = regions.map((region) => {
         const layer = L.geoJSON(geoJSONByRegionID.get(region.id), {
+            bubblingMouseEvents: false,
             style: () => adminRegionFeatureStyle(false),
             onEachFeature: (_feature, featureLayer) => {
                 featureLayer.bindTooltip(region.name, {
@@ -1126,7 +1137,6 @@ function createAdminRegionLayerEntry(regions, geoJSONByRegionID) {
                     sticky: true
                 });
                 featureLayer.on("mouseover", () => {
-                    preloadAdminRegionChildren(region);
                     if (featureLayer !== adminRegionSelectedLayer) {
                         featureLayer.setStyle(adminRegionHoverStyle());
                     }
@@ -1148,25 +1158,15 @@ function showAdminRegionLayerEntry(entry, selectedID) {
         const selected = region.id === selectedID;
         layer.setStyle(adminRegionFeatureStyle(selected));
         layer.addTo(adminRegionLayerGroup);
-        bindAdminRegionLayerElements(layer, region);
+        layer.eachLayer((featureLayer) => {
+            featureLayer.off("click");
+            featureLayer.on("click", () => {
+                if (taskMode !== "tasks") selectAdminRegionFromMap(region);
+            });
+        });
         if (selected) {
             adminRegionSelectedLayer = layer;
         }
-    });
-}
-
-function preloadAdminRegionChildren(region) {
-    const nextLevel = nextAdminRegionLevel(region.level);
-    if (!nextLevel) {
-        return;
-    }
-    const childRegions = getRegionOptionsForParent(nextLevel, region.id)
-        .filter((item) => item.maintained !== false && item.geojson);
-    if (childRegions.length === 0) {
-        return;
-    }
-    void fetchRegionGeoJSONs(childRegions).catch((error) => {
-        console.warn("failed to preload child region geojson", region.id, error);
     });
 }
 
@@ -1469,6 +1469,10 @@ function initRangeMap() {
     rangeMap = L.map("rangeMap", {
         zoomControl: true,
         attributionControl: false,
+        preferCanvas: true,
+        zoomAnimation: false,
+        fadeAnimation: false,
+        markerZoomAnimation: false,
         minZoom: getWorldCoveringMinZoom("rangeMap"),
         maxBounds: MAP_WORLD_BOUNDS,
         maxBoundsViscosity: 1,
@@ -1479,9 +1483,10 @@ function initRangeMap() {
     rangeMap.on("resize", () => keepMapWorldCoveringViewport(rangeMap, "rangeMap"));
     updateRangeBaseLayer();
 
-    rangeMap.on("mousemove", (event) => {
-        document.getElementById("rangeHoverCoord").textContent = formatLngLat(event.latlng);
+    const updateHoverCoordinate = rafThrottle((latlng) => {
+        document.getElementById("rangeHoverCoord").textContent = formatLngLat(latlng);
     });
+    rangeMap.on("mousemove", (event) => updateHoverCoordinate(event.latlng));
 
     rangeMap.on("click", (event) => {
         document.getElementById("rangeClickCoord").textContent = formatLngLat(event.latlng);
@@ -1538,9 +1543,9 @@ async function updateRangeBaseLayer() {
     rangeBaseLayer = null;
     if (url) {
         rangeBaseLayer = L.tileLayer(url, {
-            minZoom: MAP_MIN_ZOOM,
+            ...MAP_TILE_OPTIONS,
             maxZoom,
-            noWrap: true
+            pane: "tilePane"
         });
         rangeBaseLayer.on("tileerror", () => {
             if (source.startsWith("tdt-")) void recoverPreviewCredentials(credentials.tiandituToken);
@@ -1552,9 +1557,8 @@ async function updateRangeBaseLayer() {
     }
     if (labelUrl) {
         rangeLabelLayer = L.tileLayer(labelUrl, {
-            minZoom: MAP_MIN_ZOOM,
+            ...MAP_TILE_OPTIONS,
             maxZoom,
-            noWrap: true,
             pane: "tilePane",
             opacity: 1
         });
@@ -1627,8 +1631,18 @@ function resetPreviewCredentials() {
     rangeTiandituPreviewTokenValue = "";
     rangeTiandituPreviewTokenPromise = null;
     previewRecoveryUsed = false;
+    window.clearTimeout(previewBaseLayerRefreshTimer);
+    previewBaseLayerRefreshTimer = null;
     for(const layer of [rangeBaseLayer,rangeLabelLayer,adminRegionBaseLayer,adminRegionLabelLayer]) layer?.remove();
     rangeBaseLayer = rangeLabelLayer = adminRegionBaseLayer = adminRegionLabelLayer = null;
+}
+
+function schedulePreviewBaseLayerRefresh() {
+    window.clearTimeout(previewBaseLayerRefreshTimer);
+    previewBaseLayerRefreshTimer = window.setTimeout(() => {
+        previewBaseLayerRefreshTimer = null;
+        void Promise.all([updateRangeBaseLayer(), updateAdminRegionBaseLayer()]);
+    }, 350);
 }
 
 async function recoverPreviewCredentials(token) {
@@ -1710,6 +1724,19 @@ function formatLngLat(latlng) {
         return "-";
     }
     return `${latlng.lng.toFixed(6)}, ${latlng.lat.toFixed(6)}`;
+}
+
+function rafThrottle(callback) {
+    let frame = 0;
+    let latestValue;
+    return (value) => {
+        latestValue = value;
+        if (frame) return;
+        frame = window.requestAnimationFrame(() => {
+            frame = 0;
+            callback(latestValue);
+        });
+    };
 }
 
 function setRangeDrawMode(mode) {
@@ -3400,6 +3427,7 @@ function clearTaskPreview() {
     taskAreaPreviewLayer?.remove();
     taskAreaPreviewLayer=null;
     taskPreviewTask=null;
+    restoreTaskPreviewBaseLayers();
     document.getElementById("taskPreviewControls")?.classList.add("is-hidden");
 }
 
@@ -3410,32 +3438,73 @@ async function previewTaskArea(task, level) {
     taskPreviewAbort=new AbortController();
     activeMapMode=task?.area?.bbox ? "bbox" : "region";
     setTaskMode("tasks");
+    if(activeMapMode==="region") hideTaskPreviewBaseLayers(adminRegionMap);
     document.getElementById("taskPreviewControls").classList.remove("is-hidden");
     const status=document.getElementById("taskPreviewStatus");
     status.textContent=`${task.name || "任务"}：加载范围中...`;
     const query=Number.isInteger(level) ? `?level=${level}` : "";
-    const response=await fetchJSON(`/api/tasks/${encodeURIComponent(task.id)}/area${query}`,{signal:taskPreviewAbort.signal});
+    const cacheKey=`${task.id}:${Number.isInteger(level) ? level : "default"}`;
+    let responseData=getCachedTaskAreaPreview(cacheKey);
+    if(!responseData) {
+        const response=await fetchJSON(`/api/tasks/${encodeURIComponent(task.id)}/area${query}`,{signal:taskPreviewAbort.signal});
+        if(sequence!==taskPreviewSequence || taskMode!=="tasks") return;
+        if(!response.ok) {
+            status.textContent=response.status===0 ? "范围网络请求失败" : "任务范围加载失败";
+            return;
+        }
+        responseData=response.data;
+        cacheTaskAreaPreview(cacheKey,responseData);
+    }
     if(sequence!==taskPreviewSequence || taskMode!=="tasks") return;
     const map=activeMapMode==="bbox" ? rangeMap : adminRegionMap;
-    if(!response.ok || !map || !window.L) {
-        status.textContent=response.status===0 ? "范围网络请求失败" : "任务范围加载失败";
+    if(!map || !window.L) {
+        status.textContent="任务范围加载失败";
         return;
     }
-    const features=Array.isArray(response.data.features) ? response.data.features : [];
+    const features=Array.isArray(responseData.features) ? responseData.features : [];
     if(features.length===0){status.textContent="该层级没有范围数据";return;}
     const select=document.getElementById("taskPreviewLevel");
     select.replaceChildren();
-    for(const entry of response.data.levels || []) {
+    for(const entry of responseData.levels || []) {
         const option=document.createElement("option");
         option.value=entry.index;
         option.textContent=`${Number(entry.minZoom)}-${Number(entry.maxZoom)} 级`;
-        option.selected=entry.index===response.data.selectedLevel;
+        option.selected=entry.index===responseData.selectedLevel;
         select.append(option);
     }
-    taskAreaPreviewLayer=L.geoJSON(response.data,{interactive:false,style:{color:"#2563eb",weight:3,fillColor:"#2563eb",fillOpacity:0.14}}).addTo(map);
+    hideTaskPreviewBaseLayers(map);
+    taskAreaPreviewLayer=L.geoJSON(responseData,{renderer:L.canvas({padding:0.25,tolerance:8}),interactive:false,smoothFactor:2,style:{color:"#2563eb",weight:2,fillColor:"#2563eb",fillOpacity:0.14}}).addTo(map);
     const bounds=taskAreaPreviewLayer.getBounds();
     if(bounds.isValid()) map.fitBounds(bounds.pad(0.12),{padding:[26,26],maxZoom:17});
     status.textContent=`${task.name || "任务"}：${features.length} 个区域`;
+}
+
+function getCachedTaskAreaPreview(cacheKey) {
+    const data=taskAreaPreviewCache.get(cacheKey);
+    if(!data) return null;
+    taskAreaPreviewCache.delete(cacheKey);
+    taskAreaPreviewCache.set(cacheKey,data);
+    return data;
+}
+
+function cacheTaskAreaPreview(cacheKey,data) {
+    taskAreaPreviewCache.delete(cacheKey);
+    taskAreaPreviewCache.set(cacheKey,data);
+    while(taskAreaPreviewCache.size>TASK_AREA_PREVIEW_CACHE_LIMIT) {
+        taskAreaPreviewCache.delete(taskAreaPreviewCache.keys().next().value);
+    }
+}
+
+function hideTaskPreviewBaseLayers(map) {
+    if(map!==adminRegionMap || !adminRegionLayerGroup || !adminRegionMap.hasLayer(adminRegionLayerGroup)) return;
+    adminRegionMap.removeLayer(adminRegionLayerGroup);
+    taskPreviewBaseLayersHidden=true;
+}
+
+function restoreTaskPreviewBaseLayers() {
+    if(!taskPreviewBaseLayersHidden || !adminRegionMap || !adminRegionLayerGroup) return;
+    adminRegionLayerGroup.addTo(adminRegionMap);
+    taskPreviewBaseLayersHidden=false;
 }
 
 function showTaskBBoxOnMap(bbox) {
