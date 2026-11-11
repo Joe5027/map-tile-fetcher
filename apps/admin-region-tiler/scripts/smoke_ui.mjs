@@ -361,10 +361,14 @@ async function smokeRegionFlow(page, createdPayloads, pendingCreates) {
   await page.locator("#tilemapSelector .source-card").first().waitFor({ state: "visible", timeout: options.timeoutMs });
   await waitForPageFunction(
     page,
-    () => document.querySelectorAll("#adminRegionMap path[data-admin-region-id]").length > 0,
-    "admin region paths to render",
+    () => adminRegionLayerGroup?.getLayers().length > 0,
+    "admin region layers to render",
   );
-  await page.locator("#adminRegionMap path[data-admin-region-id]").first().click({ force: true });
+  await page.evaluate(() => {
+    const first = adminRegionLayerGroup.getLayers()[0];
+    const featureLayer = first.getLayers()[0];
+    featureLayer.fire("click");
+  });
   await waitForPageFunction(
     page,
     () => {

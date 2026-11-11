@@ -146,10 +146,11 @@ export async function runWorkflowAcceptance(page, baseURL, fixture) {
   const openArtifact = async task => {
     await refresh();
     const card = page.locator(`[data-group-task-id="${task.id}"]`);
-    // Opening a task also requests its actual range geometry from the server.
-    const area = page.waitForResponse(response => new URL(response.url()).pathname === `/api/tasks/${task.id}/area`);
+    // The first opening requests geometry; repeat openings should use the bounded client cache.
+    const cached = await page.evaluate(id => [...taskAreaPreviewCache.keys()].some(key => key.startsWith(`${id}:`)), task.id);
+    const area = cached ? null : page.waitForResponse(response => new URL(response.url()).pathname === `/api/tasks/${task.id}/area`);
     await card.locator(":scope > summary").click();
-    assert((await area).ok(), "task range preview API failed");
+    if (area) assert((await area).ok(), "task range preview API failed");
     await page.waitForFunction(id => taskPreviewTask?.id === id && taskAreaPreviewLayer?.toGeoJSON().features.length > 0, task.id);
     if (!(await card.evaluate(element => element.open))) await card.locator(":scope > summary").click();
     const child = card.locator(`[data-child-task-id="${task.children[0].id}"]`);
