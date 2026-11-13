@@ -262,6 +262,12 @@ function bindEvents() {
     document.getElementById("finishRangeMapBtn").addEventListener("click", () => setRangeMapExpanded(false));
 
     document.getElementById("tilemapSelector").addEventListener("change", (event) => {
+        if (event.target.matches(".terrain-addon__input")) {
+            if (event.target.checked) selectedSourceIds.add(String(event.target.value));
+            else selectedSourceIds.delete(String(event.target.value));
+            renderTilemapSelector();
+            return;
+        }
         if (event.target.matches(".tilemap-source-option")) {
             syncSelectedSourceIds();
             renderTilemapSelector();
@@ -2061,7 +2067,7 @@ async function loadTilemaps() {
             tilemaps.push(...FALLBACK_TILEMAPS.filter((source) => source.metadata?.kind === "elevation"));
         }
     }
-    const groups = getProviderGroups();
+    const groups = getProviderGroups().filter((group) => group.id !== "地形高程（Terrarium）");
     if (!selectedProvider && groups.length > 0) {
         selectedProvider = groups[0].id;
     }
@@ -2339,10 +2345,27 @@ function getRegionHelperText(config) {
 
 function renderTilemapSelector() {
     const container = document.getElementById("tilemapSelector");
-    const groups = getProviderGroups();
-    container.innerHTML = groups.map((group) => renderProviderCard(group)).join("");
+    const groups = getProviderGroups().filter((group) => group.id !== "地形高程（Terrarium）");
+    container.innerHTML = groups.map((group) => renderProviderCard(group)).join("") + renderTerrainAddon();
     updateSourceCapabilities();
     updateRangeEstimate();
+}
+
+function renderTerrainAddon() {
+    const terrain = tilemaps.find(isTerrariumSource);
+    if (!terrain) return "";
+    const checked = selectedSourceIds.has(String(terrain.id));
+    return `
+        <label class="terrain-addon">
+            <input class="terrain-addon__input" type="checkbox" value="${escapeAttribute(terrain.id)}" ${checked ? "checked" : ""}>
+            <span class="source-option__check" aria-hidden="true"></span>
+            <span class="terrain-addon__body">
+                <strong>附加地形高程</strong>
+                <small>作为额外子任务下载 Terrarium，并自动生成 Cesium 地形包</small>
+            </span>
+            <span class="terrain-addon__badge">+1 子任务</span>
+        </label>
+    `;
 }
 
 function tiandituLayer(source) {
@@ -2363,6 +2386,7 @@ function selectedZoomRange(sources = getSelectedTilemaps()) {
 
 function updateSourceCapabilities() {
     const sources = getSelectedTilemaps();
+    const terrainSelected = sources.some(isTerrariumSource);
     const terrarium = sources.length > 0 && sources.every(isTerrariumSource);
     const key = sources.map((source) => source.id).join(",");
     const range = selectedZoomRange(sources);
@@ -2388,7 +2412,9 @@ function updateSourceCapabilities() {
     }
     document.getElementById("outputFormatHint").textContent = terrarium
         ? `地形高程源：默认 ${preferredZoom} 级，最高 ${range.max} 级；下载后自动生成可三维预览的 Cesium 地形包。`
-        : "普通地图源可选择 TAR.GZ 或 MBTiles；下载真实地形高程请在地图源中选择「地形高程（Terrarium）」。";
+        : terrainSelected
+            ? "普通地图子任务使用当前 TAR.GZ / MBTiles 设置；附加地形高程子任务自动生成 Cesium 地形包。"
+            : "普通地图源可选择 TAR.GZ 或 MBTiles；需要真实地形时可勾选下方「附加地形高程」。";
     document.getElementById("rangeTiandituShortcuts").classList.toggle("is-hidden", selectedProvider !== "天地图");
     for (const checkbox of document.querySelectorAll(".range-layer-option")) {
         const source = tilemaps.find((item) => tiandituLayer(item) === checkbox.value);
@@ -2400,7 +2426,7 @@ function updateSourceCapabilities() {
 }
 
 function validateOutputSources(sources, output) {
-    if (output.format === "cesium" && !sources.every(isTerrariumSource)) {
+    if (output.format === "cesium" && sources.some((source) => !isTerrariumSource(source))) {
         return "Cesium 三维地形需要 Terrarium 高程源。请在地图源中选择「地形高程（Terrarium）」；普通地图图片或矢量图层请使用 TAR.GZ / MBTiles。";
     }
     return "";
@@ -2411,6 +2437,7 @@ function buildSelectedSources(sources, credentials) {
         id: toNumericSourceId(source.id, index), name: source.name,
         url: applySourceCredentials(source.url, credentials),
         format: getTaskTilemapFormat(source), schema: source.schema,
+        outputFormat: isTerrariumSource(source) ? "cesium" : undefined,
         ...(source.metadata ? {metadata: {...source.metadata}} : {})
     }));
 }
@@ -2542,7 +2569,10 @@ function getSelectedProviderGroup() {
 
 function getSelectedTilemaps() {
     const group = getSelectedProviderGroup();
-    return group ? group.items.filter((item) => selectedSourceIds.has(String(item.id))) : [];
+    const selected = group ? group.items.filter((item) => selectedSourceIds.has(String(item.id))) : [];
+    const terrain = tilemaps.find((item) => isTerrariumSource(item) && selectedSourceIds.has(String(item.id)));
+    if (terrain && !selected.some((item) => String(item.id) === String(terrain.id))) selected.push(terrain);
+    return selected;
 }
 
 function getRequestedImageFormat() {
@@ -2858,7 +2888,7 @@ function calculateTerrainTileCounts(bbox, zoom) {
 
 function estimateRangeDownloads(bbox, zoom, sources, outputFormat) {
     const selectedTiles = calculateRangeTileCount(bbox, zoom);
-    const terrain = outputFormat === "cesium" && sources.some(isTerrariumSource) ? calculateTerrainTileCounts(bbox, zoom) : null;
+    const terrain = sources.some(isTerrariumSource) ? calculateTerrainTileCounts(bbox, zoom) : null;
     const perSource = sources.map((source) => {
         const counts = terrain && isTerrariumSource(source) ? terrain : { rawTiles: selectedTiles, meshTiles: 0 };
         return { id: source.id, rawTiles: counts.rawTiles, meshTiles: counts.meshTiles };
@@ -3003,7 +3033,8 @@ async function createTaskFromForm(event, formData, settings) {
 
     resetTaskFormKeepingOptions(event.target, formData);
     syncScheduleControls();
-    selectedProvider = getProviderGroups()[0] ? getProviderGroups()[0].id : "";
+    const providerGroups = getProviderGroups().filter((group) => group.id !== "地形高程（Terrarium）");
+    selectedProvider = providerGroups[0] ? providerGroups[0].id : "";
     ensureProviderSelection();
     initDefaultLevelConfigs();
     renderTilemapSelector();
@@ -3753,8 +3784,9 @@ async function editTaskSource(taskID) {
     const originalSources = task.sources || [];
     const matches = tilemaps.filter((source) => originalSources.some((original) => original.name === source.name));
     if (matches.length) {
-        selectedProvider = getTilemapGroupName(matches[0]);
-        selectedSourceIds = new Set(matches.filter((source) => getTilemapGroupName(source) === selectedProvider).map((source) => String(source.id)));
+        const primary = matches.find((source) => !isTerrariumSource(source)) || matches[0];
+        selectedProvider = getTilemapGroupName(primary);
+        selectedSourceIds = new Set(matches.map((source) => String(source.id)));
         expandedProviders.add(selectedProvider);
     }
     renderTilemapSelector();
@@ -4156,25 +4188,28 @@ function toNumericSourceId(value, index = 0) {
 
 function ensureProviderSelection() {
     const group = getSelectedProviderGroup();
+    const terrainIDs = new Set(tilemaps.filter(isTerrariumSource).map((item) => String(item.id)));
+    const retainedTerrain = Array.from(selectedSourceIds).filter((id) => terrainIDs.has(id));
     if (!group) {
-        selectedSourceIds = new Set();
+        selectedSourceIds = new Set(retainedTerrain);
         return;
     }
 
     const providerIds = new Set(group.items.map((item) => String(item.id)));
     const existing = Array.from(selectedSourceIds).filter((id) => providerIds.has(id));
     if (existing.length === 0) {
-        selectedSourceIds = new Set(defaultSelectedSourceIds(group));
+        selectedSourceIds = new Set([...defaultSelectedSourceIds(group), ...retainedTerrain]);
         return;
     }
 
-    selectedSourceIds = new Set(existing);
+    selectedSourceIds = new Set([...existing, ...retainedTerrain]);
 }
 
 function syncSelectedSourceIds() {
-    selectedSourceIds = new Set(
-        Array.from(document.querySelectorAll(".tilemap-source-option:checked")).map((element) => String(element.value))
-    );
+    selectedSourceIds = new Set([
+        ...Array.from(document.querySelectorAll(".terrain-addon__input:checked")).map((element) => String(element.value)),
+        ...Array.from(document.querySelectorAll(".tilemap-source-option:checked")).map((element) => String(element.value))
+    ]);
 }
 
 function selectAllProviderItems(providerName) {
@@ -4182,7 +4217,8 @@ function selectAllProviderItems(providerName) {
     if (!provider) {
         return;
     }
-    selectedSourceIds = new Set(provider.items.map((item) => String(item.id)));
+    const terrain = Array.from(selectedSourceIds).filter((id) => tilemaps.some((item) => String(item.id) === id && isTerrariumSource(item)));
+    selectedSourceIds = new Set([...provider.items.map((item) => String(item.id)), ...terrain]);
 }
 
 function clearProviderItems(providerName) {

@@ -1047,6 +1047,67 @@ input::placeholder {
     white-space: nowrap;
 }
 
+.terrain-addon {
+    display: grid;
+    grid-template-columns: 18px minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: center;
+    padding: 12px 14px;
+    border: 1px solid rgba(34, 197, 94, 0.35);
+    border-radius: 14px;
+    background: rgba(240, 253, 244, 0.92);
+    cursor: pointer;
+}
+
+.terrain-addon__input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.terrain-addon__body {
+    display: grid;
+    gap: 3px;
+}
+
+.terrain-addon__body strong {
+    color: #166534;
+    font-size: 13px;
+}
+
+.terrain-addon__body small {
+    color: #4b5563;
+    font-size: 11px;
+    line-height: 1.4;
+}
+
+.terrain-addon__badge {
+    padding: 4px 8px;
+    border-radius: 999px;
+    background: rgba(34, 197, 94, 0.14);
+    color: #15803d;
+    font-size: 11px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.terrain-addon__input:checked + .source-option__check {
+    border-color: #16a34a;
+    background: #16a34a;
+}
+
+.terrain-addon__input:checked + .source-option__check::after {
+    content: "";
+    position: absolute;
+    left: 5px;
+    top: 2px;
+    width: 4px;
+    height: 8px;
+    border: solid #fff;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+}
+
 .task-left-column .source-list {
     gap: 8px;
 }
