@@ -43,6 +43,7 @@ type SourceRequest struct {
 	URL      string          `json:"url" binding:"required"`
 	Format   string          `json:"format" binding:"required"`
 	Schema   string          `json:"schema"`
+	Output   string          `json:"outputFormat,omitempty"`
 }
 
 type BBoxRequest struct {
@@ -1161,7 +1162,16 @@ func buildTaskRecordsFromRequest(userID int64, req CreateTaskRequest) (*TaskReco
 
 	children := make([]*TaskRecord, 0, len(sources))
 	for _, source := range sources {
-		childLevels := cloneLevelsWithSource(levels, source.Metadata)
+		childOutput := outputFormat
+		if source.Metadata != nil && source.Metadata.Kind == "elevation" && source.Metadata.Encoding == "terrarium" {
+			childOutput = "cesium"
+		} else if source.Output != "" {
+			childOutput, err = normalizeOutputFormat(source.Output)
+			if err != nil {
+				return nil, nil, err
+			}
+		}
+		childLevels := cloneLevelsWithSource(levels, source.Metadata, childOutput)
 		id, err := shortid.Generate()
 		if err != nil {
 			return nil, nil, fmt.Errorf("generate child task id: %w", err)
