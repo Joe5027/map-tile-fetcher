@@ -23,6 +23,33 @@ func TestWorkerLimitsRespectRequestedCount(t *testing.T) {
 	}
 }
 
+func TestThirtyTilesPerSecondPacingDefaults(t *testing.T) {
+	previousWorkers := viper.GetInt("task.workers")
+	previousDelay := viper.GetInt("task.timedelay")
+	previousJitter := viper.GetInt("task.time_jitter_ms")
+	viper.Set("task.workers", 50)
+	viper.Set("task.timedelay", 33)
+	viper.Set("task.time_jitter_ms", 0)
+	t.Cleanup(func() {
+		viper.Set("task.workers", previousWorkers)
+		viper.Set("task.timedelay", previousDelay)
+		viper.Set("task.time_jitter_ms", previousJitter)
+	})
+
+	task := NewTask(
+		[]Layer{{Tiles: []maptile.Tile{maptile.New(0, 0, 0)}}},
+		TileMap{},
+		TaskOptions{
+			WorkerCount: viper.GetInt("task.workers"),
+			TimeDelay:   viper.GetInt("task.timedelay"),
+			TimeJitter:  viper.GetInt("task.time_jitter_ms"),
+		},
+	)
+	if task.workerCount != 50 || task.timeDelay != 33 || task.timeJitter != 0 {
+		t.Fatalf("expected 30 tiles/s pacing defaults, got workers=%d delay=%d jitter=%d", task.workerCount, task.timeDelay, task.timeJitter)
+	}
+}
+
 func TestTileBudgetCountsEverySourceBeforeEnumeration(t *testing.T) {
 	previous := viper.GetInt64("task.max_tiles")
 	viper.Set("task.max_tiles", 6)
