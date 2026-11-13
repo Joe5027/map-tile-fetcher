@@ -1952,6 +1952,29 @@ input::placeholder {
     border-radius: 10px;
 }
 
+.task-menu .icon-mini-button {
+    border-color: rgba(148, 163, 184, 0.5);
+    background: #ffffff;
+    color: #334155;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+.task-menu .icon-mini-button:hover,
+.task-menu .icon-mini-button:focus-visible {
+    border-color: rgba(37, 99, 235, 0.55);
+    background: #eff6ff;
+    color: #1d4ed8;
+}
+
+.task-menu-dots {
+    display: block;
+    font-size: 14px;
+    font-weight: 800;
+    line-height: 1;
+    letter-spacing: 1px;
+    transform: translateY(-1px);
+}
+
 .danger-icon-button:hover,
 .icon-mini-button:hover {
     background: rgba(239, 68, 68, 0.08);
