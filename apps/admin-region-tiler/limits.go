@@ -39,8 +39,8 @@ func effectiveWorkers(requested int, policy FetchPolicy) int {
 	if requested <= 0 {
 		requested = firstPositive(viper.GetInt("task.workers"), 3)
 	}
-	if requested > 50 {
-		requested = 50
+	if requested > 256 {
+		requested = 256
 	}
 	if policy.WorkerCount > 0 && requested > policy.WorkerCount {
 		requested = policy.WorkerCount
