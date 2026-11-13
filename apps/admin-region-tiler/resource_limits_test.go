@@ -9,9 +9,12 @@ import (
 )
 
 func TestWorkerLimitsRespectRequestedCount(t *testing.T) {
-	for _, requested := range []int{1, 3, 20, 50} {
-		for _, cap := range []int{0, 1, 3, 20} {
+	for _, requested := range []int{1, 3, 20, 50, 256, 300} {
+		for _, cap := range []int{0, 1, 3, 20, 256} {
 			want := requested
+			if want > 256 {
+				want = 256
+			}
 			if cap > 0 && cap < want {
 				want = cap
 			}
@@ -27,7 +30,7 @@ func TestThirtyTilesPerSecondPacingDefaults(t *testing.T) {
 	previousWorkers := viper.GetInt("task.workers")
 	previousDelay := viper.GetInt("task.timedelay")
 	previousJitter := viper.GetInt("task.time_jitter_ms")
-	viper.Set("task.workers", 50)
+	viper.Set("task.workers", 256)
 	viper.Set("task.timedelay", 33)
 	viper.Set("task.time_jitter_ms", 0)
 	t.Cleanup(func() {
@@ -45,7 +48,7 @@ func TestThirtyTilesPerSecondPacingDefaults(t *testing.T) {
 			TimeJitter:  viper.GetInt("task.time_jitter_ms"),
 		},
 	)
-	if task.workerCount != 50 || task.timeDelay != 33 || task.timeJitter != 0 {
+	if task.workerCount != 256 || task.timeDelay != 33 || task.timeJitter != 0 {
 		t.Fatalf("expected 30 tiles/s pacing defaults, got workers=%d delay=%d jitter=%d", task.workerCount, task.timeDelay, task.timeJitter)
 	}
 }

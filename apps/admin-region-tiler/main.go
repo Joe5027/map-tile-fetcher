@@ -71,7 +71,7 @@ func initConf(cfgFile string) {
 	viper.SetDefault("app.database", "tiler.db")
 	viper.SetDefault("output.format", "mbtiles")
 	viper.SetDefault("output.directory", "output")
-	viper.SetDefault("task.workers", 50)
+	viper.SetDefault("task.workers", 256)
 	viper.SetDefault("task.max_tiles", 1000000)
 	viper.SetDefault("task.max_active", 3)
 	viper.SetDefault("task.savepipe", 1)
