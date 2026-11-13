@@ -3206,7 +3206,7 @@ function renderGroupTask(task) {
                     <div class="task-actions">
                         <div class="task-menu">
                             <button type="button" class="icon-mini-button" data-task-menu-toggle="${menuId}" aria-label="更多操作">
-                                ${icon("more")}
+                                <span class="task-menu-dots" aria-hidden="true">•••</span>
                             </button>
                             <div id="${menuId}" class="task-menu__panel is-hidden">
                                 <button type="button" data-task-action="pause" data-task-id="${task.id}" data-task-status="${task.status}">暂停全部</button>
@@ -3297,7 +3297,7 @@ function renderStandaloneTask(task) {
                     <div class="task-actions">
                         <div class="task-menu">
                             <button type="button" class="icon-mini-button" data-task-menu-toggle="${menuId}" aria-label="更多操作">
-                                ${icon("more")}
+                                <span class="task-menu-dots" aria-hidden="true">•••</span>
                             </button>
                             <div id="${menuId}" class="task-menu__panel is-hidden">
                                 <button type="button" data-task-action="pause" data-task-id="${task.id}" data-task-status="${task.status}">暂停任务</button>
