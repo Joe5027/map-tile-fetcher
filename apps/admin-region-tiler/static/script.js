@@ -3224,23 +3224,19 @@ function renderGroupTask(task) {
                 </div>
             </summary>
             <div class="task-card__content">
-                <p class="task-full-name">${task.name}</p>
-                <div class="task-detail-header">
+                <div class="task-overview-line">
                     ${renderStatusPill(task.status)}
-                    ${riskHint ? renderWarningPill(riskHint.short) : ""}
+                    <span>运行：<strong>${task.runningChildren || 0}</strong></span>
+                    <span>暂停：<strong>${task.pausedChildren || 0}</strong></span>
+                    <span>失败：<strong>${task.failedChildren || 0}</strong></span>
+                    <span>进度：<strong>${progress}%</strong></span>
                 </div>
-                <div class="task-metadata">
-                    <span>子任务：<strong>${task.completedChildren || 0}/${task.totalChildren || children.length}</strong></span>
+                <div class="task-time-list">
                     <span>开始时间：<strong>${formatTaskStart(task, children)}</strong></span>
                     <span>结束时间：<strong>${formatTaskEnd(task, children)}</strong></span>
                 </div>
                 ${renderTaskPhase(children.find((child) => ["running", "queued", "paused"].includes(child.status)) || task)}
-                <div class="task-metrics">
-                    <span>运行中：<strong>${task.runningChildren || 0}</strong></span>
-                    <span>暂停：<strong>${task.pausedChildren || 0}</strong></span>
-                    <span>失败：<strong>${task.failedChildren || 0}</strong></span>
-                    <span>总进度：<strong>${progress}%</strong></span>
-                </div>
+                ${riskHint ? `<div class="task-inline-warning">${renderWarningPill(riskHint.short)}</div>` : ""}
                 ${riskHint ? `
                     <div class="task-risk-banner">
                         ${icon("warning")}
