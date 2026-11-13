@@ -96,6 +96,9 @@ func TestTaskPageMatchesLegacyAndBoundsWork(t *testing.T) {
 	if len(page.Items) != 50 || page.Total != 1000 || page.queryCount != 8 {
 		t.Fatalf("unexpected page dimensions: items=%d total=%d queries=%d", len(page.Items), page.Total, page.queryCount)
 	}
+	if page.Items[0].ID != "page-0999" || page.Items[len(page.Items)-1].ID != "page-0950" {
+		t.Fatalf("first page not ordered newest first: first=%s last=%s", page.Items[0].ID, page.Items[len(page.Items)-1].ID)
+	}
 	if !reflect.DeepEqual(counts, page.Counts) {
 		t.Fatalf("counts differ: legacy=%v page=%v", counts, page.Counts)
 	}
@@ -117,6 +120,9 @@ func TestTaskPageMatchesLegacyAndBoundsWork(t *testing.T) {
 	}
 	if len(second.Items) != 50 || second.Items[0].ID == page.Items[0].ID {
 		t.Fatal("second page did not advance")
+	}
+	if second.Items[0].ID != "page-0949" || second.Items[len(second.Items)-1].ID != "page-0900" {
+		t.Fatalf("second page not ordered newest first: first=%s last=%s", second.Items[0].ID, second.Items[len(second.Items)-1].ID)
 	}
 	for _, item := range second.Items {
 		if !reflect.DeepEqual(item, byID[item.ID]) {

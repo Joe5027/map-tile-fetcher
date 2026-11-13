@@ -64,6 +64,7 @@ let regionsByLevel = new Map();
 let regionsByParentAndLevel = new Map();
 const expandedProviders = new Set();
 const expandedGroupTasks = new Set();
+const expandedSubtaskLists = new Set();
 const expandedChildTasks = new Set();
 const selectedTaskIds = new Set();
 const adminRegionGeoJSONCache = new Map();
@@ -353,6 +354,16 @@ function bindEvents() {
                 expandedChildTasks.delete(id);
             }
         }
+
+        const subtaskList = event.target.closest("details[data-subtask-list-id]");
+        if (subtaskList) {
+            const id = subtaskList.dataset.subtaskListId;
+            if (subtaskList.open) {
+                expandedSubtaskLists.add(id);
+            } else {
+                expandedSubtaskLists.delete(id);
+            }
+        }
     }, true);
 
     document.getElementById("taskList").addEventListener("change", (event) => {
@@ -392,7 +403,7 @@ function bindEvents() {
         }
 
         const taskCard = event.target.closest("details[data-group-task-id]");
-        if (taskCard && !event.target.closest(".task-select, a, button")) {
+        if (taskCard && !event.target.closest(".task-select, .task-subtasks, a, button")) {
             const task = cachedTasks.find((item) => item.id === taskCard.dataset.groupTaskId);
             if (task) {
                 void previewTaskArea(task);
@@ -3148,6 +3159,8 @@ function renderTaskList(tasks) {
         const checkbox = cached.node.querySelector(".task-select");
         if (checkbox) checkbox.checked = selectedTaskIds.has(id);
         cached.node.open = expandedGroupTasks.has(id);
+        const subtaskList = cached.node.querySelector("details[data-subtask-list-id]");
+        if (subtaskList) subtaskList.open = expandedSubtaskLists.has(id);
         for (const child of cached.node.querySelectorAll("details[data-child-task-id]")) {
             child.open = expandedChildTasks.has(child.dataset.childTaskId);
         }
@@ -3169,6 +3182,7 @@ function renderGroupTask(task) {
     const rawTaskID = String(task.id || "");
     task = { ...task, id: escapeAttribute(rawTaskID), name: escapeHTML(task.name) };
     const isOpen = expandedGroupTasks.has(rawTaskID);
+    const subtasksOpen = expandedSubtaskLists.has(rawTaskID);
     const menuId = `menu-${task.id}`;
 
     return `
@@ -3178,27 +3192,15 @@ function renderGroupTask(task) {
                     <label class="task-check" onclick="event.stopPropagation()">
                         <input class="task-select" type="checkbox" data-task-id="${task.id}" ${selectedTaskIds.has(task.id) ? "checked" : ""}>
                     </label>
-                    <span class="task-illustration">${icon("layers")}</span>
                     <div class="task-main">
                         <div class="task-main__title">
                             <h3 title="${task.name}">${task.name}</h3>
-                            ${renderStatusPill(task.status)}
-                            ${riskHint ? renderWarningPill(riskHint.short) : ""}
                         </div>
-                        <div class="task-metadata">
-                            <span>子任务：<strong>${task.completedChildren || 0}/${task.totalChildren || children.length}</strong></span>
-                            <span>开始时间：<strong>${formatTaskStart(task, children)}</strong></span>
-                            <span>结束时间：<strong>${formatTaskEnd(task, children)}</strong></span>
-                        </div>
-                        <div class="progress-bar">
-                            <div class="progress-bar__value" style="width:${progress}%"></div>
-                        </div>
-                        ${renderTaskPhase(children.find((child) => ["running", "queued", "paused"].includes(child.status)) || task)}
-                        <div class="task-metrics">
-                            <span>运行中：<strong>${task.runningChildren || 0}</strong></span>
-                            <span>暂停：<strong>${task.pausedChildren || 0}</strong></span>
-                            <span>失败：<strong>${task.failedChildren || 0}</strong></span>
-                            <span>总进度：<strong>${progress}%</strong></span>
+                        <div class="task-progress-line">
+                            <div class="progress-bar">
+                                <div class="progress-bar__value" style="width:${progress}%"></div>
+                            </div>
+                            <strong>${progress}%</strong>
                         </div>
                     </div>
                     <div class="task-actions">
@@ -3223,15 +3225,37 @@ function renderGroupTask(task) {
             </summary>
             <div class="task-card__content">
                 <p class="task-full-name">${task.name}</p>
+                <div class="task-detail-header">
+                    ${renderStatusPill(task.status)}
+                    ${riskHint ? renderWarningPill(riskHint.short) : ""}
+                </div>
+                <div class="task-metadata">
+                    <span>子任务：<strong>${task.completedChildren || 0}/${task.totalChildren || children.length}</strong></span>
+                    <span>开始时间：<strong>${formatTaskStart(task, children)}</strong></span>
+                    <span>结束时间：<strong>${formatTaskEnd(task, children)}</strong></span>
+                </div>
+                ${renderTaskPhase(children.find((child) => ["running", "queued", "paused"].includes(child.status)) || task)}
+                <div class="task-metrics">
+                    <span>运行中：<strong>${task.runningChildren || 0}</strong></span>
+                    <span>暂停：<strong>${task.pausedChildren || 0}</strong></span>
+                    <span>失败：<strong>${task.failedChildren || 0}</strong></span>
+                    <span>总进度：<strong>${progress}%</strong></span>
+                </div>
                 ${riskHint ? `
                     <div class="task-risk-banner">
                         ${icon("warning")}
                         <span>${riskHint.long}</span>
                     </div>
                 ` : ""}
-                <div class="child-task-list">
-                    ${children.map((child) => renderChildTask(child)).join("")}
-                </div>
+                <details class="task-subtasks" data-subtask-list-id="${task.id}" ${subtasksOpen ? "open" : ""}>
+                    <summary>
+                        <span>子任务明细（${children.length}）</span>
+                        ${icon("chevron-down", "task-chevron")}
+                    </summary>
+                    <div class="child-task-list">
+                        ${children.map((child) => renderChildTask(child)).join("")}
+                    </div>
+                </details>
             </div>
         </details>
     `;
@@ -3259,27 +3283,15 @@ function renderStandaloneTask(task) {
                     <label class="task-check" onclick="event.stopPropagation()">
                         <input class="task-select" type="checkbox" data-task-id="${task.id}" ${selectedTaskIds.has(task.id) ? "checked" : ""}>
                     </label>
-                    <span class="task-illustration">${icon("task")}</span>
                     <div class="task-main">
                         <div class="task-main__title">
                             <h3 title="${task.name}">${task.name}</h3>
-                            ${renderStatusPill(task.status)}
-                            ${riskHint ? renderWarningPill(riskHint.short) : ""}
                         </div>
-                        <div class="task-metadata">
-                            <span>开始时间：<strong>${formatTaskStart(task)}</strong></span>
-                            <span>结束时间：<strong>${formatTaskEnd(task)}</strong></span>
-                            <span>产物状态：<strong>${translateArtifactStatus(task.artifactStatus)}</strong></span>
-                        </div>
-                        <div class="progress-bar">
-                            <div class="progress-bar__value" style="width:${progress}%"></div>
-                        </div>
-                        ${renderTaskPhase(task)}
-                        <div class="task-metrics">
-                            <span>进度：<strong>${task.current || 0}/${task.total || 0}</strong></span>
-                            <span>成功：<strong>${task.successCount || 0}</strong></span>
-                            <span>失败：<strong>${task.failureCount || 0}</strong></span>
-                            <span>总进度：<strong>${progress}%</strong></span>
+                        <div class="task-progress-line">
+                            <div class="progress-bar">
+                                <div class="progress-bar__value" style="width:${progress}%"></div>
+                            </div>
+                            <strong>${progress}%</strong>
                         </div>
                     </div>
                     <div class="task-actions">
@@ -3304,6 +3316,22 @@ function renderStandaloneTask(task) {
             </summary>
             <div class="task-card__content">
                 <p class="task-full-name">${task.name}</p>
+                <div class="task-detail-header">
+                    ${renderStatusPill(task.status)}
+                    ${riskHint ? renderWarningPill(riskHint.short) : ""}
+                </div>
+                <div class="task-metadata">
+                    <span>开始时间：<strong>${formatTaskStart(task)}</strong></span>
+                    <span>结束时间：<strong>${formatTaskEnd(task)}</strong></span>
+                    <span>产物状态：<strong>${translateArtifactStatus(task.artifactStatus)}</strong></span>
+                </div>
+                ${renderTaskPhase(task)}
+                <div class="task-metrics">
+                    <span>进度：<strong>${task.current || 0}/${task.total || 0}</strong></span>
+                    <span>成功：<strong>${task.successCount || 0}</strong></span>
+                    <span>失败：<strong>${task.failureCount || 0}</strong></span>
+                    <span>总进度：<strong>${progress}%</strong></span>
+                </div>
                 ${riskHint ? `
                     <div class="task-risk-banner">
                         ${icon("warning")}
@@ -3363,27 +3391,31 @@ function renderChildTask(task) {
                             ${icon(childTaskIcon(task), "child-task__icon")}
                             <strong title="${task.sourceName || task.name}">${task.sourceName || task.name}</strong>
                             ${renderStatusPill(task.status, true)}
-                            ${renderArtifactPill(task.artifactStatus)}
-                            ${riskHint ? renderWarningPill(riskHint.short) : ""}
                         </div>
-                        <div class="progress-bar">
-                            <div class="progress-bar__value" style="width:${progress}%"></div>
-                        </div>
-                        ${renderTaskPhase(task)}
-                        <div class="child-task__meta">
-                            <span>进度：<strong>${task.current || 0}/${task.total || 0}</strong></span>
-                            <span>成功：<strong>${task.successCount || 0}</strong></span>
-                            <span>失败：<strong>${task.failureCount || 0}</strong></span>
-                            <span>完成度：<strong>${progress}%</strong></span>
+                        <div class="task-progress-line">
+                            <div class="progress-bar">
+                                <div class="progress-bar__value" style="width:${progress}%"></div>
+                            </div>
+                            <strong>${progress}%</strong>
                         </div>
                     </div>
                     <div class="child-task__side">
-                        <span>${task.finishedAt ? formatDate(task.finishedAt) : "进行中"}</span>
                         ${icon("chevron-down", "task-chevron")}
                     </div>
                 </div>
             </summary>
             <div class="child-task__content">
+                <div class="task-detail-header">
+                    ${renderArtifactPill(task.artifactStatus)}
+                    ${riskHint ? renderWarningPill(riskHint.short) : ""}
+                </div>
+                ${renderTaskPhase(task)}
+                <div class="child-task__meta">
+                    <span>进度：<strong>${task.current || 0}/${task.total || 0}</strong></span>
+                    <span>成功：<strong>${task.successCount || 0}</strong></span>
+                    <span>失败：<strong>${task.failureCount || 0}</strong></span>
+                    <span>完成度：<strong>${progress}%</strong></span>
+                </div>
                 ${riskHint ? `
                     <div class="task-risk-banner">
                         ${icon("warning")}
