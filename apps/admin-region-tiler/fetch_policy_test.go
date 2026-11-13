@@ -14,7 +14,10 @@ func TestDefaultTianDiTuPolicyUsesServerSideHeaders(t *testing.T) {
 	if !policy.RotateHosts {
 		t.Fatal("expected TianDiTu host rotation to stay enabled")
 	}
-	if policy.WorkerCount != minimumSubtaskWorkers {
-		t.Fatalf("expected TianDiTu worker count to use the subtask minimum, got %d", policy.WorkerCount)
+	if policy.WorkerCount != 50 {
+		t.Fatalf("expected TianDiTu worker count to target 30 tiles per second, got %d", policy.WorkerCount)
+	}
+	if policy.BaseDelayMS != 33 || policy.TimeJitterMS != 0 {
+		t.Fatalf("expected TianDiTu 30 tiles per second pacing, got delay=%d jitter=%d", policy.BaseDelayMS, policy.TimeJitterMS)
 	}
 }
