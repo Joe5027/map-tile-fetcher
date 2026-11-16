@@ -489,6 +489,7 @@ async function smokeTerrainFlows(page, createdPayloads, pendingCreates) {
   assert(range.workers === 8 && range.savePipe === 4 && range.timeDelay === 0, "elevation must preserve user's effective settings");
   await page.locator("[data-task-mode='region']").click();
   await page.locator("input[name='name']").fill("真实高程行政区夹具");
+  await page.locator(".terrain-addon__modes label:has(input[value='solo'])").click();
   await submitOnceWhilePending(page, createdPayloads, pendingCreates, createdPayloads.length);
   const region = createdPayloads.at(-1);
   assert(!region.mode && region.output.format === "cesium" && region.sources[0].id === range.sources[0].id && region.levels.length > 0, "region and bbox must share the same elevation directory");

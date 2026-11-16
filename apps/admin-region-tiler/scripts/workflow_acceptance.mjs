@@ -416,15 +416,15 @@ async function checkSourceFallbackAndEstimate(page) {
 }
 
 async function assertSourceSelectionScroll(page) {
-  const source = page.locator(".tilemap-source-option").first();
-  const label = page.locator(".source-option").first();
+  const source = page.locator(".terrain-addon__input[value='solo']");
+  const label = page.locator(".terrain-addon__modes label:has(input[value='solo'])");
   await label.scrollIntoViewIfNeeded();
   const position = () => page.evaluate(() => ({ window:scrollY, panel:document.querySelector(".task-left-column").scrollTop }));
   const before = await position();
-  let box = await label.boundingBox(); await page.mouse.click(box.x+box.width/2,box.y+box.height/2);
+  await page.locator(".terrain-addon__modes label:has(input[value='none'])").click();
   assert(!(await source.isChecked()), "source selection did not turn off");
   assert.deepEqual(await position(),before,"deselecting visible source moved the viewport");
-  box = await label.boundingBox(); await page.mouse.click(box.x+box.width/2,box.y+box.height/2);
+  await label.click();
   assert(await source.isChecked(), "source selection did not turn on");
   assert.deepEqual(await position(),before,"selecting visible source moved the viewport");
 }
