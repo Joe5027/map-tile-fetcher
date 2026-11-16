@@ -9,12 +9,12 @@
 ## 功能概览
 
 - 新建计划和我的任务使用独立 Tab，创建任务和查看历史互不拥挤。
-- 两种创建模式共用下载参数，提交前在页面查看任务摘要；请求期间禁用重复创建。
+- 两种创建模式共用下载参数；请求期间禁用重复创建。
 - 支持 `行政区划下载` 和 `范围框选下载` 两种创建模式。
 - 支持天地图、Mapbox、OSM、Google 样例和自定义瓦片 URL。
 - 支持立即执行和单次定时执行。
-- 支持 ZIP 文件树、MBTiles 和 Terrarium → Cesium quantized-mesh 地形包。
-- 区域与来源独立；真实高程默认最大级别 14，可选 15，提供本地离线三维预览。
+- 普通地图支持 TAR.GZ 文件树或 MBTiles；Terrarium 自动生成 TAR.GZ 格式的 Cesium quantized-mesh 地形包，历史 ZIP 继续可下载。
+- 地形支持附加或单独下载：附加固定 0～14 级，使用最后一条区域配置的范围；单独下载按所填层级执行，支持 0～15 级，提供本地离线三维预览。
 - 支持失败记录持久化、失败瓦片重试、暂停、恢复、取消和彻底删除。
 - 异常退出自动继续原运行，手动暂停保持暂停；暂停释放执行槽，恢复按容量排队。
 - 历史任务每页 50 个父任务，按状态筛选；可见页刷新保留焦点、选择和展开。
@@ -144,6 +144,38 @@ url = "https://t0.tianditu.gov.cn/DataServer?T=img_w&x={x}&y={y}&l={z}&tk=YOUR_T
 - `YOUR_TIANDITU_TOKEN`
 - `YOUR_MAPBOX_TOKEN`
 - `YOUR_MAPBOX_SKU`
+
+## 可视化部署查询接口
+
+后端提供 `GET /api/integration/tasks` 和
+`GET /api/integration/tasks/:id/resources`，供可视化部署程序查询任务与资源，
+无需更改地图资源下载页面。列表返回包括未完成任务在内的父任务，每项包含
+`id`、`name`、`status`。资源返回 `taskId`、`taskName` 及固定的 `resources` 字段：
+`electronicMap`、`satelliteMap`、`roadNetwork`、`terrain`；暂无链接时为空字符串。
+
+通过进程环境设置 `INTEGRATION_CLIENT_ID`、`INTEGRATION_SECRET`
+（或本地配置 `integration.client_id`、`integration.secret`），保持密钥只在两端后端保存。
+查询请求携带 `X-Integration-Client`、`X-Integration-Timestamp`、
+`X-Integration-Signature`。时间戳为 Unix 秒，允许前后 5 分钟；签名为以下内容
+使用共享密钥计算的 HMAC-SHA256 十六进制值，行之间为换行符，末尾无换行：
+
+```text
+GET
+/api/integration/tasks
+UNIX_TIMESTAMP
+```
+
+查询资源时将第二行换为实际任务资源路径。签名用于认证和完整性验证，不会加密
+HTTP 内容；需要传输加密时由部署入口提供 HTTPS。认证失败返回 401，任务不存在返回 404，
+内部查询错误返回 500。
+
+资源链接使用 `/api/downloads/:token`，有效期最多 30 分钟，可直接下载，无需登录密码
+或额外认证头。仍有效的同一产物授权可能复用，所以每次查询不保证重新计算完整有效期；
+服务重启也会使旧授权失效。开始下载前查询最新地址，失效后重新查询。文件响应
+通过 `Content-Disposition` 提供真实文件名，并由静态文件响应提供实际 `Content-Length`；
+链接无效、过期或文件不可用返回 404 JSON。普通 TAR.GZ 直接包含瓦片目录，
+Cesium 地形包包含 `layer.json` 及 `{z}/{x}/{tmsY}.terrain`，不增加任务名称目录；
+MBTiles 为直接下载的数据库文件，不是压缩包。
 
 ## UI 冒烟测试
 
