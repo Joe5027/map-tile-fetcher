@@ -95,6 +95,23 @@ func validateTaskBudget(levels []LevelConfig, sources int) (int64, error) {
 	return n, nil
 }
 
+func validateTaskBudgetLevelSets(levelSets [][]LevelConfig) (int64, error) {
+	var total int64
+	conservative := false
+	for _, levels := range levelSets {
+		n, estimated, err := estimateLevels(levels)
+		if err != nil {
+			return 0, err
+		}
+		total += n
+		conservative = conservative || estimated
+	}
+	if total > maxTaskTiles() && !conservative {
+		return total, &TileBudgetError{Estimated: total, Limit: maxTaskTiles(), Conservative: conservative}
+	}
+	return total, nil
+}
+
 func (s *SQLiteStore) reserveTaskBudget(plan *TaskRecord, actual int64) error {
 	parent := plan.ParentID
 	if parent == "" {

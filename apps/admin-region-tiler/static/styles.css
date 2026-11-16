@@ -1049,19 +1049,51 @@ input::placeholder {
 
 .terrain-addon {
     display: grid;
-    grid-template-columns: 18px minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr);
     gap: 10px;
     align-items: center;
     padding: 12px 14px;
     border: 1px solid rgba(34, 197, 94, 0.35);
     border-radius: 14px;
     background: rgba(240, 253, 244, 0.92);
-    cursor: pointer;
 }
 
 .terrain-addon__input {
     position: absolute;
     opacity: 0;
+    pointer-events: none;
+}
+
+.terrain-addon__modes {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.terrain-addon__modes label {
+    cursor: pointer;
+}
+
+.terrain-addon__modes label > span {
+    display: block;
+    padding: 8px 10px;
+    border: 1px solid rgba(34, 197, 94, 0.28);
+    border-radius: 9px;
+    background: #fff;
+    color: #4b5563;
+    font-size: 11px;
+    font-weight: 700;
+    text-align: center;
+}
+
+.terrain-addon__input:checked + span {
+    border-color: #16a34a;
+    background: #16a34a;
+    color: #fff;
+}
+
+#tilemapSelector.is-terrain-only .source-card {
+    opacity: 0.48;
     pointer-events: none;
 }
 
@@ -1089,23 +1121,6 @@ input::placeholder {
     font-size: 11px;
     font-weight: 700;
     white-space: nowrap;
-}
-
-.terrain-addon__input:checked + .source-option__check {
-    border-color: #16a34a;
-    background: #16a34a;
-}
-
-.terrain-addon__input:checked + .source-option__check::after {
-    content: "";
-    position: absolute;
-    left: 5px;
-    top: 2px;
-    width: 4px;
-    height: 8px;
-    border: solid #fff;
-    border-width: 0 2px 2px 0;
-    transform: rotate(45deg);
 }
 
 .task-left-column .source-list {
