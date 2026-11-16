@@ -49,6 +49,15 @@ slow_backoff_ms = 0
 max_slow_backoff_ms = 0
 request_timeout_seconds = 30
 [[tilemaps]]
+id = 2
+name = "本地影像工作流夹具"
+url = "${origin}/{z}/{x}/{y}.png"
+format = "png"
+schema = "xyz"
+min_zoom = 0
+max_zoom = 1
+metadata = { kind = "raster", min_zoom = 0, max_zoom = 1 }
+[[tilemaps]]
 id = 1
 name = "本地高程工作流夹具"
 url = "${origin}/{z}/{x}/{y}.png"
@@ -410,7 +419,7 @@ async function checkSourceFallbackAndEstimate(page) {
   } finally {
     await page.unroute("**/api/config/tilemaps",handler);
     await page.reload({waitUntil:"networkidle"});
-    await page.locator(".tilemap-source-option[value='1']").waitFor();
+    await page.locator(".tilemap-source-option[value='2']").waitFor({state:"attached"});
   }
   console.log("Catalogue-failure fallback and real DOM terrain estimate (14 requests/3 meshes vs TAR.GZ 3) passed");
 }
