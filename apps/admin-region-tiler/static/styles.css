@@ -1060,6 +1060,11 @@ input::placeholder {
 
 .terrain-addon__input {
     position: absolute;
+    left: 0;
+    top: 0;
+    width: 1px;
+    height: 1px;
+    margin: 0;
     opacity: 0;
     pointer-events: none;
 }
@@ -1071,6 +1076,8 @@ input::placeholder {
 }
 
 .terrain-addon__modes label {
+    position: relative;
+    min-width: 0;
     cursor: pointer;
 }
 
