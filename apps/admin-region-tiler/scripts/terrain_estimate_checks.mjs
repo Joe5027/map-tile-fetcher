@@ -16,12 +16,14 @@ const estimate = (bbox, zoom, selected, format) => call(`estimateRangeDownloads(
 
 assert.deepEqual(count(example, { min: 2, max: 2 }), { rawTiles: 14, meshTiles: 3, selectedTiles: 1 });
 assert.equal(estimate(example, { min: 2, max: 2 }, [terrain], "cesium").rawTiles, 14);
-assert.equal(estimate(example, { min: 2, max: 2 }, [terrain, raster], "cesium").rawTiles, 15);
 assert.equal(estimate(example, { min: 2, max: 2 }, [terrain, terrain], "cesium").rawTiles, 28);
-for (const format of ["tar.gz", "mbtiles"]) {
+const addonTerrain = count(example, { min: 0, max: 14 });
+for (const format of ["cesium", "tar.gz", "mbtiles"]) {
     const result = estimate(example, { min: 2, max: 2 }, [terrain, raster], format);
-    assert.equal(result.rawTiles, 2);
-    assert.equal(result.meshTiles, 0);
+    assert.equal(result.rawTiles, addonTerrain.rawTiles + 1);
+    assert.equal(result.meshTiles, addonTerrain.meshTiles);
+    assert.equal(result.auxiliaryTiles, addonTerrain.rawTiles - addonTerrain.selectedTiles);
+    assert.equal(estimate(example, { min: 2, max: 2 }, [raster], format).rawTiles, 1);
 }
 
 // Independent low-zoom enumeration checks the interval union against the

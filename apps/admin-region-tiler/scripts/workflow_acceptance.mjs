@@ -153,6 +153,8 @@ export async function runWorkflowAcceptance(page, baseURL, fixture) {
     if (area) assert((await area).ok(), "task range preview API failed");
     await page.waitForFunction(id => taskPreviewTask?.id === id && taskAreaPreviewLayer?.toGeoJSON().features.length > 0, task.id);
     if (!(await card.evaluate(element => element.open))) await card.locator(":scope > summary").click();
+    const subtasks = card.locator("details[data-subtask-list-id]");
+    if (!(await subtasks.evaluate(element => element.open))) await subtasks.locator(":scope > summary").click();
     const child = card.locator(`[data-child-task-id="${task.children[0].id}"]`);
     if (!(await child.evaluate(element => element.open))) await child.locator(":scope > summary").click();
     return child;
@@ -172,6 +174,7 @@ export async function runWorkflowAcceptance(page, baseURL, fixture) {
       await page.setViewportSize({ width, height: 1000 });
       fixture.reset();
       await page.locator(`[data-task-mode='${mode === "region" ? "region" : "bbox"}']`).click();
+      await page.locator(".terrain-addon__modes label:has(input[value='solo'])").click();
       await page.locator("input[name='name']").fill(`工作流 ${width} ${mode}`);
       if (width === 390 && mode === "rectangle") await assertSourceSelectionScroll(page);
       for (const [name, value] of Object.entries({workers:1,timeDelay:0})) await page.locator(`input[name='${name}']`).fill(String(value));
@@ -191,7 +194,6 @@ export async function runWorkflowAcceptance(page, baseURL, fixture) {
         }
         assert.equal(await page.evaluate(()=>rangeClickPoints.length), mode === "polygon" ? 3 : 2, "map selection did not retain clicked points");
       }
-      await page.locator(".source-card__main[data-provider-select='地形高程（Terrarium）']").click();
       const task = await create();
       assert.equal(task.submitted.workers,1); assert.equal(task.submitted.timeDelay,0);
       assert.equal(task.submitted.sources[0].metadata.encoding,"terrarium");
@@ -396,11 +398,12 @@ async function checkSourceFallbackAndEstimate(page) {
   try {
     await page.reload({waitUntil:"networkidle"});
     await page.locator("[data-task-mode='bbox']").click();
-    await page.locator(".source-card__main[data-provider-select='地形高程（Terrarium）']").click();
-    assert(await page.locator(".tilemap-source-option[value='13']").isChecked(),"failed catalogue request lost the elevation fallback source");
+    await page.locator(".terrain-addon__modes label:has(input[value='solo'])").click();
+    assert(await page.locator(".terrain-addon__input[value='solo'][data-terrain-id='13']").isChecked(),"failed catalogue request lost the elevation fallback source");
     for (const [name,value] of Object.entries({rangeMinLon:1,rangeMaxLon:2,rangeMinLat:1,rangeMaxLat:2,rangeMinZoom:2,rangeMaxZoom:2})) await page.locator(`input[name='${name}']`).fill(String(value));
     assert.equal(await page.locator("#rangeTotalTileCount").innerText(),"14","Cesium estimate must include ancestors and halo requests");
     assert((await page.locator("#rangeTerrainEstimate").innerText()).includes("3 个地形网格"));
+    await page.locator(".terrain-addon__modes label:has(input[value='none'])").click();
     await page.locator(".source-card__main[data-provider-select='天地图']").click();
     await page.locator("input[name='outputFormat'][value='tar.gz']").check({force:true});
     assert.equal(await page.locator("#rangeTotalTileCount").innerText(),"3","raw TAR.GZ estimate must count only the three selected map layers without Cesium auxiliary data");

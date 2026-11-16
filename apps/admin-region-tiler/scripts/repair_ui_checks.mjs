@@ -132,6 +132,7 @@ async function runTaskPaginationChecks(page) {
     await page.evaluate(()=>{
       const group=document.querySelector('[data-group-task-id="history-0"]');
       group.open=true;expandedGroupTasks.add("history-0");
+      group.querySelector("details[data-subtask-list-id]").open=true;expandedSubtaskLists.add("history-0");
       const child=group.querySelector("details[data-child-task-id]");child.open=true;expandedChildTasks.add("history-child");
       selectedTaskIds.add("history-0");group.querySelector(".task-select").checked=true;
       document.getElementById("menu-history-0").classList.remove("is-hidden");
@@ -149,7 +150,7 @@ async function runTaskPaginationChecks(page) {
       selected:document.querySelector('[data-group-task-id="history-0"] .task-select').checked,
       focused:document.activeElement.dataset.taskAction,
       menu:!document.getElementById("menu-history-0").classList.contains("is-hidden"),
-      expanded:document.querySelector('[data-group-task-id="history-0"]').open&&document.querySelector('[data-child-task-id="history-child"]').open,
+      expanded:document.querySelector('[data-group-task-id="history-0"]').open&&document.querySelector('[data-subtask-list-id="history-0"]').open&&document.querySelector('[data-child-task-id="history-child"]').open,
       phase:document.querySelector('[data-group-task-id="history-0"] .task-phase').textContent
     }));
     assert(state.same&&state.selected&&state.focused==="pause"&&state.menu&&state.expanded,"refresh lost task interaction state");
