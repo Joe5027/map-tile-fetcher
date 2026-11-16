@@ -88,6 +88,8 @@ func initConf(cfgFile string) {
 	viper.SetDefault("auth.default_username", "admin")
 	viper.SetDefault("auth.default_password", "adminmap")
 	viper.SetDefault("auth.cookie_secure", false)
+	viper.SetDefault("integration.client_id", "")
+	viper.SetDefault("integration.secret", "")
 }
 
 func main() {

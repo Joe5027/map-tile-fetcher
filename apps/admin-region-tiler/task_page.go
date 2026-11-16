@@ -103,7 +103,7 @@ func (s *SQLiteStore) loadTaskPage(userID int64, limit, offset int, filter strin
 	var children []*TaskRecord
 	err := loader.each(`SELECT p.id,p.parent_id,p.kind,p.status,r.status
 		FROM plans p LEFT JOIN task_runs r ON r.id=p.last_run_id
-		WHERE p.user_id=? ORDER BY p.updated_at DESC,p.id DESC`, []any{userID}, func(rows *sql.Rows) error {
+		WHERE p.user_id=? ORDER BY p.created_at DESC,p.id DESC`, []any{userID}, func(rows *sql.Rows) error {
 		p := &TaskRecord{}
 		var runStatus sql.NullString
 		if err := rows.Scan(&p.ID, &p.ParentID, &p.Kind, &p.Status, &runStatus); err != nil {

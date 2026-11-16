@@ -43,7 +43,11 @@ type SourceRequest struct {
 	URL      string          `json:"url" binding:"required"`
 	Format   string          `json:"format" binding:"required"`
 	Schema   string          `json:"schema"`
+	Output   string          `json:"outputFormat,omitempty"`
 }
+
+const terrainAddonMinZoom = 0
+const terrainAddonMaxZoom = 14
 
 type BBoxRequest struct {
 	MinLon float64 `json:"minLon"`
@@ -287,7 +291,7 @@ type regionCatalogCacheState struct {
 const regionCatalogCacheTTL = 10 * time.Second
 const maxRegionGeoJSONBatchSize = 64
 const previewTokenTTL = 15 * time.Minute
-const artifactDownloadGrantTTL = 7 * 24 * time.Hour
+const artifactDownloadGrantTTL = 30 * time.Minute
 const maxPreviewTileBytes int64 = 8 << 20
 
 var (
@@ -332,6 +336,12 @@ func initServer() {
 	r.GET("/api/version", func(c *gin.Context) { c.JSON(200, currentBuildInfo()) })
 	r.POST("/api/auth/logout", logoutHandler)
 	r.GET("/api/downloads/:token", downloadArtifactByGrant)
+	integration := r.Group("/api/integration")
+	integration.Use(integrationAuthMiddleware())
+	{
+		integration.GET("/tasks", listIntegrationTasks)
+		integration.GET("/tasks/:id/resources", getIntegrationTaskResources)
+	}
 
 	protected := r.Group("/api")
 	protected.Use(authMiddleware())
@@ -1131,11 +1141,29 @@ func buildTaskRecordsFromRequest(userID int64, req CreateTaskRequest) (*TaskReco
 		normalized.OutputFormat = outputFormat
 		levels = append(levels, normalized)
 	}
-	if err := validateTerrainRequest(outputFormat, sources, levels); err != nil {
-		return nil, nil, err
+	mixedTerrain := hasTerrainSource(sources) && hasOrdinarySource(sources)
+	childLevelSets := make([][]LevelConfig, len(sources))
+	for index, source := range sources {
+		childOutput := outputFormat
+		if isTerrariumSourceRequest(source) {
+			childOutput = "cesium"
+		} else if source.Output != "" {
+			childOutput, err = normalizeOutputFormat(source.Output)
+			if err != nil {
+				return nil, nil, err
+			}
+		}
+		childLevels := cloneLevelsWithSource(levels, source.Metadata, childOutput)
+		if mixedTerrain && isTerrariumSourceRequest(source) {
+			childLevels = terrainAddonLevels(childLevels)
+		}
+		if err := validateTerrainRequest(childOutput, []SourceRequest{source}, childLevels); err != nil {
+			return nil, nil, err
+		}
+		childLevelSets[index] = childLevels
 	}
 
-	if _, err := validateTaskBudget(levels, len(sources)); err != nil {
+	if _, err := validateTaskBudgetLevelSets(childLevelSets); err != nil {
 		return nil, nil, err
 	}
 	groupID, err := shortid.Generate()
@@ -1160,8 +1188,8 @@ func buildTaskRecordsFromRequest(userID int64, req CreateTaskRequest) (*TaskReco
 	}
 
 	children := make([]*TaskRecord, 0, len(sources))
-	for _, source := range sources {
-		childLevels := cloneLevelsWithSource(levels, source.Metadata)
+	for index, source := range sources {
+		childLevels := childLevelSets[index]
 		id, err := shortid.Generate()
 		if err != nil {
 			return nil, nil, fmt.Errorf("generate child task id: %w", err)
@@ -1189,6 +1217,50 @@ func buildTaskRecordsFromRequest(userID int64, req CreateTaskRequest) (*TaskReco
 	parent.generatedFiles = req.generatedFiles
 	complete = true
 	return parent, children, nil
+}
+
+func isTerrariumSourceRequest(source SourceRequest) bool {
+	return source.Metadata != nil && source.Metadata.Kind == "elevation" && source.Metadata.Encoding == "terrarium"
+}
+
+func hasTerrainSource(sources []SourceRequest) bool {
+	for _, source := range sources {
+		if isTerrariumSourceRequest(source) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasOrdinarySource(sources []SourceRequest) bool {
+	for _, source := range sources {
+		if !isTerrariumSourceRequest(source) {
+			return true
+		}
+	}
+	return false
+}
+
+func terrainAddonLevels(levels []LevelConfig) []LevelConfig {
+	if len(levels) == 0 {
+		return nil
+	}
+	// Region tasks can contain province, city and district rows. Use the most
+	// specific final row for the fixed terrain range instead of expanding every
+	// broader administrative boundary through level 14.
+	level := levels[len(levels)-1]
+	level.MinZoom = terrainAddonMinZoom
+	level.MaxZoom = terrainAddonMaxZoom
+	level.OutputFormat = "cesium"
+	if level.BBox != nil {
+		copy := *level.BBox
+		level.BBox = &copy
+	}
+	if level.Source != nil {
+		copy := *level.Source
+		level.Source = &copy
+	}
+	return []LevelConfig{level}
 }
 
 func normalizeAreaLevels(req *CreateTaskRequest) error {

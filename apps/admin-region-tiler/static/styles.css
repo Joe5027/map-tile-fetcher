@@ -1047,6 +1047,89 @@ input::placeholder {
     white-space: nowrap;
 }
 
+.terrain-addon {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+    align-items: center;
+    padding: 12px 14px;
+    border: 1px solid rgba(34, 197, 94, 0.35);
+    border-radius: 14px;
+    background: rgba(240, 253, 244, 0.92);
+}
+
+.terrain-addon__input {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 1px;
+    height: 1px;
+    margin: 0;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.terrain-addon__modes {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.terrain-addon__modes label {
+    position: relative;
+    min-width: 0;
+    cursor: pointer;
+}
+
+.terrain-addon__modes label > span {
+    display: block;
+    padding: 8px 10px;
+    border: 1px solid rgba(34, 197, 94, 0.28);
+    border-radius: 9px;
+    background: #fff;
+    color: #4b5563;
+    font-size: 11px;
+    font-weight: 700;
+    text-align: center;
+}
+
+.terrain-addon__input:checked + span {
+    border-color: #16a34a;
+    background: #16a34a;
+    color: #fff;
+}
+
+#tilemapSelector.is-terrain-only .source-card {
+    opacity: 0.48;
+    pointer-events: none;
+}
+
+.terrain-addon__body {
+    display: grid;
+    gap: 3px;
+}
+
+.terrain-addon__body strong {
+    color: #166534;
+    font-size: 13px;
+}
+
+.terrain-addon__body small {
+    color: #4b5563;
+    font-size: 11px;
+    line-height: 1.4;
+}
+
+.terrain-addon__badge {
+    padding: 4px 8px;
+    border-radius: 999px;
+    background: rgba(34, 197, 94, 0.14);
+    color: #15803d;
+    font-size: 11px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
 .task-left-column .source-list {
     gap: 8px;
 }
@@ -1952,6 +2035,29 @@ input::placeholder {
     border-radius: 10px;
 }
 
+.task-menu .icon-mini-button {
+    border-color: rgba(148, 163, 184, 0.5);
+    background: #ffffff;
+    color: #334155;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+.task-menu .icon-mini-button:hover,
+.task-menu .icon-mini-button:focus-visible {
+    border-color: rgba(37, 99, 235, 0.55);
+    background: #eff6ff;
+    color: #1d4ed8;
+}
+
+.task-menu-dots {
+    display: block;
+    font-size: 14px;
+    font-weight: 800;
+    line-height: 1;
+    letter-spacing: 1px;
+    transform: translateY(-1px);
+}
+
 .danger-icon-button:hover,
 .icon-mini-button:hover {
     background: rgba(239, 68, 68, 0.08);
@@ -2428,7 +2534,7 @@ input::placeholder {
 
 .task-left-column--tasks .task-main__title {
     gap: 5px;
-    margin-bottom: 5px;
+    margin-bottom: 7px;
 }
 
 .task-left-column--tasks .task-main__title h3 {
@@ -2460,6 +2566,38 @@ input::placeholder {
 
 .task-left-column--tasks .task-card__content {
     padding: 0 10px 10px;
+}
+
+.task-left-column--tasks .task-detail-header {
+    padding-top: 10px;
+    margin-bottom: 8px;
+}
+
+.task-left-column--tasks .task-overview-line {
+    gap: 5px;
+    padding-top: 8px;
+    font-size: 10px;
+}
+
+.task-left-column--tasks .task-overview-line .status-pill {
+    min-height: 18px;
+    padding: 0 6px;
+    font-size: 10px;
+}
+
+.task-left-column--tasks .task-time-list {
+    gap: 2px;
+    margin-top: 6px;
+    font-size: 11px;
+}
+
+.task-left-column--tasks .task-subtasks {
+    margin-top: 10px;
+}
+
+.task-left-column--tasks .task-subtasks > summary {
+    padding-top: 10px;
+    font-size: 12px;
 }
 
 .task-left-column--tasks .child-task-list {
@@ -2714,7 +2852,7 @@ input::placeholder {
 
 .task-card__summary {
     display: grid;
-    grid-template-columns: 22px 74px minmax(0, 1fr) auto;
+    grid-template-columns: 22px minmax(0, 1fr) auto;
     gap: 18px;
     align-items: center;
 }
@@ -2795,6 +2933,21 @@ input::placeholder {
     background: linear-gradient(90deg, #2563eb, #3b82f6);
 }
 
+.task-progress-line {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: center;
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.task-progress-line strong {
+    min-width: 36px;
+    color: var(--text);
+    text-align: right;
+}
+
 .task-metrics {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -2854,14 +3007,73 @@ input::placeholder {
     transition: transform 0.18s ease;
 }
 
-.task-card[open] .task-chevron,
-.child-task[open] .task-chevron {
+.task-card[open] > summary .task-chevron,
+.child-task[open] > summary .task-chevron,
+.task-subtasks[open] > summary .task-chevron {
     transform: rotate(180deg);
 }
 
 .task-card__content {
     border-top: 1px solid rgba(229, 231, 235, 0.96);
     padding: 0 20px 20px;
+}
+
+.task-detail-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding-top: 14px;
+    margin-bottom: 12px;
+}
+
+.task-overview-line {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: nowrap;
+    padding-top: 14px;
+    color: var(--muted);
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.task-overview-line strong,
+.task-time-list strong {
+    color: var(--text);
+}
+
+.task-time-list {
+    display: grid;
+    gap: 4px;
+    margin-top: 8px;
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.task-inline-warning {
+    margin-top: 8px;
+}
+
+.task-subtasks {
+    margin-top: 16px;
+    border-top: 1px solid rgba(229, 231, 235, 0.96);
+}
+
+.task-subtasks > summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding-top: 14px;
+    cursor: pointer;
+    list-style: none;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.task-subtasks > summary::-webkit-details-marker {
+    display: none;
 }
 
 .task-risk-banner {

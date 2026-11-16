@@ -470,8 +470,8 @@ async function smokeTerrainFlows(page, createdPayloads, pendingCreates) {
   assert(createdPayloads.at(-1).sources.length === 2 && createdPayloads.at(-1).sources.every(source=>/[?&]T=(ter|cta)_w/.test(source.url)), "terrain imagery should use directory ter/cta sources");
 
   await page.locator("[data-task-mode='bbox']").click();
-  await page.locator(".source-card__main[data-provider-select='地形高程（Terrarium）']").click();
-  assert(await page.locator(".tilemap-source-option[value='13']").isChecked(), "terrain source should select the real elevation layer");
+  await page.locator(".terrain-addon__modes label:has(input[value='solo'])").click();
+  assert(await page.locator(".terrain-addon__input[value='solo'][data-terrain-id='13']").isChecked(), "terrain source should select the real elevation layer");
   assert(await page.locator("input[name='rangeMinZoom']").inputValue() === "14" && await page.locator("input[name='rangeMaxZoom']").inputValue() === "14", "elevation should default to zoom 14");
   assert(await page.locator("input[name='rangeMaxZoom']").getAttribute("max") === "15", "elevation must allow zoom 15");
   assert(await page.locator("input[name='outputFormat'][value='cesium']").isChecked(), "elevation should select the Cesium output");
@@ -489,6 +489,7 @@ async function smokeTerrainFlows(page, createdPayloads, pendingCreates) {
   assert(range.workers === 8 && range.savePipe === 4 && range.timeDelay === 0, "elevation must preserve user's effective settings");
   await page.locator("[data-task-mode='region']").click();
   await page.locator("input[name='name']").fill("真实高程行政区夹具");
+  await page.locator(".terrain-addon__modes label:has(input[value='solo'])").click();
   await submitOnceWhilePending(page, createdPayloads, pendingCreates, createdPayloads.length);
   const region = createdPayloads.at(-1);
   assert(!region.mode && region.output.format === "cesium" && region.sources[0].id === range.sources[0].id && region.levels.length > 0, "region and bbox must share the same elevation directory");

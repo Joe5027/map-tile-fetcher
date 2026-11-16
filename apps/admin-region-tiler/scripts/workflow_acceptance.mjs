@@ -49,6 +49,15 @@ slow_backoff_ms = 0
 max_slow_backoff_ms = 0
 request_timeout_seconds = 30
 [[tilemaps]]
+id = 2
+name = "本地影像工作流夹具"
+url = "${origin}/{z}/{x}/{y}.png"
+format = "png"
+schema = "xyz"
+min_zoom = 0
+max_zoom = 1
+metadata = { kind = "raster", min_zoom = 0, max_zoom = 1 }
+[[tilemaps]]
 id = 1
 name = "本地高程工作流夹具"
 url = "${origin}/{z}/{x}/{y}.png"
@@ -153,6 +162,8 @@ export async function runWorkflowAcceptance(page, baseURL, fixture) {
     if (area) assert((await area).ok(), "task range preview API failed");
     await page.waitForFunction(id => taskPreviewTask?.id === id && taskAreaPreviewLayer?.toGeoJSON().features.length > 0, task.id);
     if (!(await card.evaluate(element => element.open))) await card.locator(":scope > summary").click();
+    const subtasks = card.locator("details[data-subtask-list-id]");
+    if (!(await subtasks.evaluate(element => element.open))) await subtasks.locator(":scope > summary").click();
     const child = card.locator(`[data-child-task-id="${task.children[0].id}"]`);
     if (!(await child.evaluate(element => element.open))) await child.locator(":scope > summary").click();
     return child;
@@ -172,6 +183,7 @@ export async function runWorkflowAcceptance(page, baseURL, fixture) {
       await page.setViewportSize({ width, height: 1000 });
       fixture.reset();
       await page.locator(`[data-task-mode='${mode === "region" ? "region" : "bbox"}']`).click();
+      await page.locator(".terrain-addon__modes label:has(input[value='solo'])").click();
       await page.locator("input[name='name']").fill(`工作流 ${width} ${mode}`);
       if (width === 390 && mode === "rectangle") await assertSourceSelectionScroll(page);
       for (const [name, value] of Object.entries({workers:1,timeDelay:0})) await page.locator(`input[name='${name}']`).fill(String(value));
@@ -191,7 +203,6 @@ export async function runWorkflowAcceptance(page, baseURL, fixture) {
         }
         assert.equal(await page.evaluate(()=>rangeClickPoints.length), mode === "polygon" ? 3 : 2, "map selection did not retain clicked points");
       }
-      await page.locator(".source-card__main[data-provider-select='地形高程（Terrarium）']").click();
       const task = await create();
       assert.equal(task.submitted.workers,1); assert.equal(task.submitted.timeDelay,0);
       assert.equal(task.submitted.sources[0].metadata.encoding,"terrarium");
@@ -396,32 +407,33 @@ async function checkSourceFallbackAndEstimate(page) {
   try {
     await page.reload({waitUntil:"networkidle"});
     await page.locator("[data-task-mode='bbox']").click();
-    await page.locator(".source-card__main[data-provider-select='地形高程（Terrarium）']").click();
-    assert(await page.locator(".tilemap-source-option[value='13']").isChecked(),"failed catalogue request lost the elevation fallback source");
+    await page.locator(".terrain-addon__modes label:has(input[value='solo'])").click();
+    assert(await page.locator(".terrain-addon__input[value='solo'][data-terrain-id='13']").isChecked(),"failed catalogue request lost the elevation fallback source");
     for (const [name,value] of Object.entries({rangeMinLon:1,rangeMaxLon:2,rangeMinLat:1,rangeMaxLat:2,rangeMinZoom:2,rangeMaxZoom:2})) await page.locator(`input[name='${name}']`).fill(String(value));
     assert.equal(await page.locator("#rangeTotalTileCount").innerText(),"14","Cesium estimate must include ancestors and halo requests");
     assert((await page.locator("#rangeTerrainEstimate").innerText()).includes("3 个地形网格"));
+    await page.locator(".terrain-addon__modes label:has(input[value='none'])").click();
     await page.locator(".source-card__main[data-provider-select='天地图']").click();
     await page.locator("input[name='outputFormat'][value='tar.gz']").check({force:true});
     assert.equal(await page.locator("#rangeTotalTileCount").innerText(),"3","raw TAR.GZ estimate must count only the three selected map layers without Cesium auxiliary data");
   } finally {
     await page.unroute("**/api/config/tilemaps",handler);
     await page.reload({waitUntil:"networkidle"});
-    await page.locator(".tilemap-source-option[value='1']").waitFor();
+    await page.locator(".tilemap-source-option[value='2']").waitFor({state:"attached"});
   }
   console.log("Catalogue-failure fallback and real DOM terrain estimate (14 requests/3 meshes vs TAR.GZ 3) passed");
 }
 
 async function assertSourceSelectionScroll(page) {
-  const source = page.locator(".tilemap-source-option").first();
-  const label = page.locator(".source-option").first();
+  const source = page.locator(".terrain-addon__input[value='solo']");
+  const label = page.locator(".terrain-addon__modes label:has(input[value='solo'])");
   await label.scrollIntoViewIfNeeded();
   const position = () => page.evaluate(() => ({ window:scrollY, panel:document.querySelector(".task-left-column").scrollTop }));
   const before = await position();
-  let box = await label.boundingBox(); await page.mouse.click(box.x+box.width/2,box.y+box.height/2);
+  await page.locator(".terrain-addon__modes label:has(input[value='none'])").click();
   assert(!(await source.isChecked()), "source selection did not turn off");
   assert.deepEqual(await position(),before,"deselecting visible source moved the viewport");
-  box = await label.boundingBox(); await page.mouse.click(box.x+box.width/2,box.y+box.height/2);
+  await label.click();
   assert(await source.isChecked(), "source selection did not turn on");
   assert.deepEqual(await position(),before,"selecting visible source moved the viewport");
 }

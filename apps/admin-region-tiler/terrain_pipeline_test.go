@@ -152,6 +152,11 @@ func TestTerrainMixedLevelURLRejectedBeforePersistence(t *testing.T) {
 		}
 	}
 	request.Output.Format = "zip"
+	if _, _, err := buildTaskRecordsFromRequest(1, request); err == nil {
+		t.Fatal("Terrarium must retain Cesium source consistency even with an ordinary output selection")
+	}
+	request.Sources[0].URL = "https://imagery.example.test/{z}/{x}/{y}.png"
+	request.Sources[0].Metadata = &SourceMetadata{Kind: "raster", MinZoom: 0, MaxZoom: 15}
 	if _, _, err := buildTaskRecordsFromRequest(1, request); err != nil {
 		t.Fatalf("ordinary PNG level URL compatibility changed: %v", err)
 	}

@@ -72,9 +72,10 @@ func publicSourceLabel(value string) string {
 	return parsed.String()
 }
 
-func cloneLevelsWithSource(levels []LevelConfig, source *SourceMetadata) []LevelConfig {
+func cloneLevelsWithSource(levels []LevelConfig, source *SourceMetadata, outputFormat string) []LevelConfig {
 	result := append([]LevelConfig(nil), levels...)
 	for i := range result {
+		result[i].OutputFormat = outputFormat
 		if source != nil {
 			copy := *source
 			result[i].Source = &copy
@@ -88,10 +89,20 @@ func cloneLevelsWithSource(levels []LevelConfig, source *SourceMetadata) []Level
 }
 
 func validateTerrainRequest(output string, sources []SourceRequest, levels []LevelConfig) error {
-	if output != "cesium" {
-		return nil
-	}
 	for _, source := range sources {
+		sourceOutput := output
+		if source.Metadata != nil && source.Metadata.Kind == "elevation" && source.Metadata.Encoding == "terrarium" {
+			sourceOutput = "cesium"
+		} else if source.Output != "" {
+			var err error
+			sourceOutput, err = normalizeOutputFormat(source.Output)
+			if err != nil {
+				return err
+			}
+		}
+		if sourceOutput != "cesium" {
+			continue
+		}
 		if source.Format != PNG || source.Schema != "xyz" || source.Metadata == nil || source.Metadata.Kind != "elevation" || source.Metadata.Encoding != "terrarium" {
 			return errors.New("Cesium terrain requires an XYZ Terrarium PNG elevation source")
 		}

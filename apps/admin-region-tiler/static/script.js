@@ -5,6 +5,7 @@ let levelConfigs = [];
 let activeLevelCount = 2;
 let selectedProvider = "";
 let selectedSourceIds = new Set();
+let terrainDownloadMode = "none";
 let taskMode = "region";
 let taskCreatePending = false;
 let sourceCapabilityKey = "";
@@ -64,6 +65,7 @@ let regionsByLevel = new Map();
 let regionsByParentAndLevel = new Map();
 const expandedProviders = new Set();
 const expandedGroupTasks = new Set();
+const expandedSubtaskLists = new Set();
 const expandedChildTasks = new Set();
 const selectedTaskIds = new Set();
 const adminRegionGeoJSONCache = new Map();
@@ -261,6 +263,13 @@ function bindEvents() {
     document.getElementById("finishRangeMapBtn").addEventListener("click", () => setRangeMapExpanded(false));
 
     document.getElementById("tilemapSelector").addEventListener("change", (event) => {
+        if (event.target.matches(".terrain-addon__input")) {
+            terrainDownloadMode = event.target.value;
+            tilemaps.filter(isTerrariumSource).forEach((source) => selectedSourceIds.delete(String(source.id)));
+            if (terrainDownloadMode !== "none") selectedSourceIds.add(String(event.target.dataset.terrainId));
+            renderTilemapSelector();
+            return;
+        }
         if (event.target.matches(".tilemap-source-option")) {
             syncSelectedSourceIds();
             renderTilemapSelector();
@@ -353,6 +362,16 @@ function bindEvents() {
                 expandedChildTasks.delete(id);
             }
         }
+
+        const subtaskList = event.target.closest("details[data-subtask-list-id]");
+        if (subtaskList) {
+            const id = subtaskList.dataset.subtaskListId;
+            if (subtaskList.open) {
+                expandedSubtaskLists.add(id);
+            } else {
+                expandedSubtaskLists.delete(id);
+            }
+        }
     }, true);
 
     document.getElementById("taskList").addEventListener("change", (event) => {
@@ -392,7 +411,7 @@ function bindEvents() {
         }
 
         const taskCard = event.target.closest("details[data-group-task-id]");
-        if (taskCard && !event.target.closest(".task-select, a, button")) {
+        if (taskCard && !event.target.closest(".task-select, .task-subtasks, a, button")) {
             const task = cachedTasks.find((item) => item.id === taskCard.dataset.groupTaskId);
             if (task) {
                 void previewTaskArea(task);
@@ -2050,7 +2069,7 @@ async function loadTilemaps() {
             tilemaps.push(...FALLBACK_TILEMAPS.filter((source) => source.metadata?.kind === "elevation"));
         }
     }
-    const groups = getProviderGroups();
+    const groups = getProviderGroups().filter((group) => group.id !== "地形高程（Terrarium）");
     if (!selectedProvider && groups.length > 0) {
         selectedProvider = groups[0].id;
     }
@@ -2328,10 +2347,30 @@ function getRegionHelperText(config) {
 
 function renderTilemapSelector() {
     const container = document.getElementById("tilemapSelector");
-    const groups = getProviderGroups();
-    container.innerHTML = groups.map((group) => renderProviderCard(group)).join("");
+    const groups = getProviderGroups().filter((group) => group.id !== "地形高程（Terrarium）");
+    container.innerHTML = groups.map((group) => renderProviderCard(group)).join("") + renderTerrainAddon();
+    container.classList.toggle("is-terrain-only", terrainDownloadMode === "solo");
     updateSourceCapabilities();
     updateRangeEstimate();
+}
+
+function renderTerrainAddon() {
+    const terrain = tilemaps.find(isTerrariumSource);
+    if (!terrain) return "";
+    const terrainID = escapeAttribute(terrain.id);
+    return `
+        <div class="terrain-addon">
+            <span class="terrain-addon__body">
+                <strong>地形高程下载方式</strong>
+                <small>附加下载固定为 0～14 级；单独下载可自行选择 0～15 级</small>
+            </span>
+            <span class="terrain-addon__modes">
+                <label><input class="terrain-addon__input" type="radio" name="terrainDownloadMode" value="none" data-terrain-id="${terrainID}" ${terrainDownloadMode === "none" ? "checked" : ""}><span>不下载地形</span></label>
+                <label><input class="terrain-addon__input" type="radio" name="terrainDownloadMode" value="addon" data-terrain-id="${terrainID}" ${terrainDownloadMode === "addon" ? "checked" : ""}><span>附加下载 · 0～14级</span></label>
+                <label><input class="terrain-addon__input" type="radio" name="terrainDownloadMode" value="solo" data-terrain-id="${terrainID}" ${terrainDownloadMode === "solo" ? "checked" : ""}><span>单独下载地形</span></label>
+            </span>
+        </div>
+    `;
 }
 
 function tiandituLayer(source) {
@@ -2344,16 +2383,19 @@ function isTerrariumSource(source) {
 }
 
 function selectedZoomRange(sources = getSelectedTilemaps()) {
+    const ordinarySources = sources.filter((source) => !isTerrariumSource(source));
+    const constrainedSources = ordinarySources.length > 0 ? ordinarySources : sources;
     return {
-        min: Math.max(0, ...sources.map((source) => Number(source.metadata?.minZoom ?? source.min_zoom ?? 0))),
-        max: Math.min(20, ...sources.map((source) => Number(source.metadata?.maxZoom ?? source.max_zoom ?? 20)))
+        min: Math.max(0, ...constrainedSources.map((source) => Number(source.metadata?.minZoom ?? source.min_zoom ?? 0))),
+        max: Math.min(20, ...constrainedSources.map((source) => Number(source.metadata?.maxZoom ?? source.max_zoom ?? 20)))
     };
 }
 
 function updateSourceCapabilities() {
     const sources = getSelectedTilemaps();
-    const terrarium = sources.length > 0 && sources.every(isTerrariumSource);
-    const key = sources.map((source) => source.id).join(",");
+    const terrainSelected = sources.some(isTerrariumSource);
+    const terrarium = terrainDownloadMode === "solo";
+    const key = `${terrainDownloadMode}:${sources.map((source) => source.id).join(",")}`;
     const range = selectedZoomRange(sources);
     const preferredZoom = terrarium ? Math.min(range.max, sources[0].metadata.defaultZoom || 14) : range.min;
     const form = document.getElementById("taskForm");
@@ -2376,20 +2418,22 @@ function updateSourceCapabilities() {
         form.elements[name].max = range.max;
     }
     document.getElementById("outputFormatHint").textContent = terrarium
-        ? `地形高程源：默认 ${preferredZoom} 级，最高 ${range.max} 级；下载后自动生成可三维预览的 Cesium 地形包。`
-        : "普通地图源可选择 TAR.GZ 或 MBTiles；下载真实地形高程请在地图源中选择「地形高程（Terrarium）」。";
+        ? `单独下载地形：可选择 ${range.min}～${range.max} 级，默认 ${preferredZoom} 级，并自动生成 Cesium 地形包。`
+        : terrainSelected
+            ? "普通地图使用当前所选层级；附加地形子任务固定下载 0～14 级并生成 Cesium 地形包。"
+            : "普通地图源可选择 TAR.GZ 或 MBTiles；地形高程可选择附加下载或单独下载。";
     document.getElementById("rangeTiandituShortcuts").classList.toggle("is-hidden", selectedProvider !== "天地图");
     for (const checkbox of document.querySelectorAll(".range-layer-option")) {
         const source = tilemaps.find((item) => tiandituLayer(item) === checkbox.value);
-        checkbox.disabled = !source;
+        checkbox.disabled = terrarium || !source;
         checkbox.checked = Boolean(source && selectedSourceIds.has(String(source.id)));
     }
-    document.getElementById("rangeTerrainEstimate").classList.toggle("is-hidden", output.value !== "cesium");
+    document.getElementById("rangeTerrainEstimate").classList.toggle("is-hidden", !terrainSelected);
     updateOutputSettings();
 }
 
 function validateOutputSources(sources, output) {
-    if (output.format === "cesium" && !sources.every(isTerrariumSource)) {
+    if (output.format === "cesium" && sources.some((source) => !isTerrariumSource(source))) {
         return "Cesium 三维地形需要 Terrarium 高程源。请在地图源中选择「地形高程（Terrarium）」；普通地图图片或矢量图层请使用 TAR.GZ / MBTiles。";
     }
     return "";
@@ -2400,6 +2444,7 @@ function buildSelectedSources(sources, credentials) {
         id: toNumericSourceId(source.id, index), name: source.name,
         url: applySourceCredentials(source.url, credentials),
         format: getTaskTilemapFormat(source), schema: source.schema,
+        outputFormat: isTerrariumSource(source) ? "cesium" : undefined,
         ...(source.metadata ? {metadata: {...source.metadata}} : {})
     }));
 }
@@ -2530,8 +2575,12 @@ function getSelectedProviderGroup() {
 }
 
 function getSelectedTilemaps() {
+    const terrain = tilemaps.find(isTerrariumSource);
+    if (terrainDownloadMode === "solo") return terrain ? [terrain] : [];
     const group = getSelectedProviderGroup();
-    return group ? group.items.filter((item) => selectedSourceIds.has(String(item.id))) : [];
+    const selected = group ? group.items.filter((item) => selectedSourceIds.has(String(item.id))) : [];
+    if (terrainDownloadMode === "addon" && terrain) selected.push(terrain);
+    return selected;
 }
 
 function getRequestedImageFormat() {
@@ -2759,7 +2808,8 @@ function updateRangeEstimate() {
     const range = selectedZoomRange(request.sources);
     const outputFormat = document.getElementById("taskForm").elements.outputFormat.value;
     const hint = document.getElementById("rangeTerrainEstimate");
-    hint.classList.toggle("is-hidden", outputFormat !== "cesium" && request.selectionMode !== "polygon");
+    const terrainSelected = request.sources.some(isTerrariumSource);
+    hint.classList.toggle("is-hidden", !terrainSelected && request.selectionMode !== "polygon");
     hint.textContent = "";
     if (!isValidRangeSelection(request) || !Number.isInteger(request.zoom.min) || !Number.isInteger(request.zoom.max) || request.zoom.min < range.min || request.zoom.max > range.max || request.zoom.min > request.zoom.max || request.sources.length === 0) {
         tileElement.textContent = "-";
@@ -2775,7 +2825,7 @@ function updateRangeEstimate() {
     sizeElement.textContent = request.sources.some((source) => source.metadata?.kind === "elevation")
         ? "以源瓦片和转换结果为准" : `${((estimate.rawTiles * 8) / 1024).toFixed(2)} MB`;
     const details = [];
-    if (outputFormat === "cesium") details.push(`已计入祖先与接缝邻域：${estimate.rawTiles} 个原始请求，${estimate.meshTiles} 个地形网格。`);
+    if (terrainSelected) details.push(`${terrainDownloadMode === "addon" ? "附加地形固定 0～14 级；" : ""}已计入祖先与接缝邻域：${estimate.rawTiles} 个原始请求，${estimate.meshTiles} 个地形网格。`);
     if (request.selectionMode === "polygon") details.push("按外接矩形保守估算；多边形实际请求数以准备阶段去重结果为准。");
     hint.textContent = details.join(" ");
 }
@@ -2847,14 +2897,17 @@ function calculateTerrainTileCounts(bbox, zoom) {
 
 function estimateRangeDownloads(bbox, zoom, sources, outputFormat) {
     const selectedTiles = calculateRangeTileCount(bbox, zoom);
-    const terrain = outputFormat === "cesium" && sources.some(isTerrariumSource) ? calculateTerrainTileCounts(bbox, zoom) : null;
+    const hasOrdinarySource = sources.some((source) => !isTerrariumSource(source));
+    const terrainZoom = hasOrdinarySource ? { min: 0, max: 14 } : zoom;
+    const terrain = sources.some(isTerrariumSource) ? calculateTerrainTileCounts(bbox, terrainZoom) : null;
     const perSource = sources.map((source) => {
         const counts = terrain && isTerrariumSource(source) ? terrain : { rawTiles: selectedTiles, meshTiles: 0 };
-        return { id: source.id, rawTiles: counts.rawTiles, meshTiles: counts.meshTiles };
+        return { id: source.id, rawTiles: counts.rawTiles, meshTiles: counts.meshTiles,
+            selectedTiles: terrain && isTerrariumSource(source) ? terrain.selectedTiles : selectedTiles };
     });
     const rawTiles = perSource.reduce((sum, source) => sum + source.rawTiles, 0);
     return { rawTiles, meshTiles: perSource.reduce((sum, source) => sum + source.meshTiles, 0),
-        auxiliaryTiles: rawTiles - selectedTiles * sources.length, perSource };
+        auxiliaryTiles: rawTiles - perSource.reduce((sum, source) => sum + source.selectedTiles, 0), perSource };
 }
 
 function rangeTileForLonLat(lon, lat, z) {
@@ -2991,8 +3044,10 @@ async function createTaskFromForm(event, formData, settings) {
     }
 
     resetTaskFormKeepingOptions(event.target, formData);
+    terrainDownloadMode = "none";
     syncScheduleControls();
-    selectedProvider = getProviderGroups()[0] ? getProviderGroups()[0].id : "";
+    const providerGroups = getProviderGroups().filter((group) => group.id !== "地形高程（Terrarium）");
+    selectedProvider = providerGroups[0] ? providerGroups[0].id : "";
     ensureProviderSelection();
     initDefaultLevelConfigs();
     renderTilemapSelector();
@@ -3148,6 +3203,8 @@ function renderTaskList(tasks) {
         const checkbox = cached.node.querySelector(".task-select");
         if (checkbox) checkbox.checked = selectedTaskIds.has(id);
         cached.node.open = expandedGroupTasks.has(id);
+        const subtaskList = cached.node.querySelector("details[data-subtask-list-id]");
+        if (subtaskList) subtaskList.open = expandedSubtaskLists.has(id);
         for (const child of cached.node.querySelectorAll("details[data-child-task-id]")) {
             child.open = expandedChildTasks.has(child.dataset.childTaskId);
         }
@@ -3169,6 +3226,7 @@ function renderGroupTask(task) {
     const rawTaskID = String(task.id || "");
     task = { ...task, id: escapeAttribute(rawTaskID), name: escapeHTML(task.name) };
     const isOpen = expandedGroupTasks.has(rawTaskID);
+    const subtasksOpen = expandedSubtaskLists.has(rawTaskID);
     const menuId = `menu-${task.id}`;
 
     return `
@@ -3178,33 +3236,21 @@ function renderGroupTask(task) {
                     <label class="task-check" onclick="event.stopPropagation()">
                         <input class="task-select" type="checkbox" data-task-id="${task.id}" ${selectedTaskIds.has(task.id) ? "checked" : ""}>
                     </label>
-                    <span class="task-illustration">${icon("layers")}</span>
                     <div class="task-main">
                         <div class="task-main__title">
                             <h3 title="${task.name}">${task.name}</h3>
-                            ${renderStatusPill(task.status)}
-                            ${riskHint ? renderWarningPill(riskHint.short) : ""}
                         </div>
-                        <div class="task-metadata">
-                            <span>子任务：<strong>${task.completedChildren || 0}/${task.totalChildren || children.length}</strong></span>
-                            <span>开始时间：<strong>${formatTaskStart(task, children)}</strong></span>
-                            <span>结束时间：<strong>${formatTaskEnd(task, children)}</strong></span>
-                        </div>
-                        <div class="progress-bar">
-                            <div class="progress-bar__value" style="width:${progress}%"></div>
-                        </div>
-                        ${renderTaskPhase(children.find((child) => ["running", "queued", "paused"].includes(child.status)) || task)}
-                        <div class="task-metrics">
-                            <span>运行中：<strong>${task.runningChildren || 0}</strong></span>
-                            <span>暂停：<strong>${task.pausedChildren || 0}</strong></span>
-                            <span>失败：<strong>${task.failedChildren || 0}</strong></span>
-                            <span>总进度：<strong>${progress}%</strong></span>
+                        <div class="task-progress-line">
+                            <div class="progress-bar">
+                                <div class="progress-bar__value" style="width:${progress}%"></div>
+                            </div>
+                            <strong>${progress}%</strong>
                         </div>
                     </div>
                     <div class="task-actions">
                         <div class="task-menu">
                             <button type="button" class="icon-mini-button" data-task-menu-toggle="${menuId}" aria-label="更多操作">
-                                ${icon("more")}
+                                <span class="task-menu-dots" aria-hidden="true">•••</span>
                             </button>
                             <div id="${menuId}" class="task-menu__panel is-hidden">
                                 <button type="button" data-task-action="pause" data-task-id="${task.id}" data-task-status="${task.status}">暂停全部</button>
@@ -3222,16 +3268,34 @@ function renderGroupTask(task) {
                 </div>
             </summary>
             <div class="task-card__content">
-                <p class="task-full-name">${task.name}</p>
+                <div class="task-overview-line">
+                    ${renderStatusPill(task.status)}
+                    <span>运行：<strong>${task.runningChildren || 0}</strong></span>
+                    <span>暂停：<strong>${task.pausedChildren || 0}</strong></span>
+                    <span>失败：<strong>${task.failedChildren || 0}</strong></span>
+                    <span>进度：<strong>${progress}%</strong></span>
+                </div>
+                <div class="task-time-list">
+                    <span>开始时间：<strong>${formatTaskStart(task, children)}</strong></span>
+                    <span>结束时间：<strong>${formatTaskEnd(task, children)}</strong></span>
+                </div>
+                ${renderTaskPhase(children.find((child) => ["running", "queued", "paused"].includes(child.status)) || task)}
+                ${riskHint ? `<div class="task-inline-warning">${renderWarningPill(riskHint.short)}</div>` : ""}
                 ${riskHint ? `
                     <div class="task-risk-banner">
                         ${icon("warning")}
                         <span>${riskHint.long}</span>
                     </div>
                 ` : ""}
-                <div class="child-task-list">
-                    ${children.map((child) => renderChildTask(child)).join("")}
-                </div>
+                <details class="task-subtasks" data-subtask-list-id="${task.id}" ${subtasksOpen ? "open" : ""}>
+                    <summary>
+                        <span>子任务明细（${children.length}）</span>
+                        ${icon("chevron-down", "task-chevron")}
+                    </summary>
+                    <div class="child-task-list">
+                        ${children.map((child) => renderChildTask(child)).join("")}
+                    </div>
+                </details>
             </div>
         </details>
     `;
@@ -3259,33 +3323,21 @@ function renderStandaloneTask(task) {
                     <label class="task-check" onclick="event.stopPropagation()">
                         <input class="task-select" type="checkbox" data-task-id="${task.id}" ${selectedTaskIds.has(task.id) ? "checked" : ""}>
                     </label>
-                    <span class="task-illustration">${icon("task")}</span>
                     <div class="task-main">
                         <div class="task-main__title">
                             <h3 title="${task.name}">${task.name}</h3>
-                            ${renderStatusPill(task.status)}
-                            ${riskHint ? renderWarningPill(riskHint.short) : ""}
                         </div>
-                        <div class="task-metadata">
-                            <span>开始时间：<strong>${formatTaskStart(task)}</strong></span>
-                            <span>结束时间：<strong>${formatTaskEnd(task)}</strong></span>
-                            <span>产物状态：<strong>${translateArtifactStatus(task.artifactStatus)}</strong></span>
-                        </div>
-                        <div class="progress-bar">
-                            <div class="progress-bar__value" style="width:${progress}%"></div>
-                        </div>
-                        ${renderTaskPhase(task)}
-                        <div class="task-metrics">
-                            <span>进度：<strong>${task.current || 0}/${task.total || 0}</strong></span>
-                            <span>成功：<strong>${task.successCount || 0}</strong></span>
-                            <span>失败：<strong>${task.failureCount || 0}</strong></span>
-                            <span>总进度：<strong>${progress}%</strong></span>
+                        <div class="task-progress-line">
+                            <div class="progress-bar">
+                                <div class="progress-bar__value" style="width:${progress}%"></div>
+                            </div>
+                            <strong>${progress}%</strong>
                         </div>
                     </div>
                     <div class="task-actions">
                         <div class="task-menu">
                             <button type="button" class="icon-mini-button" data-task-menu-toggle="${menuId}" aria-label="更多操作">
-                                ${icon("more")}
+                                <span class="task-menu-dots" aria-hidden="true">•••</span>
                             </button>
                             <div id="${menuId}" class="task-menu__panel is-hidden">
                                 <button type="button" data-task-action="pause" data-task-id="${task.id}" data-task-status="${task.status}">暂停任务</button>
@@ -3304,6 +3356,22 @@ function renderStandaloneTask(task) {
             </summary>
             <div class="task-card__content">
                 <p class="task-full-name">${task.name}</p>
+                <div class="task-detail-header">
+                    ${renderStatusPill(task.status)}
+                    ${riskHint ? renderWarningPill(riskHint.short) : ""}
+                </div>
+                <div class="task-metadata">
+                    <span>开始时间：<strong>${formatTaskStart(task)}</strong></span>
+                    <span>结束时间：<strong>${formatTaskEnd(task)}</strong></span>
+                    <span>产物状态：<strong>${translateArtifactStatus(task.artifactStatus)}</strong></span>
+                </div>
+                ${renderTaskPhase(task)}
+                <div class="task-metrics">
+                    <span>进度：<strong>${task.current || 0}/${task.total || 0}</strong></span>
+                    <span>成功：<strong>${task.successCount || 0}</strong></span>
+                    <span>失败：<strong>${task.failureCount || 0}</strong></span>
+                    <span>总进度：<strong>${progress}%</strong></span>
+                </div>
                 ${riskHint ? `
                     <div class="task-risk-banner">
                         ${icon("warning")}
@@ -3363,27 +3431,31 @@ function renderChildTask(task) {
                             ${icon(childTaskIcon(task), "child-task__icon")}
                             <strong title="${task.sourceName || task.name}">${task.sourceName || task.name}</strong>
                             ${renderStatusPill(task.status, true)}
-                            ${renderArtifactPill(task.artifactStatus)}
-                            ${riskHint ? renderWarningPill(riskHint.short) : ""}
                         </div>
-                        <div class="progress-bar">
-                            <div class="progress-bar__value" style="width:${progress}%"></div>
-                        </div>
-                        ${renderTaskPhase(task)}
-                        <div class="child-task__meta">
-                            <span>进度：<strong>${task.current || 0}/${task.total || 0}</strong></span>
-                            <span>成功：<strong>${task.successCount || 0}</strong></span>
-                            <span>失败：<strong>${task.failureCount || 0}</strong></span>
-                            <span>完成度：<strong>${progress}%</strong></span>
+                        <div class="task-progress-line">
+                            <div class="progress-bar">
+                                <div class="progress-bar__value" style="width:${progress}%"></div>
+                            </div>
+                            <strong>${progress}%</strong>
                         </div>
                     </div>
                     <div class="child-task__side">
-                        <span>${task.finishedAt ? formatDate(task.finishedAt) : "进行中"}</span>
                         ${icon("chevron-down", "task-chevron")}
                     </div>
                 </div>
             </summary>
             <div class="child-task__content">
+                <div class="task-detail-header">
+                    ${renderArtifactPill(task.artifactStatus)}
+                    ${riskHint ? renderWarningPill(riskHint.short) : ""}
+                </div>
+                ${renderTaskPhase(task)}
+                <div class="child-task__meta">
+                    <span>进度：<strong>${task.current || 0}/${task.total || 0}</strong></span>
+                    <span>成功：<strong>${task.successCount || 0}</strong></span>
+                    <span>失败：<strong>${task.failureCount || 0}</strong></span>
+                    <span>完成度：<strong>${progress}%</strong></span>
+                </div>
                 ${riskHint ? `
                     <div class="task-risk-banner">
                         ${icon("warning")}
@@ -3725,8 +3797,12 @@ async function editTaskSource(taskID) {
     const originalSources = task.sources || [];
     const matches = tilemaps.filter((source) => originalSources.some((original) => original.name === source.name));
     if (matches.length) {
-        selectedProvider = getTilemapGroupName(matches[0]);
-        selectedSourceIds = new Set(matches.filter((source) => getTilemapGroupName(source) === selectedProvider).map((source) => String(source.id)));
+        const hasTerrain = matches.some(isTerrariumSource);
+        const hasOrdinary = matches.some((source) => !isTerrariumSource(source));
+        terrainDownloadMode = hasTerrain ? (hasOrdinary ? "addon" : "solo") : "none";
+        const primary = matches.find((source) => !isTerrariumSource(source)) || matches[0];
+        selectedProvider = getTilemapGroupName(primary);
+        selectedSourceIds = new Set(matches.map((source) => String(source.id)));
         expandedProviders.add(selectedProvider);
     }
     renderTilemapSelector();
@@ -4128,25 +4204,29 @@ function toNumericSourceId(value, index = 0) {
 
 function ensureProviderSelection() {
     const group = getSelectedProviderGroup();
+    const terrainIDs = new Set(tilemaps.filter(isTerrariumSource).map((item) => String(item.id)));
+    const retainedTerrain = Array.from(selectedSourceIds).filter((id) => terrainIDs.has(id));
     if (!group) {
-        selectedSourceIds = new Set();
+        selectedSourceIds = new Set(retainedTerrain);
         return;
     }
 
     const providerIds = new Set(group.items.map((item) => String(item.id)));
     const existing = Array.from(selectedSourceIds).filter((id) => providerIds.has(id));
     if (existing.length === 0) {
-        selectedSourceIds = new Set(defaultSelectedSourceIds(group));
+        selectedSourceIds = new Set([...defaultSelectedSourceIds(group), ...retainedTerrain]);
         return;
     }
 
-    selectedSourceIds = new Set(existing);
+    selectedSourceIds = new Set([...existing, ...retainedTerrain]);
 }
 
 function syncSelectedSourceIds() {
-    selectedSourceIds = new Set(
-        Array.from(document.querySelectorAll(".tilemap-source-option:checked")).map((element) => String(element.value))
-    );
+    const terrainInput = document.querySelector(".terrain-addon__input:checked");
+    terrainDownloadMode = terrainInput?.value || "none";
+    const terrainIDs = terrainDownloadMode === "none" || !terrainInput ? [] : [String(terrainInput.dataset.terrainId)];
+    selectedSourceIds = new Set([...terrainIDs,
+        ...Array.from(document.querySelectorAll(".tilemap-source-option:checked")).map((element) => String(element.value))]);
 }
 
 function selectAllProviderItems(providerName) {
@@ -4154,7 +4234,8 @@ function selectAllProviderItems(providerName) {
     if (!provider) {
         return;
     }
-    selectedSourceIds = new Set(provider.items.map((item) => String(item.id)));
+    const terrain = Array.from(selectedSourceIds).filter((id) => tilemaps.some((item) => String(item.id) === id && isTerrariumSource(item)));
+    selectedSourceIds = new Set([...provider.items.map((item) => String(item.id)), ...terrain]);
 }
 
 function clearProviderItems(providerName) {
